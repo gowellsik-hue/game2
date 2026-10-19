@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V28 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V28 | Original Sanctuary engine verification"
+name: "build-web.yml | V29 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V29 | Original Sanctuary engine runtime test"
 
 "on":
   workflow_dispatch:
@@ -13,29 +13,27 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-web-yml-v28-original-engine
+  group: build-web-yml-v29-original-engine
   cancel-in-progress: false
 
 jobs:
-  original_engine_v28:
-    name: "build-web.yml | V28 | Inspect and test ORIGINAL engine"
+  original_engine_v29:
+    name: "build-web.yml | V29 | Run ORIGINAL Lineage client, no HTML replacement"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
 
     steps:
-      - name: "V28 | Checkout game2"
+      - name: "V29 | Checkout game2"
         uses: actions/checkout@v4
 
-      - name: "V28 | Download 46 original Sanctuary archive volumes"
+      - name: "V29 | Download original Sanctuary archive (46 volumes)"
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = 'gowellsik-hue/game2'
-          mkdir -p original reports original-runtime
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq p7zip-full binutils file
+          mkdir -p original native reports
           gh release download v1.0.0 -R gowellsik-hue/Game \
             -p 'Sanctuary.of.Aden.-.Copy.*' -D original --clobber
           test "$(find original -maxdepth 1 -type f | wc -l)" -eq 46
@@ -43,293 +41,144 @@ jobs:
             test -s "original/Sanctuary.of.Aden.-.Copy.z${i}"
           done
           test -s original/Sanctuary.of.Aden.-.Copy.zip
-          echo 'V28 | All 46 original archive volumes downloaded.'
 
-      - name: "V28 | Extract original executable and engine dependencies"
+      - name: "V29 | Restore ORIGINAL Windows client and startup assets"
         shell: bash
         run: |
           set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq p7zip-full file binutils
           archive='original/Sanctuary.of.Aden.-.Copy.zip'
-          7z l -slt "$archive" > reports/original-file-list.txt
-          7z x "$archive" -ooriginal-runtime -y \
+          7z l -slt "$archive" > reports/V29-original-archive-list.txt
+          7z x "$archive" -onative -y -r \
             '-ir!*.exe' '-ir!*.dll' '-ir!*.ocx' \
-            '-ir!*.so' '-ir!*.dylib' '-ir!*.wasm' \
-            '-ir!*.jar' '-ir!*.ini' '-ir!*.cfg' \
-            '-ir!*.config' '-ir!*.manifest' \
-            '-ir!*.js' '-ir!*.lua' '-ir!*.rb' \
-            '-ir!*.cpp' '-ir!*.c' '-ir!*.h' '-ir!*.cs' \
-            '-ir!*.html' '-ir!*.htm' \
-            > reports/original-runtime-extraction.log
-          find original-runtime -type f | sort > reports/original-runtime-files.txt
-          echo 'V28 | Original executable and dependencies extracted.'
-
-      - name: "V28 | Identify engine, PE imports, source, and browser components"
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/v28_original_engine.py <<'PY_V28'
-          import json
-          import re
-          import subprocess
-          from collections import Counter
-          from pathlib import Path
-
-          root = Path('original-runtime')
-          reports = Path('reports')
-          files = sorted(p for p in root.rglob('*') if p.is_file())
-          entries = []
-
-          for path in files:
-              rel = path.relative_to(root).as_posix()
-              kind = subprocess.run(
-                  ['file', '-b', str(path)],
-                  capture_output=True,
-                  text=True,
-                  timeout=15
-              ).stdout.strip()
-
-              row = {
-                  'path': rel,
-                  'bytes': path.stat().st_size,
-                  'file_type': kind
-              }
-
-              if path.suffix.lower() in {'.exe', '.dll', '.ocx'}:
-                  result = subprocess.run(
-                      ['objdump', '-p', str(path)],
-                      capture_output=True,
-                      text=True,
-                      timeout=30
-                  )
-                  row['imports'] = re.findall(
-                      r'^\s*DLL Name:\s*(\S+)',
-                      result.stdout,
-                      re.M
-                  )
-
-              entries.append(row)
-
-          executable = [
-              x for x in entries
-              if x['path'].lower().endswith('.exe')
-          ]
-
-          imports = Counter(
-              d.lower()
-              for x in entries
-              for d in x.get('imports', [])
-          )
-
-          suffixes = Counter(
-              Path(x['path']).suffix.lower()
-              for x in entries
-          )
-
-          names = '\n'.join(x['path'].lower() for x in entries)
-
-          signatures = {
-              'windows_executable': bool(executable),
-              'unity_player': 'unityplayer.dll' in names,
-              'rpg_maker_rgss': (
-                  'rgss' in names or 'rpg_rt.exe' in names
-              ),
-              'dotnet_clr': any(
-                  'mscoree.dll' in d.lower()
-                  for x in entries
-                  for d in x.get('imports', [])
-              ),
-              'directx_import': any(
-                  re.search(r'(d3d|ddraw|dinput|dxgi)', d)
-                  for d in imports
-              ),
-              'opengl_import': any(
-                  'opengl32' in d for d in imports
-              ),
-              'wasm_present': suffixes['.wasm'] > 0,
-              'script_or_source_present': any(
-                  suffixes[s] > 0
-                  for s in [
-                      '.cpp', '.c', '.h',
-                      '.cs', '.lua', '.js', '.rb'
-                  ]
-              )
-          }
-
-          report = {
-              'version': 'V28',
-              'project': 'Original Sanctuary Engine',
-              'engine_substitution': False,
-              'scope': (
-                  'Original executable inventory '
-                  'and restricted Wine smoke test'
-              ),
-              'original_executable_count': len(executable),
-              'original_executables': executable,
-              'other_files': entries,
-              'imports': imports.most_common(100),
-              'extensions': dict(suffixes),
-              'signatures': signatures,
-              'browser_original_engine_execution': 'NOT_TESTED',
-              'warning': (
-                  'Wine is not a browser. '
-                  'Runtime-only extraction may omit game data.'
-              )
-          }
-
-          (reports / 'V28-original-engine-report.json').write_text(
-              json.dumps(
-                  report,
-                  indent=2,
-                  ensure_ascii=False
-              ),
-              encoding='utf-8'
-          )
-
-          excluded = re.compile(
-              r'(setup|install|unins|patch|updat|config|crash|redist|dxsetup)',
-              re.I
-          )
-
-          def rank(x):
-              path = x['path'].lower()
-              basename = Path(path).name
-              return (
-                  bool(excluded.search(basename)),
-                  not bool(re.search(
-                      r'(sanctuary|aden|game|client)',
-                      basename
-                  )),
-                  '/' in path,
-                  len(path)
-              )
-
-          candidates = sorted(executable, key=rank)
-          selected = next(
-              (
-                  x for x in candidates
-                  if not excluded.search(Path(x['path']).name)
-              ),
-              None
-          )
-
-          (reports / 'V28-selected-executable.txt').write_text(
-              selected['path'] if selected else '',
-              encoding='utf-8'
-          )
-
-          with (reports / 'V28-summary.md').open(
-              'w',
-              encoding='utf-8'
-          ) as f:
-              f.write(
-                  '# build-web.yml | V28 | '
-                  'Original Engine Verification\n\n'
-              )
-              f.write(
-                  f'- Original EXE files: {len(executable)}\n'
-              )
-              f.write(
-                  '- Selected runtime: '
-                  + (selected['path'] if selected else 'none')
-                  + '\n'
-              )
-              f.write(
-                  '- Engine signals: '
-                  + json.dumps(
-                      signatures,
-                      ensure_ascii=False
-                  )
-                  + '\n\n'
-              )
-              f.write('## Native executables\n')
-
-              for row in executable:
-                  f.write(
-                      '- ' + row['path']
-                      + ' | ' + row['file_type']
-                      + ' | imports: '
-                      + ', '.join(row.get('imports', []))
-                      + '\n'
-                  )
-
-              f.write(
-                  '\n**Browser execution of original game '
-                  'engine: not yet proven.**\n'
-              )
-
-          print(
-              (reports / 'V28-summary.md').read_text(
-                  encoding='utf-8'
-              )
-          )
-          PY_V28
-
-          python3 /tmp/v28_original_engine.py
-          cat reports/V28-summary.md >> "$GITHUB_STEP_SUMMARY"
+            '-ir!*.ini' '-ir!*.cfg' '-ir!*.config' \
+            '-ir!*.manifest' '-ir!*.xml' '-ir!*.idx' \
+            '-ir!*.des' '-ir!*.ttf' '-ir!*.fnt' \
+            > reports/V29-binaries-extract.log
+          7z x "$archive" -onative -y \
+            'Sanctuary of Aden - Copy/Sprite.pak' \
+            'Sanctuary of Aden - Copy/Tile.pak' \
+            'Sanctuary of Aden - Copy/Text.pak' \
+            'Sanctuary of Aden - Copy/launcher.Pak' \
+            > reports/V29-base-assets-extract.log
+          root='native/Sanctuary of Aden - Copy'
+          for exe in Lineage.exe Login.exe Launcher.exe Redemption.exe; do
+            test -s "$root/$exe"
+            file "$root/$exe" | tee -a reports/V29-original-binary-types.txt
+            objdump -p "$root/$exe" 2>/dev/null \
+              | grep -E 'DLL Name:|Subsystem' \
+              >> reports/V29-original-imports.txt || true
+          done
+          for f in Sprite.pak Tile.pak Text.pak Sprite.idx Tile.idx; do
+            test -s "$root/$f"
+          done
+          du -sh native > reports/V29-extracted-size.txt
+          df -h . > reports/V29-free-space-before-wine.txt
           rm -rf original
 
-      - name: "V28 | Attempt to run the original executable (Wine, not HTML engine)"
+      - name: "V29 | Run REAL Lineage.exe, Login.exe and Launcher.exe under Wine"
         shell: bash
         run: |
           set -euo pipefail
-
-          executable="$(cat reports/V28-selected-executable.txt)"
-
-          if [ -z "$executable" ]; then
-            echo 'NO_ORIGINAL_EXE_FOUND' \
-              | tee reports/V28-native-smoke-result.txt
-            echo 'No native EXE was found; review original-engine-report.json.' \
-              >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          test -f "original-runtime/$executable"
-
           sudo dpkg --add-architecture i386
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive \
-            apt-get install -y -qq \
-            wine wine64 wine32:i386 xvfb
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            wine wine64 wine32:i386 xvfb x11-utils imagemagick
+          export DISPLAY=:99
+          export WINEARCH=win32
+          export WINEPREFIX="$RUNNER_TEMP/v29-original-wine"
+          export WINEDEBUG=+loaddll
+          mkdir -p "$WINEPREFIX"
+          Xvfb :99 -screen 0 1024x768x24 -nolisten tcp \
+            > reports/V29-xvfb.log 2>&1 &
+          xvfb_pid=$!
+          trap 'wineserver -k >/dev/null 2>&1 || true; kill "$xvfb_pid" 2>/dev/null || true' EXIT
+          sleep 3
+          timeout --kill-after=5s 60s wineboot --init \
+            > reports/V29-wineboot.log 2>&1 || true
+          root="$PWD/native/Sanctuary of Aden - Copy"
+          test -d "$root"
+          for exe in Lineage.exe Login.exe Launcher.exe; do
+            label="${exe%.exe}"
+            echo "V29: inspecting ORIGINAL ${exe}"
+            (
+              cd "$root"
+              timeout --kill-after=5s 40s wine "./$exe"
+            ) > "reports/V29-${label}-wine.log" 2>&1 &
+            pid=$!
+            sleep 15
+            alive=no
+            if kill -0 "$pid" 2>/dev/null; then alive=yes; fi
+            ps -eo pid,ppid,comm,args > "reports/V29-${label}-processes.txt"
+            xwininfo -root -tree > "reports/V29-${label}-windows.txt" 2>&1 || true
+            import -window root "reports/V29-${label}-screen.png" \
+              > "reports/V29-${label}-screenshot.log" 2>&1 || true
+            if test ! -s "reports/V29-${label}-screen.png"; then
+              echo 'SCREENSHOT_CAPTURE_FAILED' \
+                >> "reports/V29-${label}-screenshot.log"
+            fi
+            echo "original_executable=${exe}" \
+              > "reports/V29-${label}-observed.txt"
+            echo 'observation_seconds=15' \
+              >> "reports/V29-${label}-observed.txt"
+            echo "process_alive_at_capture=${alive}" \
+              >> "reports/V29-${label}-observed.txt"
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            wineserver -k >/dev/null 2>&1 || true
+          done
 
-          selected_dir="$(dirname "original-runtime/$executable")"
-          selected_name="$(basename "$executable")"
-          prefix="$RUNNER_TEMP/v28-wine-prefix"
+      - name: "V29 | Report exact test limits (native is NOT browser)"
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_REPORT'
+          from pathlib import Path
+          root=Path('reports')
+          summary=[
+            '# build-web.yml | V29 | ORIGINAL engine runtime evidence',
+            '',
+            'V28 selected eat.exe by mistake; V29 explicitly targets the original client.',
+            '',
+            '| Executable | Process alive at 15 s | Screenshot |',
+            '|---|---|---|',
+          ]
+          for label in ('Lineage','Login','Launcher'):
+              observation=root/f'V29-{label}-observed.txt'
+              details={}
+              if observation.exists():
+                  for s in observation.read_text().splitlines():
+                      if '=' in s:
+                          k,v=s.split('=',1);details[k]=v
+              pic=root/f'V29-{label}-screen.png'
+              captured=pic.is_file() and pic.stat().st_size>0
+              summary.append(f'| {label}.exe | {details.get("process_alive_at_capture","not tested")} | {"captured" if captured else "not captured"} |')
+          summary += [
+            '',
+            '**This test DOES NOT prove original browser execution, gameplay,',
+            'correct rendering, successful authentication, or server availability.**',
+            '',
+            'Original game logic was not replaced or reimplemented.',
+            'The original program is 32-bit Windows PE; direct GitHub Pages',
+            'execution is not supported without a compatible runtime/port.',
+            'Some original assets (e.g. maps and audio) are intentionally',
+            'excluded in this startup smoke test. A failed login or map load',
+            'cannot be used alone to reject the original engine.',
+          ]
+          result='\n'.join(summary)+'\n'
+          (root/'V29-summary.md').write_text(result,encoding='utf-8')
+          print(result)
+          with open(__import__('os').environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              f.write(result)
+          PY_REPORT
 
-          mkdir -p "$prefix"
-
-          set +e
-          (
-            cd "$selected_dir"
-            timeout --kill-after=5s 35s xvfb-run -a \
-              env WINEPREFIX="$prefix" WINEDEBUG=-all \
-              wine "./$selected_name"
-          ) > reports/V28-native-runtime.log 2>&1
-          status=$?
-          set -e
-
-          {
-            echo "original_exe=$executable"
-            echo "wine_exit_code=$status"
-            echo 'runtime=Wine on Linux with Xvfb'
-            echo 'browser_test=NOT_PERFORMED'
-            echo 'note=Wine start or timeout does not prove browser compatibility or gameplay.'
-            echo 'note=Missing PAK/other game files can invalidate a negative startup test.'
-          } | tee reports/V28-native-smoke-result.txt
-
-          tail -n 35 reports/V28-native-runtime.log || true
-
-          {
-            echo '### V28 Original executable smoke test'
-            echo "- EXE: $executable"
-            echo "- Wine exit code: $status (124 indicates timeout)"
-            echo '- This is NOT proof that the original engine runs in a browser.'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: "V28 | Upload evidence; do not modify game or GitHub Pages"
+      - name: "V29 | Upload original native runtime screenshots and logs"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-Original-Engine-V28-Evidence
+          name: Sanctuary-Original-Engine-V29-Runtime-Evidence
           path: reports/
           retention-days: 90
           if-no-files-found: error
