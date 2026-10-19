@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V27 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V27 | Deploy playable Sanctuary to game2"
+name: "build-web.yml | V28 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V28 | Original Sanctuary engine verification"
 
 "on":
   workflow_dispatch:
@@ -8,142 +8,328 @@ run-name: "build-web.yml | V27 | Deploy playable Sanctuary to game2"
     branches: [main]
     paths:
       - .github/workflows/build-web.yml
-      - Sanctuary-Game2-V27.zip
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: build-web-yml-v27-game2-pages
+  group: build-web-yml-v28-original-engine
   cancel-in-progress: false
 
 jobs:
-  build_v27:
-    name: "build-web.yml | V27 | Extract and verify game2 website"
+  original_engine_v28:
+    name: "build-web.yml | V28 | Inspect and test ORIGINAL engine"
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 120
+
     steps:
-      - name: "V27 | Checkout game2 repository"
+      - name: "V28 | Checkout game2"
         uses: actions/checkout@v4
 
-      - name: "V27 | Verify uploaded ZIP and extract complete game"
+      - name: "V28 | Download 46 original Sanctuary archive volumes"
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = 'gowellsik-hue/game2'
-          echo 'c75a8188a9934c7cba1a0937b6d0a5d7bfb63a64ca64c44dbceb1eaef93d3333  Sanctuary-Game2-V27.zip' | sha256sum -c -
-          unzip -tq Sanctuary-Game2-V27.zip > /dev/null
-          mkdir -p site
-          unzip -oq Sanctuary-Game2-V27.zip -d site
-          python3 - <<'PY_V27'
-          import hashlib
-          import json
-          from html.parser import HTMLParser
-          from pathlib import Path
+          mkdir -p original reports original-runtime
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq p7zip-full binutils file
+          gh release download v1.0.0 -R gowellsik-hue/Game \
+            -p 'Sanctuary.of.Aden.-.Copy.*' -D original --clobber
+          test "$(find original -maxdepth 1 -type f | wc -l)" -eq 46
+          for i in $(seq -w 1 45); do
+            test -s "original/Sanctuary.of.Aden.-.Copy.z${i}"
+          done
+          test -s original/Sanctuary.of.Aden.-.Copy.zip
+          echo 'V28 | All 46 original archive volumes downloaded.'
 
-          p = Path('site')
-          info = json.loads((p / 'build-info.json').read_text(encoding='utf-8'))
-          assert (info['package'], info['runtime'], info['display_version']) == (27, 27, 'V27')
-          assert info['v27_publishing_repository'] == 'gowellsik-hue/game2'
-          for filename, expected_sha in info['sha256'].items():
-              assert hashlib.sha256((p / filename).read_bytes()).hexdigest() == expected_sha, filename
-
-          manifest = json.loads((p / 'manifest.json').read_text(encoding='utf-8'))
-          assert manifest['actors']['hero']['sprite_id'] == 2786
-          knight = manifest['actors']['knight61']
-          assert knight['sprite_id'] == 61
-          assert len(knight['actions']) == 168
-          assert sum(map(len, knight['actions'].values())) == 545
-          assert len(list((p / 'assets').glob('*.png'))) == 4161
-          assert len(list((p / 'assets').glob('knight61-61-*.png'))) == 545
-          assert len(list((p / 'tiles').glob('*.png'))) == 218
-
-          page = (p / 'index.html').read_text(encoding='utf-8')
-          assert 'Sanctuary Mobile V27' in page
-          assert 'gowellsik-hue.github.io/Game/' not in page
-          assert 'raw.githack.com' not in page
-          assert (p / 'Sanctuary-V27-SPR61-Test.html').read_text(encoding='utf-8') == page
-
-          class Links(HTMLParser):
-              def __init__(self):
-                  super().__init__()
-                  self.files = []
-              def handle_starttag(self, tag, attrs):
-                  d = dict(attrs)
-                  if tag == 'script' and 'src' in d:
-                      self.files.append(d['src'])
-                  if tag == 'link' and 'href' in d:
-                      self.files.append(d['href'])
-          links = Links()
-          links.feed(page)
-          for file in links.files:
-              assert '://' not in file and not file.startswith('/') and '..' not in Path(file).parts
-              assert (p / file).is_file(), 'Missing game dependency: ' + file
-          print('V27_GAME2_SITE_VERIFIED: 168 keys, 545 original frames, 4161 PNG assets')
-          PY_V27
-          node --check site/game.js
-          node --check site/motion-review.js
-          node --check site/monster-pack.js
-          echo 'V27 game2 website package verified; original Game repository untouched.' >> "$GITHUB_STEP_SUMMARY"
-
-      - name: "V27 | Configure game2 GitHub Pages"
-        uses: actions/configure-pages@v5
-
-      - name: "V27 | Upload game2 Pages website"
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: site
-
-  deploy_v27:
-    name: "build-web.yml | V27 | Deploy official GitHub Pages"
-    needs: build_v27
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: "V27 | Deploy to gowellsik-hue.github.io/game2"
-        id: deployment
-        uses: actions/deploy-pages@v4
-
-  verify_v27:
-    name: "build-web.yml | V27 | Check publicly reachable game2 page"
-    needs: deploy_v27
-    runs-on: ubuntu-24.04
-    timeout-minutes: 12
-    steps:
-      - name: "V27 | Verify live HTML, metadata and game JavaScript"
+      - name: "V28 | Extract original executable and engine dependencies"
         shell: bash
         run: |
           set -euo pipefail
-          url='https://gowellsik-hue.github.io/game2/'
-          for attempt in $(seq 1 30); do
-            cache="v27-${GITHUB_RUN_ID}-${attempt}"
-            if curl -fsSL --max-time 20 "${url}index.html?${cache}" -o /tmp/v27-index.html && \
-               grep -Fq 'Sanctuary Mobile V27' /tmp/v27-index.html && \
-               curl -fsSL --max-time 20 "${url}build-info.json?${cache}" -o /tmp/v27-build-info.json && \
-               curl -fsSL --max-time 20 "${url}game.js?${cache}" -o /tmp/v27-game.js; then
-              if python3 - <<'PY_V27_LIVE'
-          import hashlib
+          archive='original/Sanctuary.of.Aden.-.Copy.zip'
+          7z l -slt "$archive" > reports/original-file-list.txt
+          7z x "$archive" -ooriginal-runtime -y \
+            '-ir!*.exe' '-ir!*.dll' '-ir!*.ocx' \
+            '-ir!*.so' '-ir!*.dylib' '-ir!*.wasm' \
+            '-ir!*.jar' '-ir!*.ini' '-ir!*.cfg' \
+            '-ir!*.config' '-ir!*.manifest' \
+            '-ir!*.js' '-ir!*.lua' '-ir!*.rb' \
+            '-ir!*.cpp' '-ir!*.c' '-ir!*.h' '-ir!*.cs' \
+            '-ir!*.html' '-ir!*.htm' \
+            > reports/original-runtime-extraction.log
+          find original-runtime -type f | sort > reports/original-runtime-files.txt
+          echo 'V28 | Original executable and dependencies extracted.'
+
+      - name: "V28 | Identify engine, PE imports, source, and browser components"
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/v28_original_engine.py <<'PY_V28'
           import json
+          import re
+          import subprocess
+          from collections import Counter
           from pathlib import Path
-          info = json.loads(Path('/tmp/v27-build-info.json').read_text(encoding='utf-8'))
-          assert info['display_version'] == 'V27'
-          assert info['v27_publishing_repository'] == 'gowellsik-hue/game2'
-          assert hashlib.sha256(Path('/tmp/v27-game.js').read_bytes()).hexdigest() == info['sha256']['game.js']
-          PY_V27_LIVE
-              then
-                node --check /tmp/v27-game.js
-                echo "V27_GITHUB_PAGES_LIVE: $url"
-                echo "V27 live game: $url" >> "$GITHUB_STEP_SUMMARY"
-                exit 0
-              fi
-            fi
-            echo "V27 | Pages is not ready yet (${attempt}/30)"
-            sleep 10
-          done
-          echo '::error::V27 GitHub Pages did not serve the expected HTML and JS.'
-          exit 1
+
+          root = Path('original-runtime')
+          reports = Path('reports')
+          files = sorted(p for p in root.rglob('*') if p.is_file())
+          entries = []
+
+          for path in files:
+              rel = path.relative_to(root).as_posix()
+              kind = subprocess.run(
+                  ['file', '-b', str(path)],
+                  capture_output=True,
+                  text=True,
+                  timeout=15
+              ).stdout.strip()
+
+              row = {
+                  'path': rel,
+                  'bytes': path.stat().st_size,
+                  'file_type': kind
+              }
+
+              if path.suffix.lower() in {'.exe', '.dll', '.ocx'}:
+                  result = subprocess.run(
+                      ['objdump', '-p', str(path)],
+                      capture_output=True,
+                      text=True,
+                      timeout=30
+                  )
+                  row['imports'] = re.findall(
+                      r'^\s*DLL Name:\s*(\S+)',
+                      result.stdout,
+                      re.M
+                  )
+
+              entries.append(row)
+
+          executable = [
+              x for x in entries
+              if x['path'].lower().endswith('.exe')
+          ]
+
+          imports = Counter(
+              d.lower()
+              for x in entries
+              for d in x.get('imports', [])
+          )
+
+          suffixes = Counter(
+              Path(x['path']).suffix.lower()
+              for x in entries
+          )
+
+          names = '\n'.join(x['path'].lower() for x in entries)
+
+          signatures = {
+              'windows_executable': bool(executable),
+              'unity_player': 'unityplayer.dll' in names,
+              'rpg_maker_rgss': (
+                  'rgss' in names or 'rpg_rt.exe' in names
+              ),
+              'dotnet_clr': any(
+                  'mscoree.dll' in d.lower()
+                  for x in entries
+                  for d in x.get('imports', [])
+              ),
+              'directx_import': any(
+                  re.search(r'(d3d|ddraw|dinput|dxgi)', d)
+                  for d in imports
+              ),
+              'opengl_import': any(
+                  'opengl32' in d for d in imports
+              ),
+              'wasm_present': suffixes['.wasm'] > 0,
+              'script_or_source_present': any(
+                  suffixes[s] > 0
+                  for s in [
+                      '.cpp', '.c', '.h',
+                      '.cs', '.lua', '.js', '.rb'
+                  ]
+              )
+          }
+
+          report = {
+              'version': 'V28',
+              'project': 'Original Sanctuary Engine',
+              'engine_substitution': False,
+              'scope': (
+                  'Original executable inventory '
+                  'and restricted Wine smoke test'
+              ),
+              'original_executable_count': len(executable),
+              'original_executables': executable,
+              'other_files': entries,
+              'imports': imports.most_common(100),
+              'extensions': dict(suffixes),
+              'signatures': signatures,
+              'browser_original_engine_execution': 'NOT_TESTED',
+              'warning': (
+                  'Wine is not a browser. '
+                  'Runtime-only extraction may omit game data.'
+              )
+          }
+
+          (reports / 'V28-original-engine-report.json').write_text(
+              json.dumps(
+                  report,
+                  indent=2,
+                  ensure_ascii=False
+              ),
+              encoding='utf-8'
+          )
+
+          excluded = re.compile(
+              r'(setup|install|unins|patch|updat|config|crash|redist|dxsetup)',
+              re.I
+          )
+
+          def rank(x):
+              path = x['path'].lower()
+              basename = Path(path).name
+              return (
+                  bool(excluded.search(basename)),
+                  not bool(re.search(
+                      r'(sanctuary|aden|game|client)',
+                      basename
+                  )),
+                  '/' in path,
+                  len(path)
+              )
+
+          candidates = sorted(executable, key=rank)
+          selected = next(
+              (
+                  x for x in candidates
+                  if not excluded.search(Path(x['path']).name)
+              ),
+              None
+          )
+
+          (reports / 'V28-selected-executable.txt').write_text(
+              selected['path'] if selected else '',
+              encoding='utf-8'
+          )
+
+          with (reports / 'V28-summary.md').open(
+              'w',
+              encoding='utf-8'
+          ) as f:
+              f.write(
+                  '# build-web.yml | V28 | '
+                  'Original Engine Verification\n\n'
+              )
+              f.write(
+                  f'- Original EXE files: {len(executable)}\n'
+              )
+              f.write(
+                  '- Selected runtime: '
+                  + (selected['path'] if selected else 'none')
+                  + '\n'
+              )
+              f.write(
+                  '- Engine signals: '
+                  + json.dumps(
+                      signatures,
+                      ensure_ascii=False
+                  )
+                  + '\n\n'
+              )
+              f.write('## Native executables\n')
+
+              for row in executable:
+                  f.write(
+                      '- ' + row['path']
+                      + ' | ' + row['file_type']
+                      + ' | imports: '
+                      + ', '.join(row.get('imports', []))
+                      + '\n'
+                  )
+
+              f.write(
+                  '\n**Browser execution of original game '
+                  'engine: not yet proven.**\n'
+              )
+
+          print(
+              (reports / 'V28-summary.md').read_text(
+                  encoding='utf-8'
+              )
+          )
+          PY_V28
+
+          python3 /tmp/v28_original_engine.py
+          cat reports/V28-summary.md >> "$GITHUB_STEP_SUMMARY"
+          rm -rf original
+
+      - name: "V28 | Attempt to run the original executable (Wine, not HTML engine)"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          executable="$(cat reports/V28-selected-executable.txt)"
+
+          if [ -z "$executable" ]; then
+            echo 'NO_ORIGINAL_EXE_FOUND' \
+              | tee reports/V28-native-smoke-result.txt
+            echo 'No native EXE was found; review original-engine-report.json.' \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          test -f "original-runtime/$executable"
+
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive \
+            apt-get install -y -qq \
+            wine wine64 wine32:i386 xvfb
+
+          selected_dir="$(dirname "original-runtime/$executable")"
+          selected_name="$(basename "$executable")"
+          prefix="$RUNNER_TEMP/v28-wine-prefix"
+
+          mkdir -p "$prefix"
+
+          set +e
+          (
+            cd "$selected_dir"
+            timeout --kill-after=5s 35s xvfb-run -a \
+              env WINEPREFIX="$prefix" WINEDEBUG=-all \
+              wine "./$selected_name"
+          ) > reports/V28-native-runtime.log 2>&1
+          status=$?
+          set -e
+
+          {
+            echo "original_exe=$executable"
+            echo "wine_exit_code=$status"
+            echo 'runtime=Wine on Linux with Xvfb'
+            echo 'browser_test=NOT_PERFORMED'
+            echo 'note=Wine start or timeout does not prove browser compatibility or gameplay.'
+            echo 'note=Missing PAK/other game files can invalidate a negative startup test.'
+          } | tee reports/V28-native-smoke-result.txt
+
+          tail -n 35 reports/V28-native-runtime.log || true
+
+          {
+            echo '### V28 Original executable smoke test'
+            echo "- EXE: $executable"
+            echo "- Wine exit code: $status (124 indicates timeout)"
+            echo '- This is NOT proof that the original engine runs in a browser.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: "V28 | Upload evidence; do not modify game or GitHub Pages"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sanctuary-Original-Engine-V28-Evidence
+          path: reports/
+          retention-days: 90
+          if-no-files-found: error
