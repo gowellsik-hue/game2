@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V30 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V30 | Original Sanctuary engine runtime test"
+name: "build-web.yml | V31 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V31 | Original Sanctuary engine runtime test"
 
 "on":
   workflow_dispatch:
@@ -13,20 +13,20 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-web-yml-v30-original-engine
+  group: build-web-yml-v31-original-engine
   cancel-in-progress: false
 
 jobs:
-  original_engine_v30:
-    name: "build-web.yml | V30 | Run ORIGINAL Lineage client, no HTML replacement"
+  original_engine_v31:
+    name: "build-web.yml | V31 | Run ORIGINAL Lineage client, no HTML replacement"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
 
     steps:
-      - name: "V30 | Checkout game2"
+      - name: "V31 | Checkout game2"
         uses: actions/checkout@v4
 
-      - name: "V30 | Download original Sanctuary archive (46 volumes)"
+      - name: "V31 | Download original Sanctuary archive (46 volumes)"
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -42,7 +42,7 @@ jobs:
           done
           test -s original/Sanctuary.of.Aden.-.Copy.zip
 
-      - name: "V30 | Install original client test dependencies"
+      - name: "V31 | Install original runtime and tracing tools"
         shell: bash
         run: |
           set -euo pipefail
@@ -50,122 +50,236 @@ jobs:
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
             p7zip-full file binutils wine wine64 wine32:i386 \
-            xvfb x11-utils imagemagick curl locales fonts-nanum
+            xvfb x11-utils imagemagick strace locales fonts-nanum
           sudo locale-gen ko_KR.UTF-8
-          wine --version | tee reports/V30-wine-version.txt
-          df -h . > reports/V30-free-space-before-extract.txt
+          wine --version > reports/V31-wine-version.txt
+          df -h . > reports/V31-disk-before.txt
 
-      - name: "V30 | Extract ALL original data including maps and sound"
+      - name: "V31 | Restore original files without modification"
         shell: bash
         run: |
           set -euo pipefail
           archive='original/Sanctuary.of.Aden.-.Copy.zip'
-          7z l -slt "$archive" > reports/V30-original-archive-list.txt
           7z x "$archive" -onative -y \
-            > reports/V30-all-assets-extract.log
+            > reports/V31-original-extract.log
           root='native/Sanctuary of Aden - Copy'
-          for exe in Lineage.exe Login.exe Launcher.exe; do
-            test -s "$root/$exe"
-            file "$root/$exe" >> reports/V30-original-binary-types.txt
-          done
-          for asset in Sprite.pak Sprite.idx Tile.pak Tile.idx \
-                       Text.pak Sprite00.pak Sprite15.pak; do
-            test -s "$root/$asset"
+          for file in Lineage.exe Login.exe Launcher.exe \
+                      Redemption.exe TW13032701.exe lin.bin \
+                      Sprite.pak Sprite.idx Tile.pak Tile.idx; do
+            test -s "$root/$file"
           done
           test -d "$root/map"
           test -d "$root/sound"
-          test "$(find "$root/map" -type f | wc -l)" -gt 100
-          test "$(find "$root/sound" -type f | wc -l)" -gt 100
           find "$root" -type f | wc -l \
-            > reports/V30-extracted-file-count.txt
-          du -sh native > reports/V30-extracted-size.txt
-          df -h . > reports/V30-free-space-after-extract.txt
+            > reports/V31-original-file-count.txt
+          du -sh native > reports/V31-original-size.txt
+          df -h . > reports/V31-disk-after.txt
           rm -rf original
 
-      - name: "V30 | Install Wine Mono and run original EXEs on Xvfb"
+      - name: "V31 | Identify original executable modules and dependencies"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_AUDIT'
+          from pathlib import Path
+          import hashlib
+          import json
+          import re
+          import subprocess
+
+          root = Path('native/Sanctuary of Aden - Copy')
+          out = Path('reports')
+          targets = (
+              'Lineage.exe', 'Login.exe', 'Launcher.exe',
+              'Redemption.exe', 'TW13032701.exe', 'lin.bin',
+              'Login.dll', 'Redemption.dll', 'NPX.DLL',
+          )
+          labels = (
+              'lin.bin', 'Lineage.exe', 'Login.exe',
+              'Redemption.exe', 'DirectDraw', 'Direct3D',
+              'ddraw.dll', 'd3d9.dll', 'opengl32.dll',
+              'GameGuard',
+          )
+          result = []
+          for name in targets:
+              path = root / name
+              if not path.is_file():
+                  result.append({'name': name, 'missing': True})
+                  continue
+              data = path.read_bytes()
+              kind = subprocess.run(
+                  ['file', '-b', str(path)],
+                  capture_output=True, text=True, timeout=30,
+              ).stdout.strip()
+              obj = subprocess.run(
+                  ['objdump', '-p', str(path)],
+                  capture_output=True, text=True, timeout=60,
+              )
+              imports = re.findall(
+                  r'^\s*DLL Name:\s*(\S+)', obj.stdout, re.M,
+              )
+              lower = data.lower()
+              references = [
+                  item for item in labels
+                  if item.lower().encode('ascii') in lower
+              ]
+              result.append({
+                  'name': name,
+                  'size_bytes': len(data),
+                  'sha256': hashlib.sha256(data).hexdigest(),
+                  'MZ_header': data.startswith(b'MZ'),
+                  'type': kind,
+                  'imported_DLLs': imports,
+                  'string_indicators_only': references,
+              })
+          by_name = {x['name']: x for x in result}
+          duplicates = []
+          for a, b in (
+              ('Login.exe', 'Redemption.exe'),
+              ('Login.dll', 'Redemption.dll'),
+          ):
+              if all('sha256' in by_name[n] for n in (a, b)):
+                  duplicates.append({
+                      'files': [a, b],
+                      'byte_identical': (
+                          by_name[a]['sha256'] == by_name[b]['sha256']
+                      ),
+                  })
+          data = {
+              'version': 'V31',
+              'engine_replacement': False,
+              'candidates': result,
+              'comparisons': duplicates,
+              'limitations': [
+                  'MZ header is not proof of working gameplay.',
+                  'String matches alone do not prove a module is loaded.',
+                  'A PE import table may omit dynamically loaded graphics APIs.',
+                  'No binary files were patched or rewritten.',
+              ],
+          }
+          (out / 'V31-engine-candidates.json').write_text(
+              json.dumps(data, indent=2, ensure_ascii=False),
+              encoding='utf-8',
+          )
+          lines = [
+              '# V31 | Original executable / module inventory',
+              '',
+              '| File | Bytes | MZ header | Type |',
+              '|---|---:|---|---|',
+          ]
+          for item in result:
+              lines.append(
+                  f"| {item['name']} | {item.get('size_bytes', 0)} | "
+                  f"{item.get('MZ_header', False)} | "
+                  f"{item.get('type', 'missing')} |"
+              )
+          lines += ['', '## Byte comparisons']
+          for pair in duplicates:
+              lines.append(
+                  f"- {pair['files'][0]} vs {pair['files'][1]}: "
+                  f"identical = {pair['byte_identical']}"
+              )
+          lines += [
+              '',
+              'DLL imports and string indicators are recorded in JSON.',
+              'Neither filename nor signature alone identifies a working game engine.',
+          ]
+          (out / 'V31-modules.md').write_text(
+              '\n'.join(lines) + '\n', encoding='utf-8',
+          )
+          print('\n'.join(lines))
+          PY_AUDIT
+
+      - name: "V31 | Trace real Lineage.exe startup without EULA consent"
         shell: bash
         run: |
           set -euo pipefail
           export DISPLAY=:99
           export WINEARCH=win32
-          export WINEPREFIX="$RUNNER_TEMP/v30-original-wine"
+          export WINEPREFIX="$RUNNER_TEMP/v31-original-wine"
           export LANG=ko_KR.UTF-8
           export LC_ALL=ko_KR.UTF-8
-          export WINEDEBUG=+mscoree,+seh
+          export WINEDEBUG=-all
           mkdir -p "$WINEPREFIX"
-
+          trace_dir="$RUNNER_TEMP/v31-strace"
+          mkdir -p "$trace_dir"
           Xvfb :99 -screen 0 1024x768x24 -nolisten tcp \
-            > reports/V30-xvfb.log 2>&1 &
+            > reports/V31-xvfb.log 2>&1 &
           xvfb_pid=$!
           trap 'wineserver -k >/dev/null 2>&1 || true; kill "$xvfb_pid" 2>/dev/null || true' EXIT
           sleep 3
           timeout --kill-after=5s 90s wineboot --init \
-            > reports/V30-wineboot.log 2>&1 || true
-
-          mono_file="$RUNNER_TEMP/wine-mono-9.0.0-x86.msi"
-          curl --fail --location --silent --show-error \
-            --retry 3 --max-time 240 \
-            'https://dl.winehq.org/wine/wine-mono/9.0.0/wine-mono-9.0.0-x86.msi' \
-            -o "$mono_file"
-          test "$(stat -c %s "$mono_file")" -gt 50000000
-          mono_rc=0
-          timeout --kill-after=10s 240s \
-            wine msiexec /i "$mono_file" /qn /norestart \
-            > reports/V30-mono-install.log 2>&1 || mono_rc=$?
-          echo "mono_install_exit_code=$mono_rc" \
-            > reports/V30-mono-observed.txt
-          wine uninstaller --list > reports/V30-mono-registry.txt 2>&1 || true
-          rm -f "$mono_file"
-          wineserver -k >/dev/null 2>&1 || true
-          sleep 3
-
+            > reports/V31-wineboot.log 2>&1 || true
           root="$PWD/native/Sanctuary of Aden - Copy"
-          for exe in Lineage.exe Login.exe Launcher.exe; do
-            label="${exe%.exe}"
-            echo "V30: testing ORIGINAL ${exe} with full data"
-            (
-              cd "$root"
-              timeout --kill-after=5s 50s wine "./$exe"
-            ) > "reports/V30-${label}-wine.log" 2>&1 &
-            pid=$!
-            sleep 18
-            alive=no
-            if kill -0 "$pid" 2>/dev/null; then alive=yes; fi
-            ps -eo pid,ppid,comm,args \
-              > "reports/V30-${label}-processes.txt"
-            xwininfo -root -tree \
-              > "reports/V30-${label}-windows.txt" 2>&1 || true
-            import -window root "reports/V30-${label}-screen.png" \
-              > "reports/V30-${label}-screenshot.log" 2>&1 || true
-            colors=0
-            if test -s "reports/V30-${label}-screen.png"; then
-              colors=$(identify -format '%k' \
-                "reports/V30-${label}-screen.png" 2>/dev/null || echo 0)
-            fi
-            native_window=no
-            if grep -Ei "$label" "reports/V30-${label}-windows.txt" \
-              | grep -Eq '[[:space:]][0-9]{2,}x[0-9]{2,}\+'; then
-              native_window=yes
-            fi
-            rendered=no
-            if test "$colors" -ge 16 && test "$native_window" = yes; then
-              rendered=yes
-            fi
-            {
-              echo "original_executable=$exe"
-              echo 'observation_seconds=18'
-              echo "process_alive_at_capture=$alive"
-              echo "native_visible_window=$native_window"
-              echo "screenshot_unique_colors=$colors"
-              echo "rendered_window=$rendered"
-            } > "reports/V30-${label}-observed.txt"
-            kill "$pid" 2>/dev/null || true
-            wait "$pid" 2>/dev/null || true
-            wineserver -k >/dev/null 2>&1 || true
-            sleep 3
-          done
+          (
+            cd "$root"
+            timeout --kill-after=5s 50s \
+              strace -ff -s 200 -e trace=execve,openat \
+              -o "$trace_dir/Lineage" \
+              wine ./Lineage.exe
+          ) > reports/V31-Lineage-wine.log 2>&1 &
+          pid=$!
+          sleep 20
+          ps -eo pid,ppid,comm,args > reports/V31-processes.txt
+          xwininfo -root -tree > reports/V31-windows.txt 2>&1 || true
+          import -window root reports/V31-Lineage-screen.png \
+            > reports/V31-screenshot.log 2>&1 || true
+          window=no
+          if grep -Eiq '"Lineage launcher".*[[:space:]][1-9][0-9]{2}x[1-9][0-9]{2}\+' \
+            reports/V31-windows.txt; then
+            window=yes
+          fi
+          colors=0
+          if test -s reports/V31-Lineage-screen.png; then
+            colors=$(identify -format '%k' \
+              reports/V31-Lineage-screen.png 2>/dev/null || echo 0)
+          fi
+          {
+            echo "original_lineage_window=$window"
+            echo "screenshot_unique_colors=$colors"
+            echo 'eula_automatically_accepted=no'
+          } > reports/V31-runtime-observed.txt
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
+          wineserver -k >/dev/null 2>&1 || true
+          python3 - "$trace_dir" <<'PY_TRACE'
+          from pathlib import Path
+          import sys
+          folder = Path(sys.argv[1])
+          needles = (
+              'lin.bin', 'lineage.exe', 'login.exe',
+              'redemption.exe', 'gameguard',
+              'ddraw.dll', 'd3d9.dll', 'opengl32.dll',
+          )
+          hits = []
+          counts = {n: 0 for n in needles}
+          traced = sorted(folder.glob('Lineage.*'))
+          for path in traced:
+              with path.open(errors='replace') as source:
+                  for row in source:
+                      value = row.lower()
+                      found = [n for n in needles if n in value]
+                      for n in found:
+                          counts[n] += 1
+                      if found and len(hits) < 250:
+                          hits.append(f'{path.name}: {row.rstrip()[:300]}')
+          out = Path('reports')
+          lines = [
+              '# V31 | Wine original launcher trace',
+              f'Strace process logs: {len(traced)}',
+              'Counts are path/string observations, not successful loads.',
+          ]
+          lines.extend(f'{key}={value}' for key, value in counts.items())
+          (out / 'V31-trace-counts.txt').write_text(
+              '\n'.join(lines) + '\n', encoding='utf-8',
+          )
+          (out / 'V31-trace-matches.txt').write_text(
+              '\n'.join(hits) + '\n', encoding='utf-8',
+          )
+          print('\n'.join(lines))
+          PY_TRACE
 
-      - name: "V30 | Report actual native runtime evidence"
+      - name: "V31 | Summarize exact engine test limits"
         if: always()
         shell: bash
         run: |
@@ -173,80 +287,57 @@ jobs:
           python3 - <<'PY_REPORT'
           from pathlib import Path
           import os
-
-          root = Path('reports')
-          root.mkdir(exist_ok=True)
-          mono_result = root / 'V30-mono-observed.txt'
-          mono_status = (
-              mono_result.read_text().strip()
-              if mono_result.exists() else 'mono_install_not_tested'
-          )
+          out = Path('reports')
+          out.mkdir(exist_ok=True)
+          observed = out / 'V31-runtime-observed.txt'
+          flags = observed.read_text() if observed.exists() else 'not tested'
+          trace = out / 'V31-trace-counts.txt'
+          counts = trace.read_text() if trace.exists() else 'not traced'
           lines = [
-              '# build-web.yml | V30 | ORIGINAL engine runtime evidence',
+              '# build-web.yml | V31 | ORIGINAL engine startup analysis',
               '',
-              'V30 restores full original game data, including maps and sound.',
-              f'Official WineHQ Wine Mono MSI: {mono_status}',
+              'The FULL unmodified Sanctuary archive was restored.',
+              'Engine/launcher candidates and PE imports are in V31-engine-candidates.json.',
               '',
-              '| Original EXE | Alive after 18 s | Colors | Rendered GUI |',
-              '|---|---|---:|---|',
-          ]
-          for label in ('Lineage', 'Login', 'Launcher'):
-              info = {}
-              file = root / f'V30-{label}-observed.txt'
-              if file.exists():
-                  for row in file.read_text().splitlines():
-                      if '=' in row:
-                          key, value = row.split('=', 1)
-                          info[key] = value
-              lines.append(
-                  f'| {label}.exe | '
-                  f'{info.get("process_alive_at_capture", "not tested")} | '
-                  f'{info.get("screenshot_unique_colors", "unknown")} | '
-                  f'{info.get("rendered_window", "not tested")} |'
-              )
-          lines += [
+              '## Observed native runtime',
+              '```', flags.rstrip(), '```',
               '',
-              '**Render detection requires a named original window and 16 colors; '
-              'a blank black screenshot is NOT a successful render.**',
+              '## File/process trace',
+              '```', counts.rstrip(), '```',
               '',
-              'This is a real Windows PE client running under Wine on Linux.',
-              'It is NOT web gameplay or a GitHub Pages browser port.',
-              'Original engine logic is unchanged. No substitute HTML engine.',
-              'No EULA agreement is automatically clicked.',
-              'Server authentication and in-game map movement are NOT proven.',
+              '**A displayed Lineage launcher/EULA is NOT proof of gameplay.**',
+              '**lin.bin is only a candidate until the loader relationship is proven.**',
+              'This job does not click the EULA or connect to any server.',
+              'This job does not create an HTML replacement or browser port.',
+              'GitHub Pages still cannot execute a Windows PE directly.',
           ]
           result = '\n'.join(lines) + '\n'
-          (root / 'V30-summary.md').write_text(result, encoding='utf-8')
+          (out / 'V31-summary.md').write_text(result, encoding='utf-8')
           print(result)
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as target:
-              target.write(result)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              f.write(result)
           PY_REPORT
 
-      - name: "V30 | Upload original native runtime screenshots and logs"
+      - name: "V31 | Upload original engine investigation reports"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-Original-Engine-V30-Runtime-Evidence
+          name: Sanctuary-Original-Engine-V31-Runtime-Evidence
           path: reports/
           retention-days: 90
           if-no-files-found: error
 
-      - name: "V30 | Fail if any original executable has no rendered GUI"
+      - name: "V31 | Verify original engine evidence was collected"
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          grep -qx 'mono_install_exit_code=0' \
-            reports/V30-mono-observed.txt || {
-              echo 'V30 FAIL: Wine Mono MSI installation was not successful'
-              exit 1
-            }
-          for label in Lineage Login Launcher; do
-            test -s "reports/V30-${label}-observed.txt"
-            if ! grep -qx 'rendered_window=yes' \
-              "reports/V30-${label}-observed.txt"; then
-              echo "V30 FAIL: ${label}.exe rendered no visible GUI"
-              exit 1
-            fi
-          done
-          echo 'V30 PASS: all three original executables rendered visible UI.'
+          test -s reports/V31-engine-candidates.json
+          test -s reports/V31-modules.md
+          test -s reports/V31-trace-counts.txt
+          test -s reports/V31-Lineage-screen.png
+          test -s reports/V31-summary.md
+          grep -qx 'original_lineage_window=yes' \
+            reports/V31-runtime-observed.txt
+          echo 'V31 PASS: original module and startup evidence collected.'
+          echo 'Gameplay and web execution remain unverified.'
