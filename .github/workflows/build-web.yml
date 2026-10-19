@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V32 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V32 | Original Sanctuary engine runtime test"
+name: "build-web.yml | V33 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V33 | Original Sanctuary engine runtime test"
 
 "on":
   workflow_dispatch:
@@ -13,264 +13,279 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-web-yml-v32-original-engine
+  group: build-web-yml-v33-original-engine
   cancel-in-progress: false
 
 jobs:
-  original_engine_v32:
-    name: "build-web.yml | V32 | Run ORIGINAL Lineage client, no HTML replacement"
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
+  original_engine_v33:
+    name: "build-web.yml | V33 | Run ORIGINAL Lineage client, no HTML replacement"
+    runs-on: windows-2025
+    timeout-minutes: 90
+
+    defaults:
+      run:
+        shell: pwsh
 
     steps:
-      - name: "V32 | Checkout game2"
+      - name: "V33 | Checkout game2"
         uses: actions/checkout@v4
 
-      - name: "V32 | Download original Sanctuary archive (46 volumes)"
-        shell: bash
+      - name: "V33 | Download original Sanctuary archive (46 volumes)"
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          test "$GITHUB_REPOSITORY" = 'gowellsik-hue/game2'
-          mkdir -p original native reports
-          gh release download v1.0.0 -R gowellsik-hue/Game \
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force original, native, reports | Out-Null
+          if ($env:GITHUB_REPOSITORY -ne 'gowellsik-hue/game2') {
+            throw 'Unexpected repository'
+          }
+          gh release download v1.0.0 -R gowellsik-hue/Game `
             -p 'Sanctuary.of.Aden.-.Copy.*' -D original --clobber
-          test "$(find original -maxdepth 1 -type f | wc -l)" -eq 46
-          for i in $(seq -w 1 45); do
-            test -s "original/Sanctuary.of.Aden.-.Copy.z${i}"
-          done
-          test -s original/Sanctuary.of.Aden.-.Copy.zip
+          if ($LASTEXITCODE -ne 0) { throw 'Release download failed' }
+          $count = @(Get-ChildItem original -File).Count
+          if ($count -ne 46) { throw "Expected 46 volumes, found $count" }
+          1..45 | ForEach-Object {
+            $part = ('Sanctuary.of.Aden.-.Copy.z{0:d2}' -f $_)
+            if (-not (Test-Path (Join-Path original $part))) {
+              throw "Missing archive part: $part"
+            }
+          }
+          if (-not (Test-Path 'original/Sanctuary.of.Aden.-.Copy.zip')) {
+            throw 'Missing final ZIP volume'
+          }
+          Get-PSDrive C | Out-File reports/V33-disk-before.txt
 
-      - name: "V32 | Install original Windows runtime and inspection tools"
-        shell: bash
+      - name: "V33 | Restore original executable environment without edits"
         run: |
-          set -euo pipefail
-          sudo dpkg --add-architecture i386
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            p7zip-full file binutils wine wine64 wine32:i386 \
-            xvfb x11-utils imagemagick locales fonts-nanum
-          sudo locale-gen ko_KR.UTF-8
-          wine --version > reports/V32-wine-version.txt
-          df -h . > reports/V32-free-space-before.txt
+          $ErrorActionPreference = 'Stop'
+          $seven = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
+          if (-not $seven) {
+            $seven = 'C:\Program Files\7-Zip\7z.exe'
+          }
+          if (-not (Test-Path $seven)) {
+            throw '7-Zip is not installed on this Windows runner'
+          }
+          & $seven x 'original/Sanctuary.of.Aden.-.Copy.zip' '-onative' '-y' `
+            '-ir!*.exe' '-ir!*.dll' '-ir!*.ocx' '-ir!*.bin' `
+            '-ir!*.ini' '-ir!*.cfg' '-ir!*.config' '-ir!*.manifest' `
+            '-ir!*.idx' '-ir!*.pak' *> reports/V33-extract.log
+          if ($LASTEXITCODE -ne 0) { throw '7-Zip extraction failed' }
+          $root = Join-Path $PWD 'native/Sanctuary of Aden - Copy'
+          foreach ($file in @('Lineage.exe', 'lin.bin', 'TW13032701.exe')) {
+            if (-not (Test-Path (Join-Path $root $file))) {
+              throw "Original executable missing: $file"
+            }
+          }
+          Get-PSDrive C | Out-File reports/V33-disk-after.txt
+          $data = foreach ($file in @('Lineage.exe', 'lin.bin', 'TW13032701.exe')) {
+            $path = Join-Path $root $file
+            $item = Get-Item $path
+            $sig = Get-AuthenticodeSignature -FilePath $path
+            [pscustomobject]@{
+              name = $file
+              bytes = $item.Length
+              sha256 = (Get-FileHash $path -Algorithm SHA256).Hash
+              file_version = $item.VersionInfo.FileVersion
+              company = $item.VersionInfo.CompanyName
+              signature_status = [string]$sig.Status
+            }
+          }
+          $data | ConvertTo-Json -Depth 5 | Set-Content `
+            reports/V33-native-binary-inventory.json -Encoding utf8
 
-      - name: "V32 | Restore ALL unmodified original files"
-        shell: bash
+      - name: "V33 | Test original runtime on NATIVE Windows (not Wine)"
         run: |
-          set -euo pipefail
-          archive='original/Sanctuary.of.Aden.-.Copy.zip'
-          7z x "$archive" -onative -y \
-            > reports/V32-original-extraction.log
-          root='native/Sanctuary of Aden - Copy'
-          for f in Lineage.exe lin.bin Login.exe Redemption.exe \
-                   TW13032701.exe Sprite.pak Sprite.idx Tile.pak Tile.idx; do
-            test -s "$root/$f"
-          done
-          test -d "$root/map"
-          test -d "$root/sound"
-          find "$root" -type f | wc -l \
-            > reports/V32-original-file-count.txt
-          du -sh "$root" > reports/V32-original-data-size.txt
-          df -h . > reports/V32-free-space-after.txt
-          rm -rf original
-
-      - name: "V32 | Record PE signatures and loader references"
-        shell: bash
-        run: |
-          set -euo pipefail
-          root='native/Sanctuary of Aden - Copy'
-          : > reports/V32-pe-types.txt
-          : > reports/V32-pe-imports.txt
-          : > reports/V32-pe-sha256.txt
-          for f in Lineage.exe lin.bin Login.exe Redemption.exe \
-                   TW13032701.exe; do
-            file "$root/$f" >> reports/V32-pe-types.txt
-            sha256sum "$root/$f" >> reports/V32-pe-sha256.txt
-            {
-              echo "### $f"
-              objdump -p "$root/$f" 2>/dev/null | \
-                grep -E 'ImageBase|AddressOfEntryPoint|Subsystem|DLL Name:' || true
-            } >> reports/V32-pe-imports.txt
-          done
-          {
-            echo 'ASCII references:'
-            strings -a "$root/Lineage.exe" | \
-              grep -Ei 'lin[.]bin|login[.]exe|redemption[.]exe' | \
-              head -n 60 || true
-            echo 'UTF-16LE references:'
-            strings -a -el "$root/Lineage.exe" | \
-              grep -Ei 'lin[.]bin|login[.]exe|redemption[.]exe' | \
-              head -n 60 || true
-          } > reports/V32-launcher-file-references.txt
-
-      - name: "V32 | Test original Lineage.exe and lin.bin separately"
-        shell: bash
-        run: |
-          set -euo pipefail
-          export DISPLAY=:99
-          export WINEARCH=win32
-          export LANG=ko_KR.UTF-8
-          export LC_ALL=ko_KR.UTF-8
-          export WINEDEBUG=+process,+loaddll,+seh
-          Xvfb :99 -screen 0 1280x800x24 -nolisten tcp \
-            > reports/V32-xvfb.log 2>&1 &
-          xvfb_pid=$!
-          trap 'wineserver -k >/dev/null 2>&1 || true; kill "$xvfb_pid" 2>/dev/null || true' EXIT
-          sleep 3
-          root="$PWD/native/Sanctuary of Aden - Copy"
-
-          for test_case in Lineage.exe:Lineage lin.bin:LinBin; do
-            exe="${test_case%%:*}"
-            label="${test_case#*:}"
-            export WINEPREFIX="$RUNNER_TEMP/v32-${label}-wine"
-            mkdir -p "$WINEPREFIX"
-            timeout --kill-after=5s 90s wineboot --init \
-              > "reports/V32-${label}-wineboot.log" 2>&1 || true
-
-            (
-              cd "$root"
-              timeout --kill-after=5s 55s wine "./$exe"
-            ) > "reports/V32-${label}-wine.log" 2>&1 &
-            pid=$!
-            sleep 20
-            alive=no
-            if kill -0 "$pid" 2>/dev/null; then alive=yes; fi
-            ps -eo pid,ppid,comm,args \
-              > "reports/V32-${label}-processes.txt"
-            xwininfo -root -tree \
-              > "reports/V32-${label}-windows.txt" 2>&1 || true
-            import -window root "reports/V32-${label}-screen.png" \
-              > "reports/V32-${label}-screenshot.log" 2>&1 || true
-            colors=0
-            if test -s "reports/V32-${label}-screen.png"; then
-              colors=$(identify -format '%k' \
-                "reports/V32-${label}-screen.png" 2>/dev/null || echo 0)
-            fi
-            {
-              echo "original_executable=$exe"
-              echo 'observation_seconds=20'
-              echo "wine_wrapper_alive_at_capture=$alive"
-              echo "screenshot_unique_colors=$colors"
-            } > "reports/V32-${label}-observed.txt"
-            {
-              grep -Eim 100 'err:|Unhandled|exception|failed|c0000135|c0000005' \
-                "reports/V32-${label}-wine.log" || true
-            } > "reports/V32-${label}-errors.txt"
-            kill "$pid" 2>/dev/null || true
-            wait "$pid" 2>/dev/null || true
-            wineserver -k >/dev/null 2>&1 || true
-            sleep 3
-          done
-
-      - name: "V32 | Compare original client startup evidence"
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY_REPORT'
-          from pathlib import Path
-          import json
-          import os
-          import re
-
-          out = Path('reports')
-          out.mkdir(exist_ok=True)
-          candidates = [('Lineage', 'Lineage.exe'), ('LinBin', 'lin.bin')]
-          rows = []
-          for label, exe in candidates:
-              observed = out / f'V32-{label}-observed.txt'
-              info = {}
-              if observed.is_file():
-                  for line in observed.read_text().splitlines():
-                      if '=' in line:
-                          key, value = line.split('=', 1)
-                          info[key] = value
-              path = out / f'V32-{label}-windows.txt'
-              windows = []
-              if path.is_file():
-                  for line in path.read_text(errors='replace').splitlines():
-                      size = re.search(r'\b(\d+)x(\d+)\+-?\d+\+-?\d+', line)
-                      if size and int(size[1]) >= 300 and int(size[2]) >= 200:
-                          windows.append(line.strip())
-              own_window = any(exe.lower() in line.lower() for line in windows)
-              screenshot = out / f'V32-{label}-screen.png'
-              row = {
-                  'original_file': exe,
-                  'wine_wrapper_alive': info.get('wine_wrapper_alive_at_capture', 'unknown'),
-                  'screenshot_colors': info.get('screenshot_unique_colors', '0'),
-                  'screenshot_captured': screenshot.is_file() and screenshot.stat().st_size > 0,
-                  'large_windows': windows,
-                  'own_executable_window': own_window,
+          $ErrorActionPreference = 'Stop'
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Collections.Generic;
+          using System.Runtime.InteropServices;
+          using System.Text;
+          public static class V33Windows {
+              private delegate bool Callback(IntPtr hwnd, IntPtr unused);
+              [DllImport("user32.dll")]
+              private static extern bool EnumWindows(Callback callback, IntPtr unused);
+              [DllImport("user32.dll")]
+              private static extern bool EnumChildWindows(IntPtr parent, Callback callback, IntPtr unused);
+              [DllImport("user32.dll")]
+              private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+              [DllImport("user32.dll", CharSet=CharSet.Unicode)]
+              private static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int length);
+              [DllImport("user32.dll")]
+              private static extern bool IsWindowVisible(IntPtr hwnd);
+              [DllImport("user32.dll", CharSet=CharSet.Unicode)]
+              private static extern IntPtr SendMessageTimeout(
+                  IntPtr hwnd, uint message, IntPtr wparam,
+                  StringBuilder text, uint flags, uint timeout, out IntPtr result);
+              private static string ReadText(IntPtr hwnd) {
+                  var buffer = new StringBuilder(1024);
+                  GetWindowText(hwnd, buffer, buffer.Capacity);
+                  if (buffer.Length == 0) {
+                      IntPtr result;
+                      SendMessageTimeout(hwnd, 0x000D, (IntPtr)buffer.Capacity,
+                          buffer, 0x0002, 200, out result);
+                  }
+                  return buffer.ToString();
               }
-              rows.append(row)
-          (out / 'V32-runtime-comparison.json').write_text(
-              json.dumps(rows, indent=2, ensure_ascii=False),
-              encoding='utf-8',
-          )
-          lines = [
-              '# build-web.yml | V32 | ORIGINAL engine direct-execution investigation',
-              '',
-              'The original files were not patched or replaced.',
-              'Lineage.exe is the launcher/EULA baseline.',
-              'lin.bin was started directly from the original game directory.',
-              '',
-              '| Original binary | Wrapper alive | Window matching file | Screenshot colors |',
-              '|---|---|---|---:|',
-          ]
-          for row in rows:
-              lines.append(
-                  f"| {row['original_file']} | {row['wine_wrapper_alive']} | "
-                  f"{row['own_executable_window']} | {row['screenshot_colors']} |"
-              )
-          lines += [
-              '',
-              '## Native windows (at 20 seconds)',
-          ]
-          for row in rows:
-              lines.append(f"### {row['original_file']}")
-              lines += [f'- `{s}`' for s in row['large_windows']]
-              if not row['large_windows']:
-                  lines.append('- No large native window detected')
-          lines += [
-              '',
-              '**A captured window is not proof of gameplay, server access, or a working map.**',
-              '**Failure of standalone lin.bin is not proof the engine is unusable:**',
-              'it may require arguments or an authorized launch sequence.',
-              'No EULA acceptance, credentials, or server selection was automated.',
-              'The runtime remains Windows PE under Wine, NOT a browser port.',
-              'No replacement HTML engine was created.',
-          ]
-          result = '\n'.join(lines) + '\n'
-          (out / 'V32-summary.md').write_text(result, encoding='utf-8')
-          print(result)
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as target:
-              target.write(result)
-          PY_REPORT
+              public static string[] CaptionsFor(int pid) {
+                  var found = new List<string>();
+                  EnumWindows((hwnd, unused) => {
+                      uint owner;
+                      GetWindowThreadProcessId(hwnd, out owner);
+                      if (owner != (uint)pid || !IsWindowVisible(hwnd)) return true;
+                      var title = ReadText(hwnd);
+                      if (!String.IsNullOrWhiteSpace(title)) found.Add("WINDOW: " + title);
+                      EnumChildWindows(hwnd, (child, unused2) => {
+                          var text = ReadText(child);
+                          if (!String.IsNullOrWhiteSpace(text)) found.Add("CONTROL: " + text);
+                          return true;
+                      }, IntPtr.Zero);
+                      return true;
+                  }, IntPtr.Zero);
+                  return found.ToArray();
+              }
+          }
+          '@
+          $root = Join-Path $PWD 'native/Sanctuary of Aden - Copy'
+          $results = @()
+          foreach ($exe in @('Lineage.exe', 'lin.bin', 'TW13032701.exe')) {
+            $path = Join-Path $root $exe
+            $samples = @()
+            $pidValue = $null
+            $launchError = $null
+            $exitCode = $null
+            $aliveAtEnd = $false
+            $process = $null
+            try {
+              $start = New-Object System.Diagnostics.ProcessStartInfo
+              $start.FileName = $path
+              $start.WorkingDirectory = $root
+              $start.UseShellExecute = $false
+              $process = [System.Diagnostics.Process]::Start($start)
+              if ($null -eq $process) { throw 'Process.Start returned null' }
+              $pidValue = $process.Id
+              for ($i = 1; $i -le 8; $i++) {
+                Start-Sleep -Seconds 3
+                $process.Refresh()
+                $alive = -not $process.HasExited
+                $captions = @()
+                if ($alive) {
+                  $captions = @([V33Windows]::CaptionsFor($process.Id))
+                }
+                $samples += [pscustomobject]@{
+                  seconds = $i * 3
+                  process_alive = $alive
+                  window_and_control_text = $captions
+                }
+                if (-not $alive) {
+                  $exitCode = $process.ExitCode
+                  break
+                }
+              }
+              $process.Refresh()
+              $aliveAtEnd = -not $process.HasExited
+            } catch {
+              $launchError = $_.Exception.Message
+            } finally {
+              if ($null -ne $process) {
+                try {
+                  $process.Refresh()
+                  if (-not $process.HasExited) { $process.Kill($true) }
+                } catch { }
+                $process.Dispose()
+              }
+            }
+            $allText = (@($samples | ForEach-Object {
+              $_.window_and_control_text
+            }) -join ' ')
+            $results += [pscustomobject]@{
+              original_file = $exe
+              process_id = $pidValue
+              launch_error = $launchError
+              early_exit_code = $exitCode
+              alive_after_observation = $aliveAtEnd
+              runtime_expired_text_observed = `
+                ($allText -match 'RunTime Expired|Reinstall Lineage')
+              observations = $samples
+            }
+          }
+          $results | ConvertTo-Json -Depth 9 | Set-Content `
+            reports/V33-native-process-results.json -Encoding utf8
 
-      - name: "V32 | Upload native client launch evidence"
+      - name: "V33 | Distinguish native runtime from browser execution"
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = 'reports/V33-native-process-results.json'
+          $lines = @(
+            '# build-web.yml | V33 | NATIVE Windows original-client verification',
+            '',
+            'V32 Wine test: lin.bin showed "RunTime Expired - Reinstall Lineage."',
+            'V33 executes original files on a GitHub-hosted Windows runner.',
+            'The original binaries and system clock are NOT modified.',
+            'No license checks, protection, EULA, or login are bypassed.',
+            '',
+            '| Original file | Started | Alive at 24 s | Expired text detected |',
+            '|---|---|---|---|'
+          )
+          if (Test-Path $path) {
+            $results = @(Get-Content $path -Raw | ConvertFrom-Json)
+            foreach ($r in $results) {
+              $started = $null -ne $r.process_id
+              $lines += "| $($r.original_file) | $started | $($r.alive_after_observation) | $($r.runtime_expired_text_observed) |"
+              if ($r.launch_error) {
+                $lines += "- $($r.original_file) start error: $($r.launch_error)"
+              }
+              $captions = @($r.observations | ForEach-Object {
+                $_.window_and_control_text
+              } | Where-Object { $_ } | Select-Object -Unique)
+              foreach ($caption in $captions | Select-Object -First 20) {
+                $lines += "- $($r.original_file) UI: $caption"
+              }
+            }
+          } else {
+            $lines += '| Not tested | false | false | unknown |'
+          }
+          $lines += @(
+            '',
+            '## Interpretation limits',
+            '- GitHub-hosted Windows runners are not guaranteed to have an interactive desktop.',
+            '- Missing window captions cannot prove that no dialog appeared.',
+            '- A running process or window does not prove game-world rendering.',
+            '- Expired text detected by a window probe is positive evidence only.',
+            '- This is a native Windows test, NOT HTML or GitHub Pages gameplay.',
+            '- Full world data and audio were not required for this startup check.',
+            '- A valid original runtime/license and compatible browser architecture remain necessary.'
+          )
+          $summary = $lines -join "`n"
+          $summary | Set-Content reports/V33-summary.md -Encoding utf8
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          Write-Output $summary
+
+      - name: "V33 | Upload original Windows-native runtime evidence"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-Original-Engine-V32-Runtime-Evidence
+          name: Sanctuary-Original-Engine-V33-Runtime-Evidence
           path: reports/
           retention-days: 90
           if-no-files-found: error
 
-      - name: "V32 | Verify direct original-client tests were recorded"
+      - name: "V33 | Verify the real client tests were recorded"
         if: always()
-        shell: bash
         run: |
-          set -euo pipefail
-          test -s reports/V32-pe-types.txt
-          test -s reports/V32-pe-imports.txt
-          test -s reports/V32-runtime-comparison.json
-          test -s reports/V32-summary.md
-          for label in Lineage LinBin; do
-            test -s "reports/V32-${label}-observed.txt"
-            test -s "reports/V32-${label}-processes.txt"
-            test -s "reports/V32-${label}-windows.txt"
-            test -s "reports/V32-${label}-screen.png"
-          done
-          echo 'V32 PASS: direct original-client startup evidence collected.'
-          echo 'Actual gameplay and browser operation are still unverified.'
+          $ErrorActionPreference = 'Stop'
+          foreach ($file in @(
+            'V33-native-binary-inventory.json',
+            'V33-native-process-results.json',
+            'V33-summary.md'
+          )) {
+            if (-not (Test-Path (Join-Path 'reports' $file))) {
+              throw "Missing required evidence: $file"
+            }
+          }
+          $results = @(Get-Content `
+            reports/V33-native-process-results.json -Raw | ConvertFrom-Json)
+          if ($results.Count -ne 3) { throw 'Expected three original-runtime tests' }
+          Write-Output 'V33 PASS: Windows-native original runtime evidence collected.'
+          Write-Output 'Gameplay and browser execution are NOT yet verified.'
