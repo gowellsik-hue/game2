@@ -1,0 +1,149 @@
+
+name: "build-web.yml | V27 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V27 | Deploy playable Sanctuary to game2"
+
+"on":
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build-web.yml
+      - Sanctuary-Game2-V27.zip
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: build-web-yml-v27-game2-pages
+  cancel-in-progress: false
+
+jobs:
+  build_v27:
+    name: "build-web.yml | V27 | Extract and verify game2 website"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: "V27 | Checkout game2 repository"
+        uses: actions/checkout@v4
+
+      - name: "V27 | Verify uploaded ZIP and extract complete game"
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'gowellsik-hue/game2'
+          echo 'c75a8188a9934c7cba1a0937b6d0a5d7bfb63a64ca64c44dbceb1eaef93d3333  Sanctuary-Game2-V27.zip' | sha256sum -c -
+          unzip -tq Sanctuary-Game2-V27.zip > /dev/null
+          mkdir -p site
+          unzip -oq Sanctuary-Game2-V27.zip -d site
+          python3 - <<'PY_V27'
+          import hashlib
+          import json
+          from html.parser import HTMLParser
+          from pathlib import Path
+
+          p = Path('site')
+          info = json.loads((p / 'build-info.json').read_text(encoding='utf-8'))
+          assert (info['package'], info['runtime'], info['display_version']) == (27, 27, 'V27')
+          assert info['v27_publishing_repository'] == 'gowellsik-hue/game2'
+          for filename, expected_sha in info['sha256'].items():
+              assert hashlib.sha256((p / filename).read_bytes()).hexdigest() == expected_sha, filename
+
+          manifest = json.loads((p / 'manifest.json').read_text(encoding='utf-8'))
+          assert manifest['actors']['hero']['sprite_id'] == 2786
+          knight = manifest['actors']['knight61']
+          assert knight['sprite_id'] == 61
+          assert len(knight['actions']) == 168
+          assert sum(map(len, knight['actions'].values())) == 545
+          assert len(list((p / 'assets').glob('*.png'))) == 4161
+          assert len(list((p / 'assets').glob('knight61-61-*.png'))) == 545
+          assert len(list((p / 'tiles').glob('*.png'))) == 218
+
+          page = (p / 'index.html').read_text(encoding='utf-8')
+          assert 'Sanctuary Mobile V27' in page
+          assert 'gowellsik-hue.github.io/Game/' not in page
+          assert 'raw.githack.com' not in page
+          assert (p / 'Sanctuary-V27-SPR61-Test.html').read_text(encoding='utf-8') == page
+
+          class Links(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.files = []
+              def handle_starttag(self, tag, attrs):
+                  d = dict(attrs)
+                  if tag == 'script' and 'src' in d:
+                      self.files.append(d['src'])
+                  if tag == 'link' and 'href' in d:
+                      self.files.append(d['href'])
+          links = Links()
+          links.feed(page)
+          for file in links.files:
+              assert '://' not in file and not file.startswith('/') and '..' not in Path(file).parts
+              assert (p / file).is_file(), 'Missing game dependency: ' + file
+          print('V27_GAME2_SITE_VERIFIED: 168 keys, 545 original frames, 4161 PNG assets')
+          PY_V27
+          node --check site/game.js
+          node --check site/motion-review.js
+          node --check site/monster-pack.js
+          echo 'V27 game2 website package verified; original Game repository untouched.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: "V27 | Configure game2 GitHub Pages"
+        uses: actions/configure-pages@v5
+
+      - name: "V27 | Upload game2 Pages website"
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy_v27:
+    name: "build-web.yml | V27 | Deploy official GitHub Pages"
+    needs: build_v27
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: "V27 | Deploy to gowellsik-hue.github.io/game2"
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  verify_v27:
+    name: "build-web.yml | V27 | Check publicly reachable game2 page"
+    needs: deploy_v27
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: "V27 | Verify live HTML, metadata and game JavaScript"
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://gowellsik-hue.github.io/game2/'
+          for attempt in $(seq 1 30); do
+            cache="v27-${GITHUB_RUN_ID}-${attempt}"
+            if curl -fsSL --max-time 20 "${url}index.html?${cache}" -o /tmp/v27-index.html && \
+               grep -Fq 'Sanctuary Mobile V27' /tmp/v27-index.html && \
+               curl -fsSL --max-time 20 "${url}build-info.json?${cache}" -o /tmp/v27-build-info.json && \
+               curl -fsSL --max-time 20 "${url}game.js?${cache}" -o /tmp/v27-game.js; then
+              if python3 - <<'PY_V27_LIVE'
+          import hashlib
+          import json
+          from pathlib import Path
+          info = json.loads(Path('/tmp/v27-build-info.json').read_text(encoding='utf-8'))
+          assert info['display_version'] == 'V27'
+          assert info['v27_publishing_repository'] == 'gowellsik-hue/game2'
+          assert hashlib.sha256(Path('/tmp/v27-game.js').read_bytes()).hexdigest() == info['sha256']['game.js']
+          PY_V27_LIVE
+              then
+                node --check /tmp/v27-game.js
+                echo "V27_GITHUB_PAGES_LIVE: $url"
+                echo "V27 live game: $url" >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+            fi
+            echo "V27 | Pages is not ready yet (${attempt}/30)"
+            sleep 10
+          done
+          echo '::error::V27 GitHub Pages did not serve the expected HTML and JS.'
+          exit 1
