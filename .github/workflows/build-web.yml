@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V40 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V40 | Original Sanctuary engine runtime test"
+name: "build-web.yml | V41 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V41 | Original Sanctuary engine runtime test"
 
 "on":
   workflow_dispatch:
@@ -13,19 +13,19 @@ permissions:
   contents: write
 
 concurrency:
-  group: build-web-yml-v40-original-engine
+  group: build-web-yml-v41-original-engine
   cancel-in-progress: false
 
 jobs:
-  original_engine_v40:
-    name: "build-web.yml | V40 | Compile existing l1j-client main() to WebAssembly"
+  original_engine_v41:
+    name: "build-web.yml | V41 | Compile existing l1j-client main() to WebAssembly"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - name: "V40 | Checkout existing game2"
+      - name: "V41 | Checkout existing game2"
         uses: actions/checkout@v4
 
-      - name: "V40 | Checkout existing l1j-client C++ engine, unchanged"
+      - name: "V41 | Checkout existing l1j-client C++ engine, unchanged"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -33,12 +33,12 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V40 | Set up Emscripten for the original C++ source"
+      - name: "V41 | Set up Emscripten for the original C++ source"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V40 | Compile ALL existing C++ and C source objects"
+      - name: "V41 | Compile ALL existing C++ and C source objects"
         shell: bash
         run: |
           set -euo pipefail
@@ -46,7 +46,7 @@ jobs:
           test -s upstream-l1j/COPYING
           emcc --version | head -1
           mkdir -p build/objects dist reports
-          cat > /tmp/v40-build-sources.py <<'PY_BUILD'
+          cat > /tmp/v41-build-sources.py <<'PY_BUILD'
           import pathlib, re, subprocess
           src=pathlib.Path('upstream-l1j')
           txt=(src/'Makefile.am').read_text()
@@ -54,7 +54,7 @@ jobs:
           if not m: raise SystemExit('The upstream Lineage_SOURCES declaration changed')
           files=re.findall(r'src/[\w./-]+\.(?:cpp|c)\b',m.group(1))
           if len(files)<55: raise SystemExit('Unexpectedly small engine source list: '+str(len(files)))
-          (pathlib.Path('reports')/'V40-source-list.txt').write_text('\n'.join(files)+'\n')
+          (pathlib.Path('reports')/'V41-source-list.txt').write_text('\n'.join(files)+'\n')
           flags=['-O1','-g0','-pthread','-fexceptions','-sUSE_SDL=1',
                  '-sUSE_SDL_IMAGE=1','-sUSE_SDL_MIXER=1',
                  '-Iupstream-l1j/src','-Iupstream-l1j/include']
@@ -71,21 +71,21 @@ jobs:
           pathlib.Path('build/objects-list.txt').write_text('\n'.join(objects))
           print('Original sources compiled:',len(objects))
           PY_BUILD
-          python3 /tmp/v40-build-sources.py 2>&1 | tee reports/V40-compile-log.txt
+          python3 /tmp/v41-build-sources.py 2>&1 | tee reports/V41-compile-log.txt
           test -s build/objects-list.txt
           test -z "$(git -C upstream-l1j status --porcelain)" || {
             echo 'Upstream original sources were unexpectedly altered' >&2
             exit 1
           }
 
-      - name: "V40 | Cache small unchanged original startup resources"
+      - name: "V41 | Cache small unchanged original startup resources"
         id: startup_cache
         uses: actions/cache@v4
         with:
-          key: original-sanctuary-startup-idx-font-v1.0.0-v40
+          key: original-sanctuary-startup-idx-font-v1.0.0-v41
           path: original-startup/
 
-      - name: "V40 | Fetch original Sanctuary startup data on first run"
+      - name: "V41 | Fetch original Sanctuary startup data on first run"
         if: steps.startup_cache.outputs.cache-hit != 'true'
         shell: bash
         env:
@@ -100,10 +100,10 @@ jobs:
           test "$(find original-download -type f | wc -l)" -eq 46
           7z x original-download/Sanctuary.of.Aden.-.Copy.zip \
             -ooriginal-startup -y '-ir!*.idx' '-ir!*.fnt' \
-            > reports/V40-startup-extract-log.txt
+            > reports/V41-startup-extract-log.txt
           rm -rf original-download
 
-      - name: "V40 | Link the original client main() without recreated game logic"
+      - name: "V41 | Link the original client main() without recreated game logic"
         shell: bash
         run: |
           set -euo pipefail
@@ -112,22 +112,27 @@ jobs:
           # Sprite00.idx and LOWERCASE font/eng.fnt.
           original_idx="$base/Sprite00.idx"
           original_font="$base/font/eng.fnt"
-          if [[ ! -s "$original_idx" || ! -s "$original_font" ]]; then
-            echo 'V40 | Missing startup resources; actual extracted file paths:' >&2
+          original_small_font="$base/font/small.fnt"
+          if [[ ! -s "$original_idx" || ! -s "$original_font" || ! -s "$original_small_font" ]]; then
+            echo 'V41 | Missing startup resources; actual extracted file paths:' >&2
             find original-startup -type f | sort >&2
             echo "Sprite00.idx present: $(test -s "$original_idx" && echo yes || echo no)" >&2
             echo "font/eng.fnt present: $(test -s "$original_font" && echo yes || echo no)" >&2
+            echo "font/small.fnt present: $(test -s "$original_small_font" && echo yes || echo no)" >&2
             exit 1
           fi
           mkdir -p runtime/lineage/Font
           cp -a "$original_idx" runtime/lineage/Sprite00.idx
           # The l1j-client requests 'Font/eng.fnt'; copy, never edit the source data.
           cp -a "$original_font" runtime/lineage/Font/eng.fnt
+          # Original file is font/small.fnt; the existing client expects Font/SMALL.FNT.
+          cp -a "$original_small_font" runtime/lineage/Font/SMALL.FNT
           cmp -s "$original_idx" runtime/lineage/Sprite00.idx
           cmp -s "$original_font" runtime/lineage/Font/eng.fnt
-          sha256sum "$original_idx" "$original_font" > reports/V40-original-startup-hashes.txt
-          printf 'V40: Original Sprite00.idx=%s bytes, font/eng.fnt=%s bytes\n' \
-            "$(stat -c %s "$original_idx")" "$(stat -c %s "$original_font")"
+          cmp -s "$original_small_font" runtime/lineage/Font/SMALL.FNT
+          sha256sum "$original_idx" "$original_font" "$original_small_font" > reports/V41-original-startup-hashes.txt
+          printf 'V41: Sprite00.idx=%s, eng.fnt=%s, small.fnt=%s bytes\n' \
+            "$(stat -c %s "$original_idx")" "$(stat -c %s "$original_font")" "$(stat -c %s "$original_small_font")"
           # This is a runtime path configuration, not a replacement game world.
           cat > runtime/Lineage.ini <<'INI'
           Path = /lineage/
@@ -141,12 +146,84 @@ jobs:
           # Emscripten 3.1.74's SDL1 compatibility library exports SDL_PollEvent
           # and IMG_Load_RW but not these three SDL 1.2 compatibility entrypoints.
           # Keep the original 60 C/C++ client files unchanged. The following is
-          # only a web-platform adapter for symbols confirmed missing in V39.
-          cat > build/v40-sdl12-compat.cpp <<'CPP_COMPAT'
+          # a web-platform adapter for missing SDL1 entrypoints and broken SDL1 thread stubs.
+          cat > build/v41-sdl12-compat.cpp <<'CPP_COMPAT'
           #include <SDL/SDL.h>
           #include <SDL/SDL_image.h>
           #include <cstring>
+          #include <pthread.h>
+          #include <new>
+          #include <cstdio>
+
+          // SDL 1.2 compatibility: Emscripten's JavaScript SDL_CreateThread
+          // intentionally throws. Use the already-enabled WASM pthreads.
+          // The original client's sources remain completely untouched.
+          struct SDL_Thread {
+            pthread_t native;
+            int (SDLCALL *callback)(void *);
+            void *argument;
+            int result;
+          };
+          struct SDL_mutex { pthread_mutex_t native; };
+
+          static void *v41_sdl_thread_entry(void *opaque) {
+            SDL_Thread *t = static_cast<SDL_Thread *>(opaque);
+            t->result = t->callback(t->argument);
+            return nullptr;
+          }
+
           extern "C" {
+          SDL_Thread * SDLCALL SDL_CreateThread(int (SDLCALL *fn)(void *), void *data) {
+            if (!fn) return nullptr;
+            SDL_Thread *t = new (std::nothrow) SDL_Thread{};
+            if (!t) return nullptr;
+            t->callback = fn;
+            t->argument = data;
+            const int rc = pthread_create(&t->native, nullptr, v41_sdl_thread_entry, t);
+            if (rc != 0) {
+              std::fprintf(stderr, "V41 SDL_CreateThread pthread_create error=%d\n", rc);
+              delete t;
+              return nullptr;
+            }
+            std::fprintf(stderr, "V41 SDL_CreateThread: pthread started\n");
+            return t;
+          }
+          void SDLCALL SDL_WaitThread(SDL_Thread *t, int *status) {
+            if (!t) return;
+            const int rc = pthread_join(t->native, nullptr);
+            if (status) *status = rc == 0 ? t->result : -1;
+            if (rc != 0) std::fprintf(stderr, "V41 SDL_WaitThread error=%d\n", rc);
+            delete t;
+          }
+          SDL_mutex * SDLCALL SDL_CreateMutex(void) {
+            SDL_mutex *m = new (std::nothrow) SDL_mutex{};
+            if (!m) return nullptr;
+            pthread_mutexattr_t attr;
+            int rc = pthread_mutexattr_init(&attr);
+            if (rc == 0) {
+              // Original sdl_user::change_drawmode() locks draw_mtx recursively.
+              rc = pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+              if (rc == 0) rc = pthread_mutex_init(&m->native, &attr);
+              pthread_mutexattr_destroy(&attr);
+            }
+            if (rc != 0) {
+              std::fprintf(stderr, "V41 SDL_CreateMutex error=%d\n", rc);
+              delete m;
+              return nullptr;
+            }
+            return m;
+          }
+          int SDLCALL SDL_mutexP(SDL_mutex *m) {
+            return m && pthread_mutex_lock(&m->native) == 0 ? 0 : -1;
+          }
+          int SDLCALL SDL_mutexV(SDL_mutex *m) {
+            return m && pthread_mutex_unlock(&m->native) == 0 ? 0 : -1;
+          }
+          void SDLCALL SDL_DestroyMutex(SDL_mutex *m) {
+            if (!m) return;
+            pthread_mutex_destroy(&m->native);
+            delete m;
+          }
           int SDLCALL SDL_WaitEvent(SDL_Event *event) {
             // Original client's main SDL event loop is on a pthread worker.
             // Emulate SDL 1.2 blocking wait via the available SDL_PollEvent.
@@ -178,10 +255,10 @@ jobs:
           em++ -O1 -pthread -fexceptions \
             -Iupstream-l1j/src -Iupstream-l1j/include \
             -sUSE_SDL=1 -sUSE_SDL_IMAGE=1 -sUSE_SDL_MIXER=1 \
-            -c build/v40-sdl12-compat.cpp -o build/v40-sdl12-compat.o
+            -c build/v41-sdl12-compat.cpp -o build/v41-sdl12-compat.o
           mapfile -t objects < build/objects-list.txt
           test "${#objects[@]}" -eq 60
-          em++ "${objects[@]}" build/v40-sdl12-compat.o -o dist/lineage.js \
+          em++ "${objects[@]}" build/v41-sdl12-compat.o -o dist/lineage.js \
             -O1 -pthread -fexceptions \
             -sUSE_SDL=1 -sUSE_SDL_IMAGE=1 -sUSE_SDL_MIXER=1 \
             -sSTB_IMAGE=1 \
@@ -194,7 +271,7 @@ jobs:
             --embed-file runtime/Lineage.ini@/Lineage.ini \
             --embed-file upstream-l1j/src/sprite_table.txt@/sprite_table.txt \
             --preload-file runtime/lineage@/lineage \
-            2>&1 | tee reports/V40-link-log.txt
+            2>&1 | tee reports/V41-link-log.txt
           cat > dist/index.html <<'HTML_ENTRYPOINT'
           <!doctype html>
           <html lang="ko">
@@ -325,7 +402,7 @@ jobs:
           No synthetic player, monsters, portals, or map logic has been introduced.
           TEXT
 
-      - name: "V40 | Enable cross-origin isolation on static GitHub Pages"
+      - name: "V41 | Enable cross-origin isolation on static GitHub Pages"
         shell: bash
         run: |
           set -euo pipefail
@@ -351,21 +428,21 @@ jobs:
           test -s dist/lineage.js
           test -s dist/lineage.wasm
           test -s dist/lineage.data
-          sha256sum dist/lineage.js dist/lineage.wasm dist/lineage.data > reports/V40-runtime-hashes.txt
-          du -h dist/* > reports/V40-deployment-sizes.txt
+          sha256sum dist/lineage.js dist/lineage.wasm dist/lineage.data > reports/V41-runtime-hashes.txt
+          du -h dist/* > reports/V41-deployment-sizes.txt
 
-      - name: "V40 | Upload actual engine compilation and HTML files"
+      - name: "V41 | Upload actual engine compilation and HTML files"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-Existing-Client-Wasm-V40
+          name: Sanctuary-Existing-Client-Wasm-V41
           path: |
             reports/
             dist/
           retention-days: 60
           if-no-files-found: warn
 
-      - name: "V40 | Publish existing-client WebAssembly HTML to gh-pages"
+      - name: "V41 | Publish existing-client WebAssembly HTML to gh-pages"
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -374,12 +451,12 @@ jobs:
           force_orphan: true
           enable_jekyll: false
 
-      - name: "V40 | Report actual execution-route status"
+      - name: "V41 | Report actual execution-route status"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V40 | Existing l1j-client WebAssembly route'
+            echo '# build-web.yml | V41 | Existing l1j-client WebAssembly route'
             echo 'Kept existing build-web.yml, without any new workflow.'
             echo 'Entire upstream l1j-client source compilation attempted; not reimplemented.'
             if test -s dist/lineage.wasm; then
