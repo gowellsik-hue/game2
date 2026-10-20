@@ -1,469 +1,163 @@
 
-name: "build-web.yml | V41 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V41 | Original Sanctuary engine runtime test"
+name: "audit-sanctuary-monsters.yml | V33 | 61CE Physical Motion ID and Bank Review"
+run-name: "audit-sanctuary-monsters.yml | V33 | Sanctuary Source 4-Dir Multi-Bank Audit"
 
-"on":
+on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - .github/workflows/build-web.yml
+    paths: [".github/workflows/audit-sanctuary-monsters.yml"]
 
 permissions:
-  contents: write
-
-concurrency:
-  group: build-web-yml-v41-original-engine
-  cancel-in-progress: false
+  contents: read
+  actions: read
 
 jobs:
-  original_engine_v41:
-    name: "build-web.yml | V41 | Compile existing l1j-client main() to WebAssembly"
+  v33-audit:
+    name: "V33 | Full monster source inventory, 492-event stats and Lv 0-10 HTML"
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 300
     steps:
-      - name: "V41 | Checkout existing game2"
-        uses: actions/checkout@v4
-
-      - name: "V41 | Checkout existing l1j-client C++ engine, unchanged"
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          repository: uglyoldbob/l1j-client
-          ref: 83052f6b1c5bda59d4c4cbaf01aa2e72ea409853
-          path: upstream-l1j
-          persist-credentials: false
+          fetch-depth: 0
 
-      - name: "V41 | Set up Emscripten for the original C++ source"
-        uses: emscripten-core/setup-emsdk@v15
-        with:
-          version: '3.1.74'
-
-      - name: "V41 | Compile ALL existing C++ and C source objects"
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -s upstream-l1j/Makefile.am
-          test -s upstream-l1j/COPYING
-          emcc --version | head -1
-          mkdir -p build/objects dist reports
-          cat > /tmp/v41-build-sources.py <<'PY_BUILD'
-          import pathlib, re, subprocess
-          src=pathlib.Path('upstream-l1j')
-          txt=(src/'Makefile.am').read_text()
-          m=re.search(r'^Lineage_SOURCES\s*=\s*\\\s*\n(.*?)\nif MAC',txt,re.M|re.S)
-          if not m: raise SystemExit('The upstream Lineage_SOURCES declaration changed')
-          files=re.findall(r'src/[\w./-]+\.(?:cpp|c)\b',m.group(1))
-          if len(files)<55: raise SystemExit('Unexpectedly small engine source list: '+str(len(files)))
-          (pathlib.Path('reports')/'V41-source-list.txt').write_text('\n'.join(files)+'\n')
-          flags=['-O1','-g0','-pthread','-fexceptions','-sUSE_SDL=1',
-                 '-sUSE_SDL_IMAGE=1','-sUSE_SDL_MIXER=1',
-                 '-Iupstream-l1j/src','-Iupstream-l1j/include']
-          objects=[]
-          for n,rel in enumerate(files):
-              file=src/rel
-              if not file.is_file():raise SystemExit('Missing original client file: '+str(file))
-              obj='build/objects/%03d.o'%n
-              compiler='emcc' if rel.endswith('.c') else 'em++'
-              argv=[compiler,*flags,'-c',str(file),'-o',obj]
-              print('Compiling',rel,flush=True)
-              subprocess.run(argv,check=True)
-              objects.append(obj)
-          pathlib.Path('build/objects-list.txt').write_text('\n'.join(objects))
-          print('Original sources compiled:',len(objects))
-          PY_BUILD
-          python3 /tmp/v41-build-sources.py 2>&1 | tee reports/V41-compile-log.txt
-          test -s build/objects-list.txt
-          test -z "$(git -C upstream-l1j status --porcelain)" || {
-            echo 'Upstream original sources were unexpectedly altered' >&2
-            exit 1
-          }
-
-      - name: "V41 | Cache small unchanged original startup resources"
-        id: startup_cache
-        uses: actions/cache@v4
-        with:
-          key: original-sanctuary-startup-idx-font-v1.0.0-v41
-          path: original-startup/
-
-      - name: "V41 | Fetch original Sanctuary startup data on first run"
-        if: steps.startup_cache.outputs.cache-hit != 'true'
-        shell: bash
+      - name: "V33 | Restore V32 verified sources and exact historical decoder"
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: "${{ github.token }}"
         run: |
           set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq p7zip-full
-          mkdir -p original-download original-startup
-          gh release download v1.0.0 -R gowellsik-hue/Game \
-            -p 'Sanctuary.of.Aden.-.Copy.*' -D original-download --clobber
-          test "$(find original-download -type f | wc -l)" -eq 46
-          7z x original-download/Sanctuary.of.Aden.-.Copy.zip \
-            -ooriginal-startup -y '-ir!*.idx' '-ir!*.fnt' \
-            > reports/V41-startup-extract-log.txt
-          rm -rf original-download
+          sudo apt-get install -y -qq p7zip-full python3-pil python3-yaml ruby
+          mkdir -p source/v2 source/v12 v30 previous game reports downloads paks
+          # Both workflows are pinned immutable committed source, not a moving branch.
+          git show 312eb3417871916e7337fec8f93ad665f1b03160:.github/workflows/audit-sanctuary-monsters.yml > source/v32-pinned.yml
+          git show 69d266d1a8b0d53b1bb4a8ca60b539b204f805c7:.github/workflows/audit-sanctuary-monsters.yml > source/v29-pinned.yml
+          git show 5c40dc3de28ee879182c6f60802a89432072c138:.github/workflows/audit-sanctuary-monsters.yml > source/decoder.yml
+          gh run download 38784834277 -R "$GITHUB_REPOSITORY" -n Sanctuary-V2-Reports -D source/v2
+          gh run download 38872552732 -R "$GITHUB_REPOSITORY" -n Sanctuary-V12-External-Action-and-NPC-Crosscheck -D source/v12
+          gh run download 39362135443 -R "$GITHUB_REPOSITORY" -n audit-sanctuary-monsters-v30-five-motion-review-61CE -D v30
+          gh run download 39364651925 -R "$GITHUB_REPOSITORY" -n github-pages -D previous
+          cp source/v2/all_sprite_candidates.csv source/all_sprite_candidates.csv
+          cp source/v2/exported_sprite_manifest.csv source/exported_sprite_manifest.csv
+          cp source/v12/03_external_npc_gfx_candidates.csv source/03_external_npc_gfx_candidates.csv
+          test -s v30/V30-source-review.json
+          test -s previous/artifact.tar
+          test -s source/decoder.yml
+          tar -xf previous/artifact.tar -C game --wildcards './knight/gameasync/Data/*.rxdata'
+          test -s game/knight/gameasync/Data/Scripts.rxdata
+          test -s game/knight/gameasync/Data/MMUQTFCAEUWWMMVPHJPLWSKVJOHMECOINFTBCWIOMapInfos.rxdata
 
-      - name: "V41 | Link the original client main() without recreated game logic"
-        shell: bash
+      - name: "V33 | Reconstruct tested V32 audit logic and missing V29 decoder"
         run: |
           set -euo pipefail
-          base='original-startup/Sanctuary of Aden - Copy'
-          # Real archive paths verified against the V29 full release manifest:
-          # Sprite00.idx and LOWERCASE font/eng.fnt.
-          original_idx="$base/Sprite00.idx"
-          original_font="$base/font/eng.fnt"
-          original_small_font="$base/font/small.fnt"
-          if [[ ! -s "$original_idx" || ! -s "$original_font" || ! -s "$original_small_font" ]]; then
-            echo 'V41 | Missing startup resources; actual extracted file paths:' >&2
-            find original-startup -type f | sort >&2
-            echo "Sprite00.idx present: $(test -s "$original_idx" && echo yes || echo no)" >&2
-            echo "font/eng.fnt present: $(test -s "$original_font" && echo yes || echo no)" >&2
-            echo "font/small.fnt present: $(test -s "$original_small_font" && echo yes || echo no)" >&2
-            exit 1
-          fi
-          mkdir -p runtime/lineage/Font
-          cp -a "$original_idx" runtime/lineage/Sprite00.idx
-          # The l1j-client requests 'Font/eng.fnt'; copy, never edit the source data.
-          cp -a "$original_font" runtime/lineage/Font/eng.fnt
-          # Original file is font/small.fnt; the existing client expects Font/SMALL.FNT.
-          cp -a "$original_small_font" runtime/lineage/Font/SMALL.FNT
-          cmp -s "$original_idx" runtime/lineage/Sprite00.idx
-          cmp -s "$original_font" runtime/lineage/Font/eng.fnt
-          cmp -s "$original_small_font" runtime/lineage/Font/SMALL.FNT
-          sha256sum "$original_idx" "$original_font" "$original_small_font" > reports/V41-original-startup-hashes.txt
-          printf 'V41: Sprite00.idx=%s, eng.fnt=%s, small.fnt=%s bytes\n' \
-            "$(stat -c %s "$original_idx")" "$(stat -c %s "$original_font")" "$(stat -c %s "$original_small_font")"
-          # This is a runtime path configuration, not a replacement game world.
-          cat > runtime/Lineage.ini <<'INI'
-          Path = /lineage/
-          NumServers = 1
-          Original Client Test
-              Port = 2001
-              GamePort = 2000
-              Names = 127.0.0.1
-          INI
-          test -s upstream-l1j/src/sprite_table.txt
-          # Emscripten 3.1.74's SDL1 compatibility library exports SDL_PollEvent
-          # and IMG_Load_RW but not these three SDL 1.2 compatibility entrypoints.
-          # Keep the original 60 C/C++ client files unchanged. The following is
-          # a web-platform adapter for missing SDL1 entrypoints and broken SDL1 thread stubs.
-          cat > build/v41-sdl12-compat.cpp <<'CPP_COMPAT'
-          #include <SDL/SDL.h>
-          #include <SDL/SDL_image.h>
-          #include <cstring>
-          #include <pthread.h>
-          #include <new>
-          #include <cstdio>
+          python3 - <<'PY'
+          import yaml,re,ast,sys
+          from pathlib import Path
+          v32=yaml.safe_load(Path('source/v32-pinned.yml').read_text(encoding='utf-8'))
+          v29=yaml.safe_load(Path('source/v29-pinned.yml').read_text(encoding='utf-8'))
+          old=v32['jobs']['v32-audit']['steps']
+          def run_with(fragment):
+              return next(x['run'] for x in old if fragment in x.get('name',''))
+          def extract(run,filename,tag):
+              rx=r"cat > "+re.escape(filename)+r" <<'"+tag+r"'\n(.*?)\n"+tag+r"(?:\n|$)"
+              # Literal newlines, not backslash-n strings.
+              rx=rx.replace('\\n',r'\n')
+              match=re.search(rx,run,re.S)
+              if not match:raise RuntimeError('Missing embedded source '+filename)
+              return match.group(1)+'\n'
+          ruby=extract(run_with('Read all V229 map event positions'),'/tmp/v32_events.rb','RUBY')
+          processor=extract(run_with('Extract all monster candidate SPR banks'),'/tmp/v32_processor.py','PY')
+          b64=extract(run_with('Extract all monster candidate SPR banks'),'source/V32-V230-review.b64','B64')
+          assert len(processor)>18000 and len(b64)>11000 and len(ruby)>1500
+          Path('/tmp/v33_events.rb').write_text(ruby,encoding='utf-8')
+          Path('/tmp/v33_processor.py').write_text(processor.replace('V32','V33'),encoding='utf-8')
+          Path('source/V33-V230-review.b64').write_text(b64,encoding='ascii')
+          stage=next(x['run'] for x in v29['jobs'][next(iter(v29['jobs']))]['steps']
+                     if 'Inspect all source motion banks' in x.get('name',''))
+          decoder=extract(stage,'/tmp/v29_core.py','PY')
+          assert all(('def '+fn+'(') in decoder for fn in ('original_reader','gif_encode'))
+          ast.parse(decoder)
+          ast.parse(processor.replace('V32','V33'))
+          Path('/tmp/v29_core.py').write_text(decoder,encoding='utf-8')
+          print('V33 VERIFIED: V32 Ruby, 492-row baseline, processor and V29 Reader/GIF decoder restored')
+          PY
+          ruby -c /tmp/v33_events.rb
+          python3 -m py_compile /tmp/v29_core.py /tmp/v33_processor.py
+          ruby /tmp/v33_events.rb game/knight/gameasync/Data source/V33-runtime-events.json
+          test -s source/V33-runtime-events.json
+          # Check decoder can load the original V17 Reader class before full extraction.
+          python3 - <<'PY'
+          import importlib.util
+          spec=importlib.util.spec_from_file_location('verified_v29','/tmp/v29_core.py')
+          mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
+          reader=mod.original_reader()
+          assert callable(reader) and callable(mod.gif_encode)
+          print('V33 VERIFIED: original SPR Reader and GIF encoder are available')
+          PY
 
-          // SDL 1.2 compatibility: Emscripten's JavaScript SDL_CreateThread
-          // intentionally throws. Use the already-enabled WASM pthreads.
-          // The original client's sources remain completely untouched.
-          struct SDL_Thread {
-            pthread_t native;
-            int (SDLCALL *callback)(void *);
-            void *argument;
-            int result;
-          };
-          struct SDL_mutex { pthread_mutex_t native; };
-
-          static void *v41_sdl_thread_entry(void *opaque) {
-            SDL_Thread *t = static_cast<SDL_Thread *>(opaque);
-            t->result = t->callback(t->argument);
-            return nullptr;
-          }
-
-          extern "C" {
-          SDL_Thread * SDLCALL SDL_CreateThread(int (SDLCALL *fn)(void *), void *data) {
-            if (!fn) return nullptr;
-            SDL_Thread *t = new (std::nothrow) SDL_Thread{};
-            if (!t) return nullptr;
-            t->callback = fn;
-            t->argument = data;
-            const int rc = pthread_create(&t->native, nullptr, v41_sdl_thread_entry, t);
-            if (rc != 0) {
-              std::fprintf(stderr, "V41 SDL_CreateThread pthread_create error=%d\n", rc);
-              delete t;
-              return nullptr;
-            }
-            std::fprintf(stderr, "V41 SDL_CreateThread: pthread started\n");
-            return t;
-          }
-          void SDLCALL SDL_WaitThread(SDL_Thread *t, int *status) {
-            if (!t) return;
-            const int rc = pthread_join(t->native, nullptr);
-            if (status) *status = rc == 0 ? t->result : -1;
-            if (rc != 0) std::fprintf(stderr, "V41 SDL_WaitThread error=%d\n", rc);
-            delete t;
-          }
-          SDL_mutex * SDLCALL SDL_CreateMutex(void) {
-            SDL_mutex *m = new (std::nothrow) SDL_mutex{};
-            if (!m) return nullptr;
-            pthread_mutexattr_t attr;
-            int rc = pthread_mutexattr_init(&attr);
-            if (rc == 0) {
-              // Original sdl_user::change_drawmode() locks draw_mtx recursively.
-              rc = pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-              if (rc == 0) rc = pthread_mutex_init(&m->native, &attr);
-              pthread_mutexattr_destroy(&attr);
-            }
-            if (rc != 0) {
-              std::fprintf(stderr, "V41 SDL_CreateMutex error=%d\n", rc);
-              delete m;
-              return nullptr;
-            }
-            return m;
-          }
-          int SDLCALL SDL_mutexP(SDL_mutex *m) {
-            return m && pthread_mutex_lock(&m->native) == 0 ? 0 : -1;
-          }
-          int SDLCALL SDL_mutexV(SDL_mutex *m) {
-            return m && pthread_mutex_unlock(&m->native) == 0 ? 0 : -1;
-          }
-          void SDLCALL SDL_DestroyMutex(SDL_mutex *m) {
-            if (!m) return;
-            pthread_mutex_destroy(&m->native);
-            delete m;
-          }
-          int SDLCALL SDL_WaitEvent(SDL_Event *event) {
-            // Original client's main SDL event loop is on a pthread worker.
-            // Emulate SDL 1.2 blocking wait via the available SDL_PollEvent.
-            if (!event) return 0;
-            for (;;) {
-              const int result = SDL_PollEvent(event);
-              if (result != 0) return result;
-              SDL_Delay(10);
-            }
-          }
-          int SDLCALL IMG_isPNG(SDL_RWops *source) {
-            if (!source) return 0;
-            const int pos = SDL_RWtell(source);
-            if (pos < 0) return 0;
-            unsigned char signature[8] = {0};
-            const int got = SDL_RWread(source, signature, 1, sizeof(signature));
-            SDL_RWseek(source, pos, SEEK_SET);
-            const unsigned char expected[8] = {137, 80, 78, 71, 13, 10, 26, 10};
-            return got == sizeof(signature) &&
-                   std::memcmp(signature, expected, sizeof(expected)) == 0;
-          }
-          SDL_Surface * SDLCALL IMG_LoadPNG_RW(SDL_RWops *source) {
-            // The original client passes an SDL_RWops memory stream.
-            // STB_IMAGE=1 is required for Emscripten's IMG_Load_RW to decode it.
-            return source ? IMG_Load_RW(source, 0) : nullptr;
-          }
-          }
-          CPP_COMPAT
-          em++ -O1 -pthread -fexceptions \
-            -Iupstream-l1j/src -Iupstream-l1j/include \
-            -sUSE_SDL=1 -sUSE_SDL_IMAGE=1 -sUSE_SDL_MIXER=1 \
-            -c build/v41-sdl12-compat.cpp -o build/v41-sdl12-compat.o
-          mapfile -t objects < build/objects-list.txt
-          test "${#objects[@]}" -eq 60
-          em++ "${objects[@]}" build/v41-sdl12-compat.o -o dist/lineage.js \
-            -O1 -pthread -fexceptions \
-            -sUSE_SDL=1 -sUSE_SDL_IMAGE=1 -sUSE_SDL_MIXER=1 \
-            -sSTB_IMAGE=1 \
-            -sMODULARIZE=1 -sEXPORT_NAME=createLineage \
-            -sENVIRONMENT=web,worker -sPROXY_TO_PTHREAD=1 \
-            -sPTHREAD_POOL_SIZE=5 -sALLOW_MEMORY_GROWTH=1 \
-            -sINITIAL_MEMORY=201326592 -sSTACK_SIZE=5242880 \
-            -sEXIT_RUNTIME=0 -sFORCE_FILESYSTEM=1 -sASSERTIONS=1 \
-            -sEXPORTED_RUNTIME_METHODS=FS \
-            --embed-file runtime/Lineage.ini@/Lineage.ini \
-            --embed-file upstream-l1j/src/sprite_table.txt@/sprite_table.txt \
-            --preload-file runtime/lineage@/lineage \
-            2>&1 | tee reports/V41-link-log.txt
-          cat > dist/index.html <<'HTML_ENTRYPOINT'
-          <!doctype html>
-          <html lang="ko">
-          <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-          <meta name="theme-color" content="#111820">
-          <title>Sanctuary — Original Client Web Runtime</title>
-          <style>
-          :root{color-scheme:dark;font:14px/1.45 system-ui,-apple-system,'Noto Sans KR',sans-serif}
-          *{box-sizing:border-box}body{margin:0;background:#0c1118;color:#eef3fa}
-          header{height:49px;display:flex;gap:12px;align-items:center;justify-content:space-between;padding:0 14px;background:#182230;border-bottom:1px solid #2b394c}
-          header strong{font-size:14px}#state{font-size:12px;color:#9db6cd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-          #stage{position:relative;display:flex;align-items:center;justify-content:center;height:calc(100dvh - 49px - env(safe-area-inset-bottom));overflow:hidden;background:#06090c}
-          #canvas{display:block;width:min(100%,calc((100dvh - 145px)*4/3));height:auto;max-height:calc(100dvh - 145px);aspect-ratio:4/3;object-fit:contain;image-rendering:pixelated;background:#050505;outline:none;touch-action:none}
-          #overlay{position:absolute;inset:0;display:flex;flex-direction:column;gap:9px;align-items:center;justify-content:center;padding:22px;text-align:center;background:rgba(6,9,12,.93)}
-          #overlay.hidden{display:none}#overlay h1{font-size:18px;font-weight:700;margin:0}#overlay p{max-width:440px;margin:0;color:#c1ccda;font-size:13px;word-break:break-word}
-          #overlay button,.controls button{border:1px solid #61758a;background:#2a3b4f;color:white;border-radius:9px;padding:10px 16px;font:inherit;cursor:pointer}
-          #overlay button{margin-top:6px;font-weight:700}
-          #logbox{position:absolute;left:10px;top:8px;width:min(520px,calc(100% - 20px));max-height:25vh;padding:8px 10px;font:11px/1.4 ui-monospace,monospace;overflow:auto;white-space:pre-wrap;background:rgba(0,0,0,.77);border-radius:7px;display:none;pointer-events:none}
-          #logbox.visible{display:block}
-          #controls{display:none;position:absolute;left:0;right:0;bottom:max(8px,env(safe-area-inset-bottom));pointer-events:none;justify-content:space-between;padding:0 max(10px,env(safe-area-inset-left))}
-          .controls{display:grid;grid-template-columns:repeat(3,52px);gap:5px;pointer-events:auto;touch-action:none;user-select:none;-webkit-user-select:none}
-          .controls button{min-width:51px;min-height:47px;padding:2px;font-weight:700;background:rgba(34,53,75,.76);touch-action:none}
-          .controls .up{grid-column:2}.controls .left{grid-column:1;grid-row:2}.controls .down{grid-column:2;grid-row:2}.controls .right{grid-column:3;grid-row:2}
-          #rightkeys{display:flex;align-items:end;pointer-events:auto;gap:8px}
-          #rightkeys button{font-size:13px}
-          #tools{position:absolute;right:10px;top:10px;display:flex;gap:6px}#tools button{font-size:11px;background:rgba(30,49,66,.88);color:#bcd7f0;border:1px solid #40546b;border-radius:6px;padding:5px 8px}
-          @media (pointer:coarse){#controls{display:flex}#canvas{max-height:calc(100dvh - 49px)}.controls{grid-template-columns:repeat(3,44px)}.controls button{min-width:43px;min-height:44px}}
-          </style>
-          </head>
-          <body>
-          <header><strong>Sanctuary | Original Client Runtime</strong><span id="state" role="status" aria-live="polite">초기화 전</span></header>
-          <main id="stage">
-            <canvas id="canvas" width="800" height="600" tabindex="0" aria-label="기존 클라이언트가 그리는 실제 SDL 화면"></canvas>
-            <div id="overlay" role="alert">
-              <h1 id="head">원본 클라이언트 실행 준비</h1>
-              <p id="desc">이 페이지는 게임 화면을 다시 그리지 않습니다. 빌드된 C++ 클라이언트의 WebAssembly 실행 파일을 직접 불러옵니다.</p>
-              <button type="button" id="start">클라이언트 실행</button>
-            </div>
-            <pre id="logbox"></pre>
-            <div id="tools"><button id="logBtn" type="button">로그</button><button id="fullBtn" type="button">전체화면</button></div>
-            <div id="controls">
-              <div class="controls" aria-label="키보드 방향키">
-                <button data-key="ArrowUp" class="up" aria-label="위">▲</button>
-                <button data-key="ArrowLeft" class="left" aria-label="왼쪽">◀</button>
-                <button data-key="ArrowDown" class="down" aria-label="아래">▼</button>
-                <button data-key="ArrowRight" class="right" aria-label="오른쪽">▶</button>
-              </div>
-              <div id="rightkeys" class="controls"><button data-key="Escape">ESC</button><button data-key="Enter">ENTER</button></div>
-            </div>
-          </main>
-          <script>
-          'use strict';
-          const canvas=document.getElementById('canvas');
-          const overlay=document.getElementById('overlay');
-          const state=document.getElementById('state');
-          const head=document.getElementById('head');
-          const desc=document.getElementById('desc');
-          const start=document.getElementById('start');
-          const logbox=document.getElementById('logbox');
-          let launched=false;
-          function status(message){state.textContent=message;}
-          function log(message){const line=String(message??'');logbox.textContent+=(line+'\n');if(logbox.textContent.length>24000)logbox.textContent=logbox.textContent.slice(-16000);logbox.scrollTop=logbox.scrollHeight;console.log('[Lineage]',line);}
-          function problem(message){status('실행 장애');head.textContent='클라이언트 실행 실패';desc.textContent=message;overlay.classList.remove('hidden');start.textContent='다시 시도';start.disabled=false;launched=false;log(message);logbox.classList.add('visible');}
-          function showRuntime(){status('WebAssembly 런타임 초기화 완료 (게임 진입 별도 확인)');overlay.classList.add('hidden');canvas.focus({preventScroll:true});}
-          async function checkCrossOriginIsolation(){
-            if(crossOriginIsolated)return true;
-            if(!('serviceWorker' in navigator) || !isSecureContext)return false;
-            try{
-              await navigator.serviceWorker.register('./coi-serviceworker.js',{scope:'./'});
-              await navigator.serviceWorker.ready;
-              if(navigator.serviceWorker.controller===null){
-                const once='sanctuary-coi-reload';
-                if(sessionStorage.getItem(once)!=='1'){
-                  sessionStorage.setItem(once,'1');
-                  location.reload();
-                  return null;
-                }
-              }
-              return crossOriginIsolated;
-            }catch(err){log('Isolation: '+err);return false;}
-          }
-          function loadScript(src){return new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.async=true;s.onload=resolve;s.onerror=()=>reject(new Error(src+' 파일을 찾거나 실행하지 못했습니다.'));document.head.append(s);});}
-          async function startEngine(){
-            if(launched)return;
-            launched=true;start.disabled=true;status('엔진 로딩 중');head.textContent='원본 C++ 클라이언트 로딩 중';desc.textContent='컴파일된 lineage.js / lineage.wasm 파일을 확인합니다.';
-            try{
-              if(location.protocol==='file:')throw Error('file://에서는 WebAssembly 데이터 파일을 불러올 수 없습니다. GitHub Pages 또는 로컬 HTTP 서버에서 여세요.');
-              const isolated=await checkCrossOriginIsolation();
-              if(isolated===null)return;
-              if(!isolated){log('SharedArrayBuffer 비활성: Cross-Origin-Isolation 필요');throw Error('기존 SDL 스레드 실행에는 COOP/COEP와 SharedArrayBuffer가 필요합니다. HTTPS 환경에서 다시 실행하세요.');}
-              const response=await fetch('./lineage.js',{method:'HEAD',cache:'no-store'});
-              if(!response.ok)throw Error('lineage.js가 없습니다. 아직 C++ 클라이언트의 WebAssembly 빌드/배포가 완료되지 않았습니다.');
-              if(typeof window.createLineage!=='function')await loadScript('./lineage.js');
-              if(typeof window.createLineage!=='function')throw Error('lineage.js에 createLineage() 엔트리 포인트가 없습니다. 빌드 설정을 확인하세요.');
-              status('원본 클라이언트 main() 실행 요청');
-              await window.createLineage({
-                canvas, noInitialRun:false, locateFile:(file,prefix)=>'./'+file,
-                print:(...x)=>log(x.join(' ')), printErr:(...x)=>log('STDERR '+x.join(' ')),
-                setStatus:status,
-                onRuntimeInitialized:showRuntime,
-                onAbort:(what)=>problem('WebAssembly abort: '+what),
-                onExit:(code)=>problem('원본 클라이언트 프로세스 종료 (exit='+code+')'),
-                monitorRunDependencies:(n)=>status(n?'원본 데이터 로딩 중 ('+n+')':'데이터 초기화 완료')
-              });
-            }catch(err){problem(err?.message||String(err));}
-          }
-          start.addEventListener('click',startEngine);
-          window.addEventListener('error',event=>{if(launched)problem(event.message||'알 수 없는 런타임 오류');});
-          window.addEventListener('unhandledrejection',event=>{if(launched)problem(String(event.reason));});
-          document.getElementById('logBtn').addEventListener('click',()=>logbox.classList.toggle('visible'));
-          document.getElementById('fullBtn').addEventListener('click',()=>{if(!document.fullscreenElement)document.getElementById('stage').requestFullscreen?.();else document.exitFullscreen?.();});
-          function keyEvent(key,type){const code=key==='Escape'?'Escape':key==='Enter'?'Enter':key;const ev=new KeyboardEvent(type,{key,code,bubbles:true,cancelable:true});window.dispatchEvent(ev);document.dispatchEvent(ev);canvas.dispatchEvent(ev);}
-          for(const button of document.querySelectorAll('[data-key]')){
-            button.addEventListener('pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);keyEvent(button.dataset.key,'keydown');});
-            for(const type of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(type,e=>{e.preventDefault();keyEvent(button.dataset.key,'keyup');});
-          }
-          </script>
-          </body></html>
-          HTML_ENTRYPOINT
-          cp upstream-l1j/COPYING dist/L1J-SOURCE-LICENSE.txt
-          cat > dist/source.txt <<'TEXT'
-          Engine: uglyoldbob/l1j-client, C/C++ sources unchanged
-          Source revision: 83052f6b1c5bda59d4c4cbaf01aa2e72ea409853
-          This is not the original Sanctuary Windows executable.
-          The original client depends on map/animation archives and a compatible game server.
-          No synthetic player, monsters, portals, or map logic has been introduced.
-          TEXT
-
-      - name: "V41 | Enable cross-origin isolation on static GitHub Pages"
-        shell: bash
+      - name: "V33 | Restore original Sanctuary SPR source PAKs"
+        env:
+          GH_TOKEN: "${{ github.token }}"
         run: |
           set -euo pipefail
-          cat > dist/coi-serviceworker.js <<'SW'
-          'use strict';
-          self.addEventListener('install',event=>event.waitUntil(self.skipWaiting()));
-          self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
-          self.addEventListener('fetch',event=>{
-            const req=event.request;
-            if(new URL(req.url).origin!==self.location.origin)return;
-            event.respondWith(fetch(req).then(res=>{
-              if(!res.ok||res.type==='opaque')return res;
-              const headers=new Headers(res.headers);
-              headers.set('Cross-Origin-Embedder-Policy','require-corp');
-              headers.set('Cross-Origin-Opener-Policy','same-origin');
-              headers.set('Cross-Origin-Resource-Policy','same-origin');
-              return new Response(res.body,{status:res.status,statusText:res.statusText,headers});
-            }));
-          });
-          SW
-          node --check dist/coi-serviceworker.js
-          test -s dist/index.html
-          test -s dist/lineage.js
-          test -s dist/lineage.wasm
-          test -s dist/lineage.data
-          sha256sum dist/lineage.js dist/lineage.wasm dist/lineage.data > reports/V41-runtime-hashes.txt
-          du -h dist/* > reports/V41-deployment-sizes.txt
+          gh release download v1.0.0 -R "$GITHUB_REPOSITORY" --pattern "Sanctuary.of.Aden.-.Copy.*" -D downloads
+          7z x downloads/Sanctuary.of.Aden.-.Copy.zip "Sanctuary of Aden - Copy/Sprite*.pak" "-o${PWD}/paks" -y > reports/V33-original-pak-extract.log
+          test "$(find paks -type f -name 'Sprite*.pak' | wc -l)" -ge 17
+          rm -rf downloads
+          echo 'V33: all 17 original Sprite PAK archives extracted'
 
-      - name: "V41 | Upload actual engine compilation and HTML files"
+      - name: "V33 | Extract ALL candidates, validate original SHA and render Lv 0-10 HTML"
+        run: |
+          set -euo pipefail
+          python3 /tmp/v33_processor.py
+          test -s reports/V33-summary.json
+          test -s reports/audit-sanctuary-monsters-V33-level-0-10-integrated.html
+
+      - name: "V33 | Validate 492, cardinal directions, source hashes and integrated HTML"
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv,json,re,subprocess,collections
+          from pathlib import Path
+          p=Path('reports')
+          s=json.loads((p/'V33-summary.json').read_text(encoding='utf-8'))
+          assert s['version']=='V33'
+          assert s['all_monster_rows']==492 and s['low_level_rows']==23
+          assert s['all_runtime_map_files']>=40 and s['all_runtime_events']>=800
+          assert s['source_indexed_spr']==158040 and s['source_inventory_actor_ids']>=8233
+          assert s['monsters_source_candidate_ids']>=723
+          assert s['selected_cardinal_spr']>=15000
+          assert s['sha_checked_cardinal_spr']==s['selected_cardinal_spr']
+          assert s['gif_count']>=1000,('Too few decoded original animations',s)
+          assert not s['runtime_stats_applied'] and not s['motion_assignment_approved']
+          g=list((p/'gifs').rglob('*.gif'))
+          assert len(g)==s['gif_count']
+          with (p/'V33-all-cardinal-gif-manifest.csv').open(encoding='utf-8-sig',newline='') as f:
+              rows=list(csv.DictReader(f))
+          assert len(rows)==len(g)
+          assert {int(x['direction']) for x in rows}=={1,3,5,7}
+          assert all(x['byte_verified']=='True' and x['motion']=='UNCLASSIFIED' for x in rows)
+          for f in [p/'V33-full-492-monster-db-review.csv',p/'V33-level-0-10-monster-db-review.csv']:
+              assert f.is_file() and f.stat().st_size>2000
+          h=(p/'audit-sanctuary-monsters-V33-level-0-10-integrated.html').read_text(encoding='utf-8')
+          match=re.search(r'<script id="payload" type="application/json">(.*?)</script>',h,re.S)
+          assert match and len(json.loads(match.group(1))['rows'])==23
+          client=re.search(r'<script>(.*?)</script>',h,re.S)
+          assert client
+          Path('/tmp/v33-client.js').write_text(client.group(1),encoding='utf-8')
+          subprocess.run(['node','--check','/tmp/v33-client.js'],check=True)
+          print('V33 COMPLETE',json.dumps(s,ensure_ascii=False))
+          PY
+          cat reports/V33-summary.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: "V33 | Upload original 4-direction GIFs, complete DB and level 0-10 integrated HTML"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-Existing-Client-Wasm-V41
-          path: |
-            reports/
-            dist/
-          retention-days: 60
+          name: audit-sanctuary-monsters-v33-all-monsters-level-0-10
+          path: reports/
+          retention-days: 30
           if-no-files-found: warn
-
-      - name: "V41 | Publish existing-client WebAssembly HTML to gh-pages"
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist
-          publish_branch: gh-pages
-          force_orphan: true
-          enable_jekyll: false
-
-      - name: "V41 | Report actual execution-route status"
-        if: always()
-        shell: bash
-        run: |
-          {
-            echo '# build-web.yml | V41 | Existing l1j-client WebAssembly route'
-            echo 'Kept existing build-web.yml, without any new workflow.'
-            echo 'Entire upstream l1j-client source compilation attempted; not reimplemented.'
-            if test -s dist/lineage.wasm; then
-              echo 'WASM output exists. Browser/game entry not yet verified.'
-              echo 'Browser entrypoint: gh-pages/index.html.'
-              echo 'Actual game world is NOT verified until remote browser runtime succeeds.'
-            else
-              echo 'WASM compilation failed: inspect compile and linker logs.'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          compression-level: 0
