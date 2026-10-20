@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V33 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V33 | Original Sanctuary engine runtime test"
+name: "build-web.yml | V34 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V34 | Original Sanctuary engine runtime test"
 
 "on":
   workflow_dispatch:
@@ -13,12 +13,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-web-yml-v33-original-engine
+  group: build-web-yml-v34-original-engine
   cancel-in-progress: false
 
 jobs:
-  original_engine_v33:
-    name: "build-web.yml | V33 | Run ORIGINAL Lineage client, no HTML replacement"
+  original_engine_v34:
+    name: "build-web.yml | V34 | Run ORIGINAL Lineage client, no HTML replacement"
     runs-on: windows-2025
     timeout-minutes: 90
 
@@ -27,10 +27,10 @@ jobs:
         shell: pwsh
 
     steps:
-      - name: "V33 | Checkout game2"
+      - name: "V34 | Checkout game2"
         uses: actions/checkout@v4
 
-      - name: "V33 | Download original Sanctuary archive (46 volumes)"
+      - name: "V34 | Download original Sanctuary archive (46 volumes)"
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -41,11 +41,12 @@ jobs:
           }
           gh release download v1.0.0 -R gowellsik-hue/Game `
             -p 'Sanctuary.of.Aden.-.Copy.*' -D original --clobber
-          if ($LASTEXITCODE -ne 0) { throw 'Release download failed' }
-          $count = @(Get-ChildItem original -File).Count
-          if ($count -ne 46) { throw "Expected 46 volumes, found $count" }
+          if ($LASTEXITCODE -ne 0) { throw 'Original release download failed' }
+          if (@(Get-ChildItem original -File).Count -ne 46) {
+            throw 'Expected exactly 46 original archive volumes'
+          }
           1..45 | ForEach-Object {
-            $part = ('Sanctuary.of.Aden.-.Copy.z{0:d2}' -f $_)
+            $part = 'Sanctuary.of.Aden.-.Copy.z{0:d2}' -f $_
             if (-not (Test-Path (Join-Path original $part))) {
               throw "Missing archive part: $part"
             }
@@ -53,47 +54,77 @@ jobs:
           if (-not (Test-Path 'original/Sanctuary.of.Aden.-.Copy.zip')) {
             throw 'Missing final ZIP volume'
           }
-          Get-PSDrive C | Out-File reports/V33-disk-before.txt
+          Get-PSDrive -PSProvider FileSystem |
+            Out-File reports/V34-disk-before.txt
 
-      - name: "V33 | Restore original executable environment without edits"
+      - name: "V34 | Restore original startup files without modification"
         run: |
           $ErrorActionPreference = 'Stop'
           $seven = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
-          if (-not $seven) {
-            $seven = 'C:\Program Files\7-Zip\7z.exe'
-          }
-          if (-not (Test-Path $seven)) {
-            throw '7-Zip is not installed on this Windows runner'
-          }
+          if (-not $seven) { $seven = 'C:\Program Files\7-Zip\7z.exe' }
+          if (-not (Test-Path $seven)) { throw '7-Zip unavailable' }
           & $seven x 'original/Sanctuary.of.Aden.-.Copy.zip' '-onative' '-y' `
             '-ir!*.exe' '-ir!*.dll' '-ir!*.ocx' '-ir!*.bin' `
             '-ir!*.ini' '-ir!*.cfg' '-ir!*.config' '-ir!*.manifest' `
-            '-ir!*.idx' '-ir!*.pak' *> reports/V33-extract.log
-          if ($LASTEXITCODE -ne 0) { throw '7-Zip extraction failed' }
+            '-ir!*.idx' '-ir!*.pak' *> reports/V34-original-extract.log
+          if ($LASTEXITCODE -ne 0) { throw 'Original extraction failed' }
           $root = Join-Path $PWD 'native/Sanctuary of Aden - Copy'
-          foreach ($file in @('Lineage.exe', 'lin.bin', 'TW13032701.exe')) {
+          foreach ($file in @('Lineage.exe', 'lin.bin', 'Sprite.pak', 'Tile.pak')) {
             if (-not (Test-Path (Join-Path $root $file))) {
-              throw "Original executable missing: $file"
+              throw "Missing original file: $file"
             }
           }
-          Get-PSDrive C | Out-File reports/V33-disk-after.txt
-          $data = foreach ($file in @('Lineage.exe', 'lin.bin', 'TW13032701.exe')) {
-            $path = Join-Path $root $file
-            $item = Get-Item $path
-            $sig = Get-AuthenticodeSignature -FilePath $path
-            [pscustomobject]@{
-              name = $file
-              bytes = $item.Length
-              sha256 = (Get-FileHash $path -Algorithm SHA256).Hash
-              file_version = $item.VersionInfo.FileVersion
-              company = $item.VersionInfo.CompanyName
-              signature_status = [string]$sig.Status
-            }
-          }
-          $data | ConvertTo-Json -Depth 5 | Set-Content `
-            reports/V33-native-binary-inventory.json -Encoding utf8
+          $path = Join-Path $root 'lin.bin'
+          $hash = (Get-FileHash $path -Algorithm SHA256).Hash
+          $hash | Set-Content reports/V34-lin-original-sha256.txt
+          Get-PSDrive -PSProvider FileSystem |
+            Out-File reports/V34-disk-after.txt
+          Remove-Item original -Recurse -Force
 
-      - name: "V33 | Test original runtime on NATIVE Windows (not Wine)"
+      - name: "V34 | Install official Microsoft Visual C++ 2012 Update 4 x86"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dll = Join-Path $env:WINDIR 'SysWOW64\MSVCP110.dll'
+          "msvcp110_present_before=$(Test-Path $dll)" |
+            Set-Content reports/V34-runtime-before.txt
+          $url = 'https://download.microsoft.com/download/1/6/B/16B06F60-3B20-4FF2-B699-5E9B7962F9AE/VSU_4/vcredist_x86.exe'
+          $expected = 'B924AD8062EAF4E70437C8BE50FA612162795FF0839479546CE907FFA8D6E386'
+          $installer = Join-Path $env:RUNNER_TEMP 'v34-vcredist2012-x86.exe'
+          Invoke-WebRequest -Uri $url -OutFile $installer -MaximumRedirection 5
+          $actual = (Get-FileHash $installer -Algorithm SHA256).Hash
+          if ($actual -ne $expected) {
+            throw "Microsoft installer SHA256 mismatch: $actual"
+          }
+          $signature = Get-AuthenticodeSignature -FilePath $installer
+          if ($signature.Status -ne 'Valid' -or
+              $signature.SignerCertificate.Subject -notmatch 'Microsoft') {
+            throw "Microsoft installer signature invalid: $($signature.Status)"
+          }
+          "installer_sha256=$actual" |
+            Set-Content reports/V34-installer-verification.txt
+          "installer_signature=$($signature.Status)" |
+            Add-Content reports/V34-installer-verification.txt
+          $process = Start-Process -FilePath $installer `
+            -ArgumentList '/quiet /norestart' -PassThru -Wait
+          "installer_exit_code=$($process.ExitCode)" |
+            Set-Content reports/V34-runtime-install.txt
+          Remove-Item $installer -Force
+          if ($process.ExitCode -notin @(0, 3010, 1638)) {
+            throw "Microsoft VC++ x86 installation failed: $($process.ExitCode)"
+          }
+          if (-not (Test-Path $dll)) {
+            throw 'MSVCP110.dll still absent from SysWOW64'
+          }
+          foreach ($name in @('MSVCP110.dll', 'MSVCR110.dll')) {
+            $path = Join-Path (Split-Path $dll) $name
+            if (-not (Test-Path $path)) { throw "Missing x86 runtime: $name" }
+            $file = Get-Item $path
+            $sig = Get-AuthenticodeSignature -FilePath $path
+            "$name | version=$($file.VersionInfo.FileVersion) | signature=$($sig.Status) | sha256=$((Get-FileHash $path -Algorithm SHA256).Hash)" |
+              Add-Content reports/V34-runtime-install.txt
+          }
+
+      - name: "V34 | Run original lin.bin with restored x86 runtime"
         run: |
           $ErrorActionPreference = 'Stop'
           Add-Type -TypeDefinition @'
@@ -101,7 +132,7 @@ jobs:
           using System.Collections.Generic;
           using System.Runtime.InteropServices;
           using System.Text;
-          public static class V33Windows {
+          public static class V34Windows {
               private delegate bool Callback(IntPtr hwnd, IntPtr unused);
               [DllImport("user32.dll")]
               private static extern bool EnumWindows(Callback callback, IntPtr unused);
@@ -147,145 +178,157 @@ jobs:
           }
           '@
           $root = Join-Path $PWD 'native/Sanctuary of Aden - Copy'
-          $results = @()
-          foreach ($exe in @('Lineage.exe', 'lin.bin', 'TW13032701.exe')) {
-            $path = Join-Path $root $exe
-            $samples = @()
-            $pidValue = $null
-            $launchError = $null
-            $exitCode = $null
-            $aliveAtEnd = $false
-            $process = $null
-            try {
-              $start = New-Object System.Diagnostics.ProcessStartInfo
-              $start.FileName = $path
-              $start.WorkingDirectory = $root
-              $start.UseShellExecute = $false
-              $process = [System.Diagnostics.Process]::Start($start)
-              if ($null -eq $process) { throw 'Process.Start returned null' }
-              $pidValue = $process.Id
-              for ($i = 1; $i -le 8; $i++) {
-                Start-Sleep -Seconds 3
-                $process.Refresh()
-                $alive = -not $process.HasExited
-                $captions = @()
-                if ($alive) {
-                  $captions = @([V33Windows]::CaptionsFor($process.Id))
-                }
-                $samples += [pscustomobject]@{
-                  seconds = $i * 3
-                  process_alive = $alive
-                  window_and_control_text = $captions
-                }
-                if (-not $alive) {
-                  $exitCode = $process.ExitCode
-                  break
-                }
-              }
+          $path = Join-Path $root 'lin.bin'
+          $process = $null
+          $samples = @()
+          $launchError = $null
+          $earlyExitCode = $null
+          $pidValue = $null
+          $aliveAtEnd = $false
+          try {
+            $start = New-Object System.Diagnostics.ProcessStartInfo
+            $start.FileName = $path
+            $start.WorkingDirectory = $root
+            $start.UseShellExecute = $false
+            $process = [System.Diagnostics.Process]::Start($start)
+            if ($null -eq $process) { throw 'Process.Start returned null' }
+            $pidValue = $process.Id
+            for ($i = 1; $i -le 10; $i++) {
+              Start-Sleep -Seconds 3
               $process.Refresh()
-              $aliveAtEnd = -not $process.HasExited
-            } catch {
-              $launchError = $_.Exception.Message
-            } finally {
-              if ($null -ne $process) {
-                try {
-                  $process.Refresh()
-                  if (-not $process.HasExited) { $process.Kill($true) }
-                } catch { }
-                $process.Dispose()
+              $alive = -not $process.HasExited
+              $captions = @()
+              if ($alive) { $captions = @([V34Windows]::CaptionsFor($process.Id)) }
+              $samples += [pscustomobject]@{
+                seconds = $i * 3
+                process_alive = $alive
+                window_and_control_text = $captions
+              }
+              if (-not $alive) {
+                $earlyExitCode = $process.ExitCode
+                break
               }
             }
-            $allText = (@($samples | ForEach-Object {
-              $_.window_and_control_text
-            }) -join ' ')
-            $results += [pscustomobject]@{
-              original_file = $exe
-              process_id = $pidValue
-              launch_error = $launchError
-              early_exit_code = $exitCode
-              alive_after_observation = $aliveAtEnd
-              runtime_expired_text_observed = `
-                ($allText -match 'RunTime Expired|Reinstall Lineage')
-              observations = $samples
+            $process.Refresh()
+            $aliveAtEnd = -not $process.HasExited
+          } catch {
+            $launchError = $_.Exception.Message
+          } finally {
+            if ($null -ne $process) {
+              try {
+                $process.Refresh()
+                if (-not $process.HasExited) { $process.Kill($true) }
+              } catch { }
+              $process.Dispose()
             }
           }
-          $results | ConvertTo-Json -Depth 9 | Set-Content `
-            reports/V33-native-process-results.json -Encoding utf8
+          $capturedText = (@($samples | ForEach-Object {
+            $_.window_and_control_text
+          }) -join ' ')
+          $observed = [pscustomobject]@{
+            version = 'V34'
+            original_file = 'lin.bin'
+            process_id = $pidValue
+            launch_error = $launchError
+            early_exit_code = $earlyExitCode
+            alive_after_observation = $aliveAtEnd
+            missing_msvcp110_observed = `
+              ($capturedText -match 'Cannot find.*MSVCP110[.]dll')
+            runtime_expired_observed = `
+              ($capturedText -match 'RunTime Expired|Reinstall Lineage')
+            observations = $samples
+          }
+          $observed | ConvertTo-Json -Depth 9 | Set-Content `
+            reports/V34-lin-runtime-results.json -Encoding utf8
+          $hashAfter = (Get-FileHash $path -Algorithm SHA256).Hash
+          $hashBefore = (Get-Content reports/V34-lin-original-sha256.txt -Raw).Trim()
+          if ($hashAfter -ne $hashBefore) {
+            throw 'Original lin.bin hash changed during test'
+          }
 
-      - name: "V33 | Distinguish native runtime from browser execution"
+      - name: "V34 | Report real native runtime outcome"
         if: always()
         run: |
           $ErrorActionPreference = 'Stop'
-          $path = 'reports/V33-native-process-results.json'
+          $report = 'reports/V34-lin-runtime-results.json'
           $lines = @(
-            '# build-web.yml | V33 | NATIVE Windows original-client verification',
+            '# build-web.yml | V34 | ORIGINAL engine x86 runtime test',
             '',
-            'V32 Wine test: lin.bin showed "RunTime Expired - Reinstall Lineage."',
-            'V33 executes original files on a GitHub-hosted Windows runner.',
-            'The original binaries and system clock are NOT modified.',
-            'No license checks, protection, EULA, or login are bypassed.',
-            '',
-            '| Original file | Started | Alive at 24 s | Expired text detected |',
-            '|---|---|---|---|'
+            'V33 native lin.bin showed: Cannot find MSVCP110.dll.',
+            'V34 installs the official Microsoft Visual C++ 2012 Update 4 x86 runtime.',
+            'No protected file, system clock, or licensing mechanism was changed.',
+            ''
           )
-          if (Test-Path $path) {
-            $results = @(Get-Content $path -Raw | ConvertFrom-Json)
-            foreach ($r in $results) {
-              $started = $null -ne $r.process_id
-              $lines += "| $($r.original_file) | $started | $($r.alive_after_observation) | $($r.runtime_expired_text_observed) |"
-              if ($r.launch_error) {
-                $lines += "- $($r.original_file) start error: $($r.launch_error)"
-              }
-              $captions = @($r.observations | ForEach-Object {
-                $_.window_and_control_text
-              } | Where-Object { $_ } | Select-Object -Unique)
-              foreach ($caption in $captions | Select-Object -First 20) {
-                $lines += "- $($r.original_file) UI: $caption"
-              }
+          if (Test-Path 'reports/V34-runtime-install.txt') {
+            $lines += '## Runtime installation'
+            $lines += @(Get-Content reports/V34-runtime-install.txt)
+            $lines += ''
+          }
+          if (Test-Path $report) {
+            $result = Get-Content $report -Raw | ConvertFrom-Json
+            $lines += @(
+              '## Original lin.bin after installation',
+              "- Process started: $($null -ne $result.process_id)",
+              "- Alive at observation end: $($result.alive_after_observation)",
+              "- MSVCP110.dll missing message: $($result.missing_msvcp110_observed)",
+              "- RunTime Expired message: $($result.runtime_expired_observed)",
+              "- Launch exception: $($result.launch_error)",
+              ''
+            )
+            $messages = @($result.observations | ForEach-Object {
+              $_.window_and_control_text
+            } | Where-Object { $_ } | Select-Object -Unique)
+            $lines += '## Actual Windows UI text'
+            if ($messages.Count -eq 0) { $lines += '- No UI text detected' }
+            foreach ($message in $messages | Select-Object -First 45) {
+              $lines += "- $message"
             }
           } else {
-            $lines += '| Not tested | false | false | unknown |'
+            $lines += '- lin.bin test did not complete; inspect earlier step.'
           }
           $lines += @(
             '',
-            '## Interpretation limits',
-            '- GitHub-hosted Windows runners are not guaranteed to have an interactive desktop.',
-            '- Missing window captions cannot prove that no dialog appeared.',
-            '- A running process or window does not prove game-world rendering.',
-            '- Expired text detected by a window probe is positive evidence only.',
-            '- This is a native Windows test, NOT HTML or GitHub Pages gameplay.',
-            '- Full world data and audio were not required for this startup check.',
-            '- A valid original runtime/license and compatible browser architecture remain necessary.'
+            '## Limits',
+            '- Running an EXE or observing a window does not prove gameplay.',
+            '- Runtime expiration, if observed, remains a blocker requiring authorized resolution.',
+            '- No EULA clicks, server credentials, or logins were automated.',
+            '- This is native Windows execution, NOT web or GitHub Pages gameplay.',
+            '- No substitute HTML engine was created.'
           )
           $summary = $lines -join "`n"
-          $summary | Set-Content reports/V33-summary.md -Encoding utf8
+          $summary | Set-Content reports/V34-summary.md -Encoding utf8
           $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           Write-Output $summary
 
-      - name: "V33 | Upload original Windows-native runtime evidence"
+      - name: "V34 | Upload original engine runtime evidence"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-Original-Engine-V33-Runtime-Evidence
+          name: Sanctuary-Original-Engine-V34-Runtime-Evidence
           path: reports/
           retention-days: 90
           if-no-files-found: error
 
-      - name: "V33 | Verify the real client tests were recorded"
+      - name: "V34 | Verify native runtime test evidence"
         if: always()
         run: |
           $ErrorActionPreference = 'Stop'
           foreach ($file in @(
-            'V33-native-binary-inventory.json',
-            'V33-native-process-results.json',
-            'V33-summary.md'
+            'V34-runtime-install.txt',
+            'V34-lin-runtime-results.json',
+            'V34-summary.md'
           )) {
-            if (-not (Test-Path (Join-Path 'reports' $file))) {
-              throw "Missing required evidence: $file"
+            if (-not (Test-Path (Join-Path reports $file))) {
+              throw "Missing evidence: $file"
             }
           }
-          $results = @(Get-Content `
-            reports/V33-native-process-results.json -Raw | ConvertFrom-Json)
-          if ($results.Count -ne 3) { throw 'Expected three original-runtime tests' }
-          Write-Output 'V33 PASS: Windows-native original runtime evidence collected.'
-          Write-Output 'Gameplay and browser execution are NOT yet verified.'
+          $result = Get-Content reports/V34-lin-runtime-results.json `
+            -Raw | ConvertFrom-Json
+          if ($null -eq $result.process_id) {
+            throw "Original lin.bin failed to start: $($result.launch_error)"
+          }
+          if ($result.missing_msvcp110_observed) {
+            throw 'The original MSVCP110.dll error persists after installation'
+          }
+          Write-Output 'V34 PASS: Microsoft x86 runtime installed and original lin.bin retested.'
+          Write-Output 'This does NOT establish working gameplay or browser execution.'
