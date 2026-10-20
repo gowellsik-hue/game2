@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V37 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V37 | Original Sanctuary engine runtime test"
+name: "build-web.yml | V38 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V38 | Original Sanctuary engine runtime test"
 
 "on":
   workflow_dispatch:
@@ -13,19 +13,19 @@ permissions:
   contents: write
 
 concurrency:
-  group: build-web-yml-v37-original-engine
+  group: build-web-yml-v38-original-engine
   cancel-in-progress: false
 
 jobs:
-  original_engine_v37:
-    name: "build-web.yml | V37 | Compile existing l1j-client main() to WebAssembly"
+  original_engine_v38:
+    name: "build-web.yml | V38 | Compile existing l1j-client main() to WebAssembly"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - name: "V37 | Checkout existing game2"
+      - name: "V38 | Checkout existing game2"
         uses: actions/checkout@v4
 
-      - name: "V37 | Checkout existing l1j-client C++ engine, unchanged"
+      - name: "V38 | Checkout existing l1j-client C++ engine, unchanged"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -33,12 +33,12 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V37 | Set up Emscripten for the original C++ source"
+      - name: "V38 | Set up Emscripten for the original C++ source"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V37 | Compile ALL existing C++ and C source objects"
+      - name: "V38 | Compile ALL existing C++ and C source objects"
         shell: bash
         run: |
           set -euo pipefail
@@ -46,7 +46,7 @@ jobs:
           test -s upstream-l1j/COPYING
           emcc --version | head -1
           mkdir -p build/objects dist reports
-          cat > /tmp/v37-build-sources.py <<'PY_BUILD'
+          cat > /tmp/v38-build-sources.py <<'PY_BUILD'
           import pathlib, re, subprocess
           src=pathlib.Path('upstream-l1j')
           txt=(src/'Makefile.am').read_text()
@@ -54,7 +54,7 @@ jobs:
           if not m: raise SystemExit('The upstream Lineage_SOURCES declaration changed')
           files=re.findall(r'src/[\w./-]+\.(?:cpp|c)\b',m.group(1))
           if len(files)<55: raise SystemExit('Unexpectedly small engine source list: '+str(len(files)))
-          (pathlib.Path('reports')/'V37-source-list.txt').write_text('\n'.join(files)+'\n')
+          (pathlib.Path('reports')/'V38-source-list.txt').write_text('\n'.join(files)+'\n')
           flags=['-O1','-g0','-pthread','-fexceptions','-sUSE_SDL=1',
                  '-sUSE_SDL_IMAGE=1','-sUSE_SDL_MIXER=1',
                  '-Iupstream-l1j/src','-Iupstream-l1j/include']
@@ -71,21 +71,21 @@ jobs:
           pathlib.Path('build/objects-list.txt').write_text('\n'.join(objects))
           print('Original sources compiled:',len(objects))
           PY_BUILD
-          python3 /tmp/v37-build-sources.py 2>&1 | tee reports/V37-compile-log.txt
+          python3 /tmp/v38-build-sources.py 2>&1 | tee reports/V38-compile-log.txt
           test -s build/objects-list.txt
           test -z "$(git -C upstream-l1j status --porcelain)" || {
             echo 'Upstream original sources were unexpectedly altered' >&2
             exit 1
           }
 
-      - name: "V37 | Cache small unchanged original startup resources"
+      - name: "V38 | Cache small unchanged original startup resources"
         id: startup_cache
         uses: actions/cache@v4
         with:
-          key: original-sanctuary-startup-idx-font-v1.0.0-v37
+          key: original-sanctuary-startup-idx-font-v1.0.0-v38
           path: original-startup/
 
-      - name: "V37 | Fetch original Sanctuary startup data on first run"
+      - name: "V38 | Fetch original Sanctuary startup data on first run"
         if: steps.startup_cache.outputs.cache-hit != 'true'
         shell: bash
         env:
@@ -100,19 +100,34 @@ jobs:
           test "$(find original-download -type f | wc -l)" -eq 46
           7z x original-download/Sanctuary.of.Aden.-.Copy.zip \
             -ooriginal-startup -y '-ir!*.idx' '-ir!*.fnt' \
-            > reports/V37-startup-extract-log.txt
+            > reports/V38-startup-extract-log.txt
           rm -rf original-download
 
-      - name: "V37 | Link the original client main() without recreated game logic"
+      - name: "V38 | Link the original client main() without recreated game logic"
         shell: bash
         run: |
           set -euo pipefail
           base='original-startup/Sanctuary of Aden - Copy'
-          test -s "$base/Sprite00.idx"
-          test -s "$base/Font/eng.fnt"
+          # Real archive paths verified against the V29 full release manifest:
+          # Sprite00.idx and LOWERCASE font/eng.fnt.
+          original_idx="$base/Sprite00.idx"
+          original_font="$base/font/eng.fnt"
+          if [[ ! -s "$original_idx" || ! -s "$original_font" ]]; then
+            echo 'V38 | Missing startup resources; actual extracted file paths:' >&2
+            find original-startup -type f | sort >&2
+            echo "Sprite00.idx present: $(test -s "$original_idx" && echo yes || echo no)" >&2
+            echo "font/eng.fnt present: $(test -s "$original_font" && echo yes || echo no)" >&2
+            exit 1
+          fi
           mkdir -p runtime/lineage/Font
-          cp -a "$base/Sprite00.idx" runtime/lineage/
-          cp -a "$base/Font/eng.fnt" runtime/lineage/Font/
+          cp -a "$original_idx" runtime/lineage/Sprite00.idx
+          # The l1j-client requests 'Font/eng.fnt'; copy, never edit the source data.
+          cp -a "$original_font" runtime/lineage/Font/eng.fnt
+          cmp -s "$original_idx" runtime/lineage/Sprite00.idx
+          cmp -s "$original_font" runtime/lineage/Font/eng.fnt
+          sha256sum "$original_idx" "$original_font" > reports/V38-original-startup-hashes.txt
+          printf 'V38: Original Sprite00.idx=%s bytes, font/eng.fnt=%s bytes\n' \
+            "$(stat -c %s "$original_idx")" "$(stat -c %s "$original_font")"
           # This is a runtime path configuration, not a replacement game world.
           cat > runtime/Lineage.ini <<'INI'
           Path = /lineage/
@@ -136,7 +151,7 @@ jobs:
             --embed-file runtime/Lineage.ini@/Lineage.ini \
             --embed-file upstream-l1j/src/sprite_table.txt@/sprite_table.txt \
             --preload-file runtime/lineage@/lineage \
-            2>&1 | tee reports/V37-link-log.txt
+            2>&1 | tee reports/V38-link-log.txt
 
           cat > dist/index.html <<'HTML_ENTRYPOINT'
           <!doctype html>
@@ -269,7 +284,7 @@ jobs:
           No synthetic player, monsters, portals, or map logic has been introduced.
           TEXT
 
-      - name: "V37 | Enable cross-origin isolation on static GitHub Pages"
+      - name: "V38 | Enable cross-origin isolation on static GitHub Pages"
         shell: bash
         run: |
           set -euo pipefail
@@ -295,21 +310,21 @@ jobs:
           test -s dist/lineage.js
           test -s dist/lineage.wasm
           test -s dist/lineage.data
-          sha256sum dist/lineage.js dist/lineage.wasm dist/lineage.data > reports/V37-runtime-hashes.txt
-          du -h dist/* > reports/V37-deployment-sizes.txt
+          sha256sum dist/lineage.js dist/lineage.wasm dist/lineage.data > reports/V38-runtime-hashes.txt
+          du -h dist/* > reports/V38-deployment-sizes.txt
 
-      - name: "V37 | Upload actual engine compilation and HTML files"
+      - name: "V38 | Upload actual engine compilation and HTML files"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-Existing-Client-Wasm-V37
+          name: Sanctuary-Existing-Client-Wasm-V38
           path: |
             reports/
             dist/
           retention-days: 60
           if-no-files-found: warn
 
-      - name: "V37 | Publish existing-client WebAssembly HTML to gh-pages"
+      - name: "V38 | Publish existing-client WebAssembly HTML to gh-pages"
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -318,16 +333,16 @@ jobs:
           force_orphan: true
           enable_jekyll: false
 
-      - name: "V37 | Report actual execution-route status"
+      - name: "V38 | Report actual execution-route status"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V37 | Existing l1j-client WebAssembly route'
+            echo '# build-web.yml | V38 | Existing l1j-client WebAssembly route'
             echo 'Kept existing build-web.yml, without any new workflow.'
-            echo 'Entire upstream l1j-client source is compiled, not reimplemented.'
+            echo 'Entire upstream l1j-client source compilation attempted; not reimplemented.'
             if test -s dist/lineage.wasm; then
-              echo 'WASM file built successfully.'
+              echo 'WASM output exists. Browser/game entry not yet verified.'
               echo 'Browser entrypoint: gh-pages/index.html.'
               echo 'Actual game world is NOT verified until remote browser runtime succeeds.'
             else
