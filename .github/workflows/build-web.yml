@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V47 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V47 | Original Windows client legacy-clock bypass test"
+name: "build-web.yml | V48 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V48 | Original Windows client legacy-clock bypass test"
 
 "on":
   workflow_dispatch:
@@ -13,19 +13,19 @@ permissions:
   contents: write
 
 concurrency:
-  group: game2-v47-original-client
+  group: game2-v48-original-client
   cancel-in-progress: false
 
 jobs:
-  boxedwine_original_client_v47:
-    name: "build-web.yml | V47 | Original lin.bin under Boxedwine"
+  boxedwine_original_client_v48:
+    name: "build-web.yml | V48 | Original lin.bin under Boxedwine"
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
-      - name: "V47 | Checkout game2"
+      - name: "V48 | Checkout game2"
         uses: actions/checkout@v4
 
-      - name: "V47 | Checkout ORIGINAL Boxedwine emulator source"
+      - name: "V48 | Checkout ORIGINAL Boxedwine emulator source"
         uses: actions/checkout@v4
         with:
           repository: danoon2/Boxedwine
@@ -33,12 +33,12 @@ jobs:
           path: boxedwine-src
           persist-credentials: false
 
-      - name: "V47 | Set up Emscripten"
+      - name: "V48 | Set up Emscripten"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V47 | Verify original original-client package"
+      - name: "V48 | Verify original original-client package"
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -53,16 +53,16 @@ jobs:
           7z x work/archive/Sanctuary.of.Aden.-.Copy.zip \
             -owork/original -y '-ir!Lineage.exe' '-ir!lin.bin' \
             '-ir!Login.exe' '-ir!*.dll' '-ir!*.ini' \
-            > reports/V47-extract.log
+            > reports/V48-extract.log
           original='work/original/Sanctuary of Aden - Copy'
           test "$(stat -c %s "$original/lin.bin")" -eq 4725240
           test "$(stat -c %s "$original/Lineage.exe")" -eq 1295176
           echo '0d40fdf84d19e0ecc043766455fb9c5a215a5c39bbac858ca602f0bf5259f19e  '"$original/lin.bin" | sha256sum -c
           echo '2124b3da5f53123e0f94a85bd7f9edb2344925fdb4f53d0fc0653ea5c9241414  '"$original/Lineage.exe" | sha256sum -c
-          file "$original/lin.bin" "$original/Lineage.exe" | tee reports/V47-original-PE-types.txt
-          sha256sum "$original/lin.bin" "$original/Lineage.exe" > reports/V47-untouched-original-hashes.txt
+          file "$original/lin.bin" "$original/Lineage.exe" | tee reports/V48-original-PE-types.txt
+          sha256sum "$original/lin.bin" "$original/Lineage.exe" > reports/V48-untouched-original-hashes.txt
 
-      - name: "V47 | Pin Wine guest date without changing host time or EXE"
+      - name: "V48 | Pin Wine guest date without changing host time or EXE"
         shell: bash
         run: |
           set -euo pipefail
@@ -70,7 +70,7 @@ jobs:
           from pathlib import Path
           p=Path('boxedwine-src/platform/linux/platform.cpp')
           original=p.read_bytes()
-          # Preserve the original CRLF line endings.
+          # Preserve the original source's CRLF line endings.
           eol=b'\r\n' if b'\r\n' in original else b'\n'
           old='''unsigned long long int Platform::getSystemTimeAsMicroSeconds() {
           \tstruct timeval  tv;
@@ -95,32 +95,39 @@ jobs:
           patched=original.replace(old,new,1)
           assert patched.count(b'\r\n')-original.count(b'\r\n') == new.count(b'\r\n')-old.count(b'\r\n')
           p.write_bytes(patched)
-          Path('reports/V47-legacy-clock.txt').write_text(
+          Path('reports/V48-legacy-clock.txt').write_text(
               'WinLicense guest realtime is tested at 2013-03-30 UTC.\n'
               'Neither the host clock nor original PE files are altered.\n'
               'This is a compatibility test, not proof the protection is bypassed.\n')
           PY
           python3 work/patch-boxedwine-clock.py
           git -C boxedwine-src -c core.whitespace=cr-at-eol diff --check
-          git -C boxedwine-src diff -- platform/linux/platform.cpp > reports/V47-boxedwine-clock.patch
-          test -s reports/V47-boxedwine-clock.patch
+          git -C boxedwine-src diff -- platform/linux/platform.cpp > reports/V48-boxedwine-clock.patch
+          test -s reports/V48-boxedwine-clock.patch
 
-      - name: "V47 | Build actual Windows emulator for browser"
+      - name: "V48 | Build actual Windows emulator for browser"
         shell: bash
         run: |
           set -euo pipefail
           cd boxedwine-src/project/emscripten
           make -j3 BUILD_DIR=Build/Release SHELL_FILE=shell.html \
-            2>&1 | tee ../../../reports/V47-boxedwine-compile.log
+            2>&1 | tee ../../../reports/V48-boxedwine-compile.log
           test -s Build/Release/boxedwine.html
           test -s Build/Release/boxedwine.js
           test -s Build/Release/boxedwine.wasm
           cp Build/Release/boxedwine.html ../../../dist/
           cp Build/Release/boxedwine.js ../../../dist/
           cp Build/Release/boxedwine.wasm ../../../dist/
-          cp boxedwine.css fsfs.js boxedwine-shell.js ../../../dist/
 
-      - name: "V47 | Get upstream Wine filesystem, package original EXEs"
+          # Boxedwine 26R1.0 does not contain fsfs.js.
+          # Its HTML shell loads boxedwine-shell.js and boxedwine.css.
+          test -s boxedwine.css
+          test -s boxedwine-shell.js
+          cp boxedwine.css boxedwine-shell.js ../../../dist/
+          test -s ../../../dist/boxedwine.css
+          test -s ../../../dist/boxedwine-shell.js
+
+      - name: "V48 | Get upstream Wine filesystem, package original EXEs"
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -130,27 +137,27 @@ jobs:
           gh release download 26R1.0 -R danoon2/Boxedwine \
             -p 'Boxedwine26R1Web.zip' -D work --clobber
           unzip -q work/Boxedwine26R1Web.zip -d work/boxedwine-web
-          find work/boxedwine-web -type f -iname '*.zip' -printf '%p %s bytes\n' > reports/V47-upstream-web-zips.txt
+          find work/boxedwine-web -type f -iname '*.zip' -printf '%p %s bytes\n' > reports/V48-upstream-web-zips.txt
           rootzip=$(find work/boxedwine-web -type f -name 'boxedwine.zip' | head -1)
           test -n "$rootzip" && test -s "$rootzip" || {
             echo 'Official Boxedwine Wine root image missing; see manifest' >&2
-            cat reports/V47-upstream-web-zips.txt >&2
+            cat reports/V48-upstream-web-zips.txt >&2
             exit 1
           }
           cp "$rootzip" dist/boxedwine.zip
           (cd 'work/original/Sanctuary of Aden - Copy' && zip -q -r "$GITHUB_WORKSPACE/dist/sanctuary-boot.zip" .)
           unzip -tq dist/sanctuary-boot.zip | tail -1
           unzip -tq dist/boxedwine.zip | tail -1
-          sha256sum dist/sanctuary-boot.zip dist/boxedwine.zip > reports/V47-game-archive-hashes.txt
+          sha256sum dist/sanctuary-boot.zip dist/boxedwine.zip > reports/V48-game-archive-hashes.txt
 
-      - name: "V47 | Auto-run original protected EXE without a start button"
+      - name: "V48 | Auto-run original protected EXE without a start button"
         shell: bash
         run: |
           set -euo pipefail
           cat > dist/index.html <<'HTML'
           <!doctype html><html lang="ko"><head>
           <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>Sanctuary | Original Windows Client V47</title>
+          <title>Sanctuary | Original Windows Client V48</title>
           <meta http-equiv="refresh" content="0;url=boxedwine.html?app=sanctuary-boot&amp;p=lin.bin&amp;sound=false">
           </head><body style="background:#101720;color:#eee;font:14px system-ui">
           원본 Windows 클라이언트를 자동 실행합니다.
@@ -160,59 +167,59 @@ jobs:
           cat > dist/Lineage-launcher.html <<'HTML'
           <!doctype html><html lang="ko"><head>
           <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>Sanctuary | Original Launcher V47</title>
+          <title>Sanctuary | Original Launcher V48</title>
           <meta http-equiv="refresh" content="0;url=boxedwine.html?app=sanctuary-boot&amp;p=Lineage.exe&amp;sound=false">
           </head><body style="background:#101720;color:#eee;font:14px system-ui">
           원본 Lineage.exe 런처를 자동 실행합니다.
           </body></html>
           HTML
-          cat > dist/V47-SOURCE.txt <<'TXT'
+          cat > dist/V48-SOURCE.txt <<'TXT'
           Original EXE source: gowellsik-hue/Game release v1.0.0
           Original Windows executable bytes unchanged and SHA-256 verified.
           Boxedwine GNU GPL v2: https://github.com/danoon2/Boxedwine tree/tag 26R1.0
-          Modified Boxedwine source patch: reports/V47-boxedwine-clock.patch
+          Modified Boxedwine source patch: reports/V48-boxedwine-clock.patch
           Browser guest realtime: 2013-03-30 UTC; monotonic clocks not modified.
           This is an original-client compatibility experiment, NOT verified gameplay.
           TXT
-          cp reports/V47-boxedwine-clock.patch dist/V47-boxedwine-clock.patch
+          cp reports/V48-boxedwine-clock.patch dist/V48-boxedwine-clock.patch
           printf '' > dist/.nojekyll
           test -s dist/index.html
           test -s dist/sanctuary-boot.zip
           test -s dist/boxedwine.zip
           test -s dist/boxedwine.wasm
-          du -ah dist | sort -rh | head -20 | tee reports/V47-deployment-sizes.txt
+          du -ah dist | sort -rh | head -20 | tee reports/V48-deployment-sizes.txt
 
-      - name: "V47 | Preserve original-client experiment logs"
+      - name: "V48 | Preserve original-client experiment logs"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-Original-Windows-Client-Boxedwine-V47
+          name: Sanctuary-Original-Windows-Client-Boxedwine-V48
           path: |
             reports/
             dist/index.html
-            dist/V47-*
+            dist/V48-*
           retention-days: 30
           if-no-files-found: warn
 
-      - name: "V47 | Deploy true Windows EXE runtime to existing game2 Pages"
+      - name: "V48 | Deploy true Windows EXE runtime to existing game2 Pages"
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./dist
           publish_branch: gh-pages
-          destination_dir: v47
+          destination_dir: v48
           keep_files: true
           force_orphan: false
           enable_jekyll: false
 
-      - name: "V47 | Explicit status"
+      - name: "V48 | Explicit status"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V47 | Original Windows client test'
+            echo '# build-web.yml | V48 | Original Windows client test'
             echo 'No l1j-client. Original Win32 lin.bin and Lineage.exe are not modified.'
             echo 'Boxedwine guest clock reports 2013-03-30 instead of the host wall clock.'
             echo 'A successful build is NOT proof that the WinLicense runtime has been passed.'
-            echo 'Pages: v47/index.html (lin.bin) and v47/Lineage-launcher.html (Lineage.exe).'
+            echo 'Pages: v48/index.html (lin.bin) and v48/Lineage-launcher.html (Lineage.exe).'
           } >> "$GITHUB_STEP_SUMMARY"
