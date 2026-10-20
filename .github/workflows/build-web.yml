@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V49 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V49 | Original Windows client legacy-clock bypass test"
+name: "build-web.yml | V50 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V50 | Original Windows and browser executable audit"
 
 "on":
   workflow_dispatch:
@@ -10,174 +10,335 @@ run-name: "build-web.yml | V49 | Original Windows client legacy-clock bypass tes
       - .github/workflows/build-web.yml
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: game2-v49-original-client
+  group: game2-v50-original-client
   cancel-in-progress: false
 
 jobs:
-  original_windows_client_browser_v49:
-    name: "build-web.yml | V49 | Automatically run deployed original client"
+  original_windows_candidates:
+    name: "build-web.yml | V50 | Test original executable candidates on Windows"
+    runs-on: windows-2022
+    timeout-minutes: 50
+    steps:
+      - name: "V50 | Set up Python on Windows"
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: "V50 | Download and selectively extract original release"
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:GITHUB_WORKSPACE 'work/archive'
+          $output = Join-Path $env:GITHUB_WORKSPACE 'work/original'
+          $reports = Join-Path $env:GITHUB_WORKSPACE 'reports'
+          New-Item -ItemType Directory -Force -Path $archive,$output,$reports | Out-Null
+          gh release download v1.0.0 -R gowellsik-hue/Game -p 'Sanctuary.of.Aden.-.Copy.*' -D $archive --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Original release download failed' }
+          if (@(Get-ChildItem -LiteralPath $archive -File).Count -ne 46) { throw 'Expected 46 original archive parts' }
+          $seven = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
+          if (-not $seven) { $seven = Join-Path $env:ProgramFiles '7-Zip/7z.exe' }
+          if (-not (Test-Path -LiteralPath $seven)) { throw '7-Zip is not installed on Windows runner' }
+          $zip = Join-Path $archive 'Sanctuary.of.Aden.-.Copy.zip'
+          & $seven x $zip "-o$output" '-y' '-ir!*.exe' '-ir!*.bin' '-ir!*.dll' '-ir!*.ini' '-ir!*.cfg' '-ir!*.dat' '-ir!*.sys' '-ir!*.vxd' 2>&1 |
+            Out-File -FilePath (Join-Path $reports 'V50-extract.txt') -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw 'Original executable extraction failed' }
+          $root = Join-Path $output 'Sanctuary of Aden - Copy'
+          foreach ($name in @('lin.bin','Lineage.exe','Login.exe','Redemption.exe','Launcher.exe','aegisty.bin','TW13032701.exe','TW13032701.bin')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $root $name))) { throw "Missing original executable: $name" }
+          }
+          $expected = @{
+            'lin.bin' = '0d40fdf84d19e0ecc043766455fb9c5a215a5c39bbac858ca602f0bf5259f19e'
+            'Lineage.exe' = '2124b3da5f53123e0f94a85bd7f9edb2344925fdb4f53d0fc0653ea5c9241414'
+          }
+          foreach ($name in $expected.Keys) {
+            $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $root $name)).Hash.ToLowerInvariant()
+            if ($digest -ne $expected[$name]) { throw "Original file hash mismatch: $name" }
+          }
+          Write-Host 'V50 original 46-part archive and two protected original hashes verified'
+
+      - name: "V50 | Test each original PE without Wine and package unchanged binaries"
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          @'
+          import ctypes
+          import hashlib
+          import json
+          import os
+          import subprocess
+          import time
+          import zipfile
+          from pathlib import Path
+
+          base = Path(os.environ['GITHUB_WORKSPACE'])
+          root = base/'work'/'original'/'Sanctuary of Aden - Copy'
+          reports = base/'reports'
+          payload = base/'payload'
+          payload.mkdir(parents=True, exist_ok=True)
+          names = ['Login.exe','Redemption.exe','Lineage.exe','Launcher.exe',
+                   'aegisty.bin','TW13032701.exe','TW13032701.bin','lin.bin']
+
+          def window_titles(pid):
+              titles = []
+              user32 = ctypes.windll.user32
+              CALLBACK = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+              user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p,ctypes.POINTER(ctypes.c_ulong)]
+              user32.GetWindowTextW.argtypes = [ctypes.c_void_p,ctypes.c_wchar_p,ctypes.c_int]
+              user32.EnumChildWindows.argtypes = [ctypes.c_void_p,CALLBACK,ctypes.c_void_p]
+              user32.EnumWindows.argtypes = [CALLBACK,ctypes.c_void_p]
+              def read_title(hwnd):
+                  buffer = ctypes.create_unicode_buffer(512)
+                  user32.GetWindowTextW(hwnd,buffer,512)
+                  if buffer.value: titles.append(buffer.value[:300])
+              def child(hwnd, unused):
+                  read_title(hwnd)
+                  return True
+              def visit(hwnd, unused):
+                  owner = ctypes.c_ulong()
+                  user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+                  if owner.value == pid:
+                      read_title(hwnd)
+                      user32.EnumChildWindows(hwnd,CALLBACK(child),0)
+                  return True
+              user32.EnumWindows(CALLBACK(visit),0)
+              return list(dict.fromkeys(titles))
+
+          results = []
+          for name in names:
+              exe = root/name
+              entry = {'name':name, 'bytes':exe.stat().st_size,
+                       'sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),
+                       'platform':'Windows Server 2022, native 32-bit PE loader'}
+              header = exe.open('rb').read(256)
+              entry['mz_header'] = header[:2] == b'MZ'
+              print('PROBING', name, flush=True)
+              try:
+                  proc = subprocess.Popen([str(exe)], executable=str(exe), cwd=str(root),
+                                          stdin=subprocess.DEVNULL,
+                                          stdout=subprocess.DEVNULL,
+                                          stderr=subprocess.DEVNULL)
+                  entry['pid'] = proc.pid
+                  start = time.monotonic()
+                  titles = []
+                  while time.monotonic()-start < 10:
+                      titles += window_titles(proc.pid)
+                      if proc.poll() is not None:
+                          break
+                      time.sleep(0.5)
+                  entry['window_titles'] = list(dict.fromkeys(titles))[:15]
+                  entry['alive_after_probe'] = proc.poll() is None
+                  entry['exit_code'] = proc.poll()
+                  if proc.poll() is None:
+                      subprocess.run(['taskkill','/PID',str(proc.pid),'/T','/F'],
+                                     stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+                                     timeout=20,check=False)
+              except Exception as exc:
+                  entry['start_error'] = str(exc)[:1200]
+              results.append(entry)
+              print('RESULT', json.dumps(entry, ensure_ascii=False), flush=True)
+
+          with (payload/'sanctuary-candidates-v50.zip').open('wb') as stream:
+              with zipfile.ZipFile(stream,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=3,
+                                   allowZip64=True) as package:
+                  for file in sorted(root.rglob('*')):
+                      if file.is_file():
+                          package.write(file, file.relative_to(root).as_posix())
+          with zipfile.ZipFile(payload/'sanctuary-candidates-v50.zip') as package:
+              assert all(name in package.namelist() for name in names)
+              assert package.testzip() is None
+
+          (reports/'V50-native-results.json').write_text(
+              json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
+          print('V50: Native startup probed; no result here proves gameplay.')
+          '@ | Set-Content -LiteralPath 'probe-v50-native.py' -Encoding utf8
+          python probe-v50-native.py
+          if ($LASTEXITCODE -ne 0) { throw 'Native executable audit failed' }
+          if (-not (Test-Path 'reports/V50-native-results.json')) { throw 'Native results missing' }
+
+      - name: "V50 | Preserve Windows evidence and pass original files to browser"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sanctuary-Original-Windows-Candidates-V50
+          path: |
+            payload/sanctuary-candidates-v50.zip
+            reports/V50-native-results.json
+            reports/V50-extract.txt
+          retention-days: 30
+          if-no-files-found: warn
+
+  original_browser_candidates:
+    name: "build-web.yml | V50 | Compare original executables in existing Boxedwine"
+    needs: original_windows_candidates
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    permissions:
+      contents: write
     steps:
-      - name: "V49 | Checkout existing game2 gh-pages deployment"
+      - name: "V50 | Restore existing game2 Pages runtime"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           persist-credentials: false
 
-      - name: "V49 | Use the already-built V48 Windows client"
+      - name: "V50 | Restore original executable candidates and Windows results"
+        uses: actions/download-artifact@v4
+        with:
+          name: Sanctuary-Original-Windows-Candidates-V50
+          path: handoff
+
+      - name: "V50 | Reuse V48 Boxedwine, keep all older pages"
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p reports site
-          for file in index.html Lineage-launcher.html boxedwine.html boxedwine.js \
-            boxedwine.wasm boxedwine.css boxedwine-shell.js boxedwine.zip sanctuary-boot.zip; do
-            test -s "published/v48/$file" || {
-              echo "Missing deployed V48 file: $file" >&2
-              exit 1
-            }
+          mkdir -p site/v50 reports
+          for name in boxedwine.html boxedwine.js boxedwine.wasm boxedwine.css boxedwine-shell.js boxedwine.zip; do
+            test -s "published/v48/$name"
+            cp "published/v48/$name" "site/v50/$name"
           done
-          cat > site/index.html <<'HTML'
-          <!doctype html>
-          <html lang="ko"><head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>Sanctuary | Original Windows Client V48</title>
-          <meta http-equiv="refresh" content="0;url=./v48/">
+          test -s handoff/payload/sanctuary-candidates-v50.zip
+          cp handoff/payload/sanctuary-candidates-v50.zip site/v50/sanctuary-candidates-v50.zip
+          cp handoff/reports/V50-native-results.json reports/
+          cp handoff/reports/V50-extract.txt reports/
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          z=Path('site/v50/sanctuary-candidates-v50.zip')
+          required=['Login.exe','Redemption.exe','Lineage.exe','Launcher.exe',
+                    'aegisty.bin','TW13032701.exe','TW13032701.bin','lin.bin']
+          with ZipFile(z) as archive:
+              for name in required: assert name in archive.namelist(),name
+              assert archive.testzip() is None
+          print('V50 packaged unmodified original executable candidates')
+          PY
+          cat > site/v50/index.html <<'HTML'
+          <!doctype html><html lang="ko"><head>
+          <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>Sanctuary | Original Windows Client V50</title>
+          <meta http-equiv="refresh" content="0;url=boxedwine.html?app=sanctuary-candidates-v50&amp;p=Login.exe&amp;sound=false">
           </head><body>
-          <p>Sanctuary V48 원본 Windows 실행 화면으로 이동합니다.</p>
-          <a href="./v48/">원본 게임 실행 화면</a>
+          <p>원본 Login.exe 자동 실행 시험입니다. 게임 실행 성공 여부는 아직 확인되지 않았습니다.</p>
+          <a href="boxedwine.html?app=sanctuary-candidates-v50&amp;p=Login.exe&amp;sound=false">실행 화면</a>
           </body></html>
           HTML
-          touch site/.nojekyll
-          echo 'V49 uses the exact V48 original Windows emulator and EXE release files.' > reports/V49-input.txt
-          sha256sum published/v48/boxedwine.wasm published/v48/sanctuary-boot.zip >> reports/V49-input.txt
+          cat > site/index.html <<'HTML'
+          <!doctype html><html lang="ko"><head>
+          <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>Sanctuary | Original Windows Client V50</title>
+          <meta http-equiv="refresh" content="0;url=./v50/">
+          </head><body><a href="./v50/">원본 실행 시험으로 이동</a></body></html>
+          HTML
+          touch site/.nojekyll site/v50/.nojekyll
+          sha256sum site/v50/*.wasm site/v50/*.zip > reports/V50-deployed-hashes.txt
 
-      - name: "V49 | Set up Python for browser execution"
+      - name: "V50 | Set up Chromium browser test"
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
-      - name: "V49 | Install Chromium for automatic browser execution"
+      - name: "V50 | Install Chromium"
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install 'playwright==1.56.0'
           python -m playwright install --with-deps chromium
 
-      - name: "V49 | Launch original lin.bin and Lineage.exe automatically"
+      - name: "V50 | Automatically open all eight original clients and capture screens"
         shell: bash
         run: |
           set -euo pipefail
-          cat > probe-v49.py <<'PY'
+          cat > probe-v50-browser.py <<'PY'
           import asyncio
           import json
           from pathlib import Path
+          from urllib.parse import urlencode
           from playwright.async_api import async_playwright
 
-          ROOT = 'http://127.0.0.1:8765/v48/'
-          out = Path('reports')
-          out.mkdir(exist_ok=True)
+          names = ['Login.exe','Redemption.exe','Lineage.exe','Launcher.exe',
+                   'aegisty.bin','TW13032701.exe','TW13032701.bin','lin.bin']
+          output = Path('reports')
+          base = 'http://127.0.0.1:8765/v50/boxedwine.html?'
 
-          async def inspect(browser, label, url, seconds):
-              result = {'label': label, 'url': url, 'messages': [], 'errors': []}
-              ctx = await browser.new_context(viewport={'width': 1080, 'height': 760},
-                                              device_scale_factor=1)
-              page = await ctx.new_page()
-              def note(kind, value):
-                  entries = result['errors'] if kind in ('pageerror', 'requestfailed', 'http') else result['messages']
-                  if len(entries) < 300:
-                      entries.append(f'{kind}: {str(value)[:600]}')
-              page.on('console', lambda m: note('console', m.text))
-              page.on('pageerror', lambda e: note('pageerror', e))
-              page.on('requestfailed', lambda req: note('requestfailed', req.url))
-              page.on('response', lambda res: note('http', f'{res.status} {res.url}') if res.status >= 400 else None)
+          async def run(browser, name):
+              entry = {'name':name,'messages':[],'errors':[]}
+              context = await browser.new_context(viewport={'width':1000,'height':750})
+              page = await context.new_page()
+              def log(kind, message):
+                  target = entry['errors'] if kind in ('pageerror','requestfailed','http') else entry['messages']
+                  if len(target)<160:
+                      target.append((kind+': '+str(message))[:650])
+              page.on('console',lambda m:log('console',m.text))
+              page.on('pageerror',lambda e:log('pageerror',e))
+              page.on('requestfailed',lambda request:log('requestfailed',request.url))
+              page.on('response',lambda response:log('http',f'{response.status} {response.url}') if response.status>=400 else None)
+              url = base+urlencode({'app':'sanctuary-candidates-v50','p':name,'sound':'false'})
               try:
-                  await asyncio.wait_for(page.goto(url, wait_until='domcontentloaded', timeout=25000), timeout=35)
-                  await asyncio.sleep(seconds)
-                  result['final_url'] = page.url
-                  try:
-                      result['browser_state'] = await asyncio.wait_for(page.evaluate('''() => ({
-                        title: document.title,
-                        canvas: (() => {
-                          const c = document.querySelector('canvas');
-                          return c ? {width:c.width,height:c.height,display:getComputedStyle(c).display} : null;
-                        })(),
-                        loading: document.querySelector('#status')?.textContent || '',
-                        output: (document.querySelector('#output')?.value || '').slice(-18000)
-                      })'''), timeout=8)
-                  except Exception as e:
-                      note('pageerror', 'Cannot read emulator state: ' + str(e))
-                  try:
-                      await asyncio.wait_for(page.screenshot(path=str(out/f'V49-{label}.png'),
-                                                             full_page=True, timeout=12000), timeout=18)
-                      result['screenshot'] = f'V49-{label}.png'
-                  except Exception as e:
-                      note('pageerror', 'Screenshot unavailable: ' + str(e))
-              except Exception as e:
-                  note('pageerror', 'Navigation or startup failed: ' + str(e))
+                  await page.goto(url,wait_until='domcontentloaded',timeout=35000)
+                  await asyncio.sleep(13)
+                  entry['url']=page.url
+                  entry['state']=await page.evaluate('''() => ({
+                    title:document.title,
+                    canvas:(()=>{const c=document.querySelector('canvas');return c?{width:c.width,height:c.height}:null})(),
+                    output:(document.getElementById('output')?.value||'').slice(-14000)
+                  })''')
+                  filename='V50-'+name.replace('.','-')+'.png'
+                  await page.screenshot(path=str(output/filename),full_page=True,timeout=15000)
+                  entry['screenshot']=filename
+              except Exception as exc:
+                  log('pageerror',str(exc))
               finally:
-                  try:
-                      await asyncio.wait_for(ctx.close(), timeout=10)
-                  except Exception:
-                      pass
-              return result
+                  await context.close()
+              return entry
 
           async def main():
-              results = []
-              async with async_playwright() as pw:
-                  browser = await pw.chromium.launch(headless=True,
-                      args=['--no-sandbox','--disable-dev-shm-usage',
-                            '--enable-webgl','--use-gl=angle','--use-angle=swiftshader',
-                            '--enable-unsafe-swiftshader'])
+              async with async_playwright() as playwright:
+                  browser=await playwright.chromium.launch(headless=True,args=[
+                      '--no-sandbox','--disable-dev-shm-usage','--enable-webgl',
+                      '--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader'])
                   try:
-                      results.append(await inspect(browser, 'lin-bin', ROOT, 55))
-                      results.append(await inspect(browser, 'lineage-launcher',
-                                                   ROOT+'Lineage-launcher.html', 35))
+                      results=[]
+                      for name in names:
+                          result=await run(browser,name)
+                          results.append(result)
+                          print('CANDIDATE',name,'errors=',len(result['errors']),flush=True)
+                          for line in (result.get('state',{}).get('output','').splitlines())[-12:]:
+                              print('WINE',name,line[:350],flush=True)
                   finally:
                       await browser.close()
-              (out/'V49-browser-results.json').write_text(
-                  json.dumps(results, indent=2, ensure_ascii=False), encoding='utf-8')
-              for result in results:
-                  print('RESULT', result['label'], 'URL', result.get('final_url', 'unavailable'))
-                  for item in result['errors'][:20]:
-                      print('BROWSER_ERROR', item)
-                  for item in result['messages'][-20:]:
-                      print('BROWSER_LOG', item)
-                  state = result.get('browser_state', {})
-                  print('BROWSER_STATE', json.dumps(state, ensure_ascii=False)[-1800:])
-              print('V49 browser execution evidence saved. This is not proof of game play.')
+              (output/'V50-browser-results.json').write_text(
+                  json.dumps(results,indent=2,ensure_ascii=False),encoding='utf-8')
+              print('V50: Original executables tested automatically. Runtime screens are NOT proof of gameplay.')
 
           asyncio.run(main())
           PY
-          python3 -m http.server 8765 --bind 127.0.0.1 --directory published \
-            > reports/V49-http-server.log 2>&1 &
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory site \
+            > reports/V50-http-server.txt 2>&1 &
           server=$!
           trap 'kill "$server" 2>/dev/null || true' EXIT
-          for i in $(seq 1 40); do
-            if curl -fsS -o /dev/null http://127.0.0.1:8765/v48/index.html; then
-              break
-            fi
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8765/v50/boxedwine.html; then break; fi
             sleep 1
           done
-          curl -fsS -o /dev/null http://127.0.0.1:8765/v48/index.html
-          python probe-v49.py 2>&1 | tee reports/V49-browser-run.log
-          test -s reports/V49-browser-results.json
+          curl -fsS -o /dev/null http://127.0.0.1:8765/v50/boxedwine.html
+          python probe-v50-browser.py 2>&1 | tee reports/V50-browser-run.txt
+          test -s reports/V50-browser-results.json
 
-      - name: "V49 | Always preserve original-client browser evidence"
+      - name: "V50 | Upload original-client Windows and browser comparison"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-Original-Windows-Client-Browser-V49
+          name: Sanctuary-Original-Executable-Audit-V50
           path: reports/
           retention-days: 30
           if-no-files-found: warn
 
-      - name: "V49 | Make the original Windows client the default game2 page"
+      - name: "V50 | Publish candidate test in existing game2 Pages"
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -187,14 +348,15 @@ jobs:
           force_orphan: false
           enable_jekyll: false
 
-      - name: "V49 | Explicit result and next blocker"
+      - name: "V50 | Report what was actually verified"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V49 | Original Windows client browser execution'
-            echo 'This workflow reused the already-built V48 original Windows EXE runtime.'
-            echo 'The homepage now redirects to v48/ instead of the unrelated V45 client.'
-            echo 'Screenshots, browser errors, and Wine console text are in the V49 artifact.'
-            echo 'A successful GitHub Action does not prove protected EXE startup or gameplay.'
+            echo '# build-web.yml | V50 | Original executable comparison'
+            echo 'Windows-2022: native start attempts for eight original EXE/BIN candidates.'
+            echo 'Chromium: automatically captured eight Boxedwine execution screens and console logs.'
+            echo 'Original binaries were not patched; V48 Boxedwine is reused unchanged.'
+            echo 'Default GitHub Pages entry points to /game2/v50/ after deployment.'
+            echo 'Build and screenshot success do not prove that game logic, login, maps or combat work.'
           } >> "$GITHUB_STEP_SUMMARY"
