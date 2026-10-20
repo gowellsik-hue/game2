@@ -1,0 +1,6 @@
+Original EXE source: gowellsik-hue/Game release v1.0.0
+Original Windows executable bytes unchanged and SHA-256 verified.
+Boxedwine GNU GPL v2: https://github.com/danoon2/Boxedwine tree/tag 26R1.0
+Modified Boxedwine source patch: reports/V48-boxedwine-clock.patch
+Browser guest realtime: 2013-03-30 UTC; monotonic clocks not modified.
+This is an original-client compatibility experiment, NOT verified gameplay.

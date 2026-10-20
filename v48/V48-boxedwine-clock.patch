@@ -1,0 +1,25 @@
+diff --git a/platform/linux/platform.cpp b/platform/linux/platform.cpp
+index 801e695..c51cf18 100644
+--- a/platform/linux/platform.cpp
++++ b/platform/linux/platform.cpp
+@@ -28,9 +28,18 @@
+ #include UNISTD
+ 
+ unsigned long long int Platform::getSystemTimeAsMicroSeconds() {
+-	struct timeval  tv;
++	struct timeval tv;
+ 	gettimeofday(&tv, NULL);
+-	return ((unsigned long long int)tv.tv_sec) * 1000000l + (tv.tv_usec);
++	const unsigned long long actual = ((unsigned long long)tv.tv_sec) * 1000000ULL + tv.tv_usec;
++#ifdef __EMSCRIPTEN__
++	// 2013-03-30 00:00:00 UTC, progressing in real time.
++	// Guest realtime only; monotonic clock and HOST time are untouched.
++	static const unsigned long long originalActual = actual;
++	static const unsigned long long originalGuest = 1364601600000000ULL;
++	return originalGuest + (actual - originalActual);
++#else
++	return actual;
++#endif
+ }
+ 
+ void Platform::init() {
