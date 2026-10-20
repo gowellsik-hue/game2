@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V36 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V36 | Original Sanctuary engine runtime test"
+name: "build-web.yml | V37 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V37 | Original Sanctuary engine runtime test"
 
 "on":
   workflow_dispatch:
@@ -10,24 +10,22 @@ run-name: "build-web.yml | V36 | Original Sanctuary engine runtime test"
       - .github/workflows/build-web.yml
 
 permissions:
-  contents: read
-  actions: read
+  contents: write
 
 concurrency:
-  group: build-web-yml-v36-original-engine
+  group: build-web-yml-v37-original-engine
   cancel-in-progress: false
 
 jobs:
-  original_engine_v36:
-    name: "build-web.yml | V36 | Original Sanctuary map format and browser port test"
+  original_engine_v37:
+    name: "build-web.yml | V37 | Compile existing l1j-client main() to WebAssembly"
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
-
+    timeout-minutes: 120
     steps:
-      - name: "V36 | Checkout game2"
+      - name: "V37 | Checkout existing game2"
         uses: actions/checkout@v4
 
-      - name: "V36 | Checkout original l1j-client format reference"
+      - name: "V37 | Checkout existing l1j-client C++ engine, unchanged"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -35,348 +33,304 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V36 | Verify original format references"
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p original previous reports site
-          for f in COPYING src/resources/pack.cpp src/resources/sdl_graphic.cpp \
-                   src/widgets/sprite_motion.cpp src/widgets/sprite.cpp; do
-            test -s "upstream-l1j/$f"
-          done
-          git -C upstream-l1j rev-parse HEAD > reports/V36-upstream-commit.txt
-
-      - name: "V36 | Restore exact V35 original map artifact"
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh run download 39358346661 -R gowellsik-hue/game2 \
-            -n Sanctuary-Original-Data-Web-Port-V35 -D previous
-          test -s previous/site/original-map.png
-          test -s previous/site/audit.json
-          test -s previous/reports/V35-output-sha256.txt
-          ( cd previous && sha256sum -c reports/V35-output-sha256.txt ) \
-            > reports/V36-previous-artifact-hash-check.txt
-
-      - name: "V36 | Restore first Sanctuary archive volume cache"
-        id: first_cache
-        uses: actions/cache@v4
+      - name: "V37 | Set up Emscripten for the original C++ source"
+        uses: emscripten-core/setup-emsdk@v15
         with:
-          key: sanctuary-original-v1.0.0-sprite-first-volume-z01-v36
-          path: original/Sanctuary.of.Aden.-.Copy.z01
+          version: '3.1.74'
 
-      - name: "V36 | Download ONLY source volume z01 (100MB)"
-        if: steps.first_cache.outputs.cache-hit != 'true'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          test "$GITHUB_REPOSITORY" = 'gowellsik-hue/game2'
-          gh release download v1.0.0 -R gowellsik-hue/Game \
-            -p 'Sanctuary.of.Aden.-.Copy.z01' -D original --clobber
-          test -s original/Sanctuary.of.Aden.-.Copy.z01
-          test "$(stat -c %s original/Sanctuary.of.Aden.-.Copy.z01)" -eq 100000000
-
-      - name: "V36 | Install original-sprite PNG decoder"
+      - name: "V37 | Compile ALL existing C++ and C source objects"
         shell: bash
         run: |
           set -euo pipefail
-          test "$(stat -c %s original/Sanctuary.of.Aden.-.Copy.z01)" -eq 100000000
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-pil
-          /usr/bin/python3 -c 'from PIL import Image; print(Image.__version__)'
-
-      - name: "V36 | Extract original 61-series SPR frames without running EXE"
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/v36_probe.py <<'PY_PORT'
-          from pathlib import Path
-          import argparse, hashlib, json, struct, zlib, shutil
-          from PIL import Image
-
-          SPRITES = ('61-0.spr', '61-1.spr', '61-2.spr', '61-3.spr', '61-24.spr')
-          EXPECTED_INDEX_SHA = '97e520a2abd03eb5a3d150f5bdfbf9f02d51319e8b4ed8776ecd4abadaeb0246'
-          EXPECTED_SPR_SHA = {
-              '61-0.spr': '4f3b9d4ed055812899cfb1a90bd58c33aeaa7ee0b808b81f11355e64f84aad13',
-              '61-1.spr': '40f9112806b67851eae3f1645adeb2e1dcbfb47028ba135fce58fb4092a8c0df',
-              '61-2.spr': '35d6944ab775340c7231e551790562209f384b18273c5400410960aaad4dca61',
-              '61-3.spr': 'f344ef42706f7f66a8208b02fa3c4d4ff967b4b5a994241a550f1b5de6ea43f9',
-              '61-24.spr': '5e6f2b15d1d475c4328156de293c2b88cdb475440d30efb00c01e4dbdd79f298',
+          test -s upstream-l1j/Makefile.am
+          test -s upstream-l1j/COPYING
+          emcc --version | head -1
+          mkdir -p build/objects dist reports
+          cat > /tmp/v37-build-sources.py <<'PY_BUILD'
+          import pathlib, re, subprocess
+          src=pathlib.Path('upstream-l1j')
+          txt=(src/'Makefile.am').read_text()
+          m=re.search(r'^Lineage_SOURCES\s*=\s*\\\s*\n(.*?)\nif MAC',txt,re.M|re.S)
+          if not m: raise SystemExit('The upstream Lineage_SOURCES declaration changed')
+          files=re.findall(r'src/[\w./-]+\.(?:cpp|c)\b',m.group(1))
+          if len(files)<55: raise SystemExit('Unexpectedly small engine source list: '+str(len(files)))
+          (pathlib.Path('reports')/'V37-source-list.txt').write_text('\n'.join(files)+'\n')
+          flags=['-O1','-g0','-pthread','-fexceptions','-sUSE_SDL=1',
+                 '-sUSE_SDL_IMAGE=1','-sUSE_SDL_MIXER=1',
+                 '-Iupstream-l1j/src','-Iupstream-l1j/include']
+          objects=[]
+          for n,rel in enumerate(files):
+              file=src/rel
+              if not file.is_file():raise SystemExit('Missing original client file: '+str(file))
+              obj='build/objects/%03d.o'%n
+              compiler='emcc' if rel.endswith('.c') else 'em++'
+              argv=[compiler,*flags,'-c',str(file),'-o',obj]
+              print('Compiling',rel,flush=True)
+              subprocess.run(argv,check=True)
+              objects.append(obj)
+          pathlib.Path('build/objects-list.txt').write_text('\n'.join(objects))
+          print('Original sources compiled:',len(objects))
+          PY_BUILD
+          python3 /tmp/v37-build-sources.py 2>&1 | tee reports/V37-compile-log.txt
+          test -s build/objects-list.txt
+          test -z "$(git -C upstream-l1j status --porcelain)" || {
+            echo 'Upstream original sources were unexpectedly altered' >&2
+            exit 1
           }
 
-          def check(a, msg):
-              if not a: raise ValueError(msg)
+      - name: "V37 | Cache small unchanged original startup resources"
+        id: startup_cache
+        uses: actions/cache@v4
+        with:
+          key: original-sanctuary-startup-idx-font-v1.0.0-v37
+          path: original-startup/
 
-          def sha(path):
-              return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+      - name: "V37 | Fetch original Sanctuary startup data on first run"
+        if: steps.startup_cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq p7zip-full
+          mkdir -p original-download original-startup
+          gh release download v1.0.0 -R gowellsik-hue/Game \
+            -p 'Sanctuary.of.Aden.-.Copy.*' -D original-download --clobber
+          test "$(find original-download -type f | wc -l)" -eq 46
+          7z x original-download/Sanctuary.of.Aden.-.Copy.zip \
+            -ooriginal-startup -y '-ir!*.idx' '-ir!*.fnt' \
+            > reports/V37-startup-extract-log.txt
+          rm -rf original-download
 
-          def extract_original(part):
-              # Read original ZIP local headers from the first (100MB) volume only.
-              raw=Path(part).read_bytes()
-              def entry(name):
-                  name=('Sanctuary of Aden - Copy/'+name).encode()
-                  offset=0
-                  while True:
-                      i=raw.find(name,offset)
-                      check(i>=0, f'ZIP local header missing: {name.decode()}')
-                      offset=i+len(name)
-                      p=i-30
-                      if p<0 or raw[p:p+4]!=b'PK\x03\x04':continue
-                      _,_,_,method,_,_,_,compressed,_,nlen,nextra=struct.unpack_from('<IHHHHHIIIHH',raw,p)
-                      if raw[p+30:p+30+nlen]!=name:continue
-                      check(method==8,f'unsupported ZIP compression: {name}')
-                      return raw[p+30+nlen+nextra:],compressed
-              idxz, idxn=entry('Sprite.idx')
-              # 778861 comes from release v1.0.0 Sprite.idx's verified compressed size.
-              if idxn<=0:idxn=778861
-              idx=zlib.decompress(idxz[:idxn],-15)
-              check(hashlib.sha256(idx).hexdigest()==EXPECTED_INDEX_SHA,'Sprite.idx SHA changed; not the approved original')
-              count,=struct.unpack_from('<I',idx,0)
-              check(len(idx)==4+count*28,'Sprite.idx format invalid')
-              records={}
-              for j in range(count):
-                  ofs,name,size=struct.unpack_from('<i20si',idx,4+j*28)
-                  filename=name.split(b'\x00')[0].decode('latin1').lower()
-                  if filename in SPRITES:
-                      check(0<=ofs<96*1024*1024 and 0<size<200000,f'SPR source offset out of trial bounds: {filename}')
-                      records[filename]=(ofs,size)
-              check(set(records)==set(SPRITES),'Missing original 61 sprite directions/bank')
-              needed=max(a+b for a,b in records.values())
-              stream,_=entry('Sprite.pak')
-              dec=zlib.decompressobj(-15)
-              out=bytearray()
-              for pos in range(0,len(stream),256*1024):
-                  out.extend(dec.decompress(stream[pos:pos+256*1024]))
-                  if len(out)>=needed:break
-              check(len(out)>=needed,'Original Sprite.pak first volume did not cover selected source offsets')
-              return {name:bytes(out[o:o+n]) for name,(o,n) in records.items()},records,count,len(out)
-
-          def as_signed(x):
-              return x if x<128 else x-256
-
-          def rgb555(p):
-              return ((p>>10&31)*255//31,(p>>5&31)*255//31,(p&31)*255//31,255)
-
-          def parse_sprite(src):
-              v=memoryview(src); at=0
-              check(len(v)>20,'Sprite source too short')
-              if v[:5].tobytes() == b'SPR_1':
-                  raise ValueError('SPR_1 unsupported; cannot claim an original rendering')
-              if v[:5].tobytes()==b'SPR_0':at=5
-              count=v[at];at+=1
-              palette=None
-              if count==255:
-                  n=v[at] or 256;at+=1
-                  check(at+2*n<len(v),'Sprite palette truncated')
-                  palette=struct.unpack_from('<'+'H'*n,v,at);at+=2*n
-                  count=v[at];at+=1
-              check(1<=count<=96,f'Sprite animation frame count invalid: {count}')
-              frames=[]
-              for _ in range(count):
-                  check(at+14<=len(v),'Sprite frame truncated')
-                  x0,y0,x1,y1,flags,nt=struct.unpack_from('<hhhhIH',v,at);at+=14
-                  check(0<nt<=200 and at+nt*5<=len(v),'Sprite frame layer list truncated')
-                  layer=[]
-                  for j in range(nt):
-                      x,y,h,idx=struct.unpack_from('<BBBH',v,at);at+=5
-                      layer.append((as_signed(x),as_signed(y),h,idx))
-                  frames.append({'bounds':[x0,y0,x1,y1], 'layers':layer})
-              check(at+4<=len(v),'Sprite tile count missing')
-              nt=struct.unpack_from('<I',v,at)[0];at+=4
-              check(1<=nt<=2000 and at+4*nt+4<=len(v),'Sprite tile offset count invalid')
-              offs=struct.unpack_from('<'+'I'*nt,v,at);at+=4*nt
-              declared=struct.unpack_from('<I',v,at)[0];at+=4
-              pixstart=at
-              tiles=[]
-              for i,offset in enumerate(offs):
-                  p=pixstart+offset
-                  check(p+4<=len(v),f'Sprite tile {i} offset out of bounds')
-                  ox,oy,w,h=struct.unpack_from('<BBBB',v,p);p+=4
-                  check(0<w<=160 and 0<h<=160,'Unsupported sprite tile dimensions')
-                  im=Image.new('RGBA',(w,h))
-                  for row in range(h):
-                      check(p<len(v),'Truncated sprite tile scanline')
-                      nseg=v[p];p+=1
-                      x=0
-                      for _ in range(nseg):
-                          check(p+2<=len(v),'Sprite RLE run missing')
-                          skip,n=struct.unpack_from('<BB',v,p);p+=2
-                          x+=skip//2
-                          check(x+n<=w, f'Sprite RLE run exceeds tile width ({x}+{n}>{w})')
-                          for j in range(n):
-                              if palette:
-                                  check(p<len(v),'Sprite palette index missing')
-                                  val=palette[v[p]];p+=1
-                              else:
-                                  check(p+2<=len(v),'Sprite color truncated')
-                                  val=struct.unpack_from('<H',v,p)[0];p+=2
-                              if val!=0x7fe0: im.putpixel((x+j,row),rgb555(val))
-                          x+=n
-                  tiles.append((im,(ox,oy)))
-              images=[]
-              for frame in frames:
-                  # Same 24x12 isometric placement and sprite layer order as upstream.
-                  canvas=Image.new('RGBA',(128,128),(0,0,0,0))
-                  for x,y,h,index in frame['layers']:
-                      check(index<len(tiles),'Sprite layer references absent tile')
-                      tx=x-4;ty=y+1
-                      half=int(tx/2)  # C integer division truncates toward zero.
-                      ox=24*(half+ty)
-                      oy=12*(ty-half)
-                      if tx % 2:
-                          if tx>0:ox+=24
-                          else:oy+=12
-                      sprite,(sx,sy)=tiles[index]
-                      canvas.alpha_composite(sprite,(64+ox+sx,90+oy+sy))
-                  check(canvas.getchannel('A').getbbox() is not None,'Decoded empty frame')
-                  images.append(canvas)
-              return images, {'count':len(frames),'palette_colors':len(palette) if palette else None,'layer_tile_count':len(tiles),'declared_pixel_bytes':declared}
-
-          def save_site(source,previous,out):
-              out.mkdir(parents=True,exist_ok=True)
-              (out/'sprites').mkdir(exist_ok=True)
-              map_png=previous/'site'/'original-map.png'
-              audit=previous/'site'/'audit.json'
-              checks=previous/'reports'/'V35-output-sha256.txt'
-              check(map_png.is_file() and audit.is_file() and checks.is_file(),'V35 original-map artifact incomplete')
-              for l in checks.read_text().splitlines():
-                  val,filename=l.split(maxsplit=1)
-                  check(sha(previous/filename)==val,'V35 map artifact hash changed: '+filename)
-              v35=json.loads(audit.read_text())
-              check(v35['version']=='V35' and v35['original_art_modified'] is False,'V35 provenance check failed')
-              shutil.copyfile(map_png,out/'original-map.png')
-              report={'version':'V36','source':'Original Sanctuary v1.0.0 first archive volume',
-                 'map_from':'V35 Actions artifact; SHA256-verified',
-                 'map_image_sha256':sha(out/'original-map.png'),
-                 'source_sprite_files':[],'knight_sprite_candidate':61,
-                 'knight_identity_independently_verified':False,
-                 'four_direction_mapping_verified':False,
-                 'source_sprite_pixels_replaced':False,
-                 'native_engine_executed':False,
-                 'movement_and_collision_implemented':False,
-                 'visual_map_accuracy_verified':False}
-              for name,raw in source.items():
-                  check(hashlib.sha256(raw).hexdigest() == EXPECTED_SPR_SHA[name],
-                        f'Original sprite SHA mismatch: {name}')
-                  images,info=parse_sprite(raw)
-                  stem=name[:-4]
-                  for i,im in enumerate(images):
-                      im.save(out/'sprites'/f'{stem}-{i:02d}.png',optimize=True)
-                  info.update(name=name,sha256=hashlib.sha256(raw).hexdigest(),size=len(raw))
-                  report['source_sprite_files'].append(info)
-              (out/'audit.json').write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding='utf-8')
-              # HTML intentionally contains only original-derived images, not gameplay state.
-              html='''<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sanctuary Original Sprite Probe V36</title>
-              <style>html,body{margin:0;background:#101824;color:#e5effc;font:14px system-ui}header{padding:14px;background:#1c2c40}h1{font-size:18px;margin:0 0 8px}p{margin:5px 0}button{background:#34465b;color:white;border:0;border-radius:7px;padding:9px 12px;margin:4px;cursor:pointer}button:focus{outline:2px solid #96ccfd}#viewport{height:calc(100dvh - 176px);min-height:250px;overflow:auto;touch-action:pan-x pan-y}#world{position:relative;width:1440px;height:920px;background:url(original-map.png) no-repeat 0 0}#knight{position:absolute;left:656px;top:370px;width:128px;height:128px;image-rendering:pixelated;pointer-events:none}a{color:#9cd9ff}#controls{display:flex;flex-wrap:wrap;align-items:center}.note{font-size:12px;color:#afc3d8}</style>
-              <header><h1>Sanctuary | V36 Original Sprite Source Probe</h1><p>Original V35 map image + unmodified pixel colors from Sanctuary Sprite.pak. Character ID 61 is a candidate; identity and action mapping require verification.</p><div id="controls"><span>Source frames:</span><button data-n="61-0">61-0</button><button data-n="61-1">61-1</button><button data-n="61-2">61-2</button><button data-n="61-3">61-3</button><button data-n="61-24">61-24</button><button id="pause">Pause</button><span id="details"></span></div><p class="note">No invented sprite, fabricated map, moving avatar, portal, or game loop. <a href="audit.json">Original data SHA256 audit</a></p></header>
-              <div id="viewport"><div id="world"><img id="knight" alt="Original Sanctuary source sprite candidate 61"></div></div>
-              <script>
-              const frames={'61-0':4,'61-1':4,'61-2':4,'61-3':4,'61-24':4};
-              let bank='61-0',frame=0,playing=true;
-              function draw(){document.getElementById('knight').src='sprites/'+bank+'-'+String(frame).padStart(2,'0')+'.png';document.getElementById('details').textContent='source '+bank+' / frame '+(frame+1)+' of '+frames[bank];}
-              for(const b of document.querySelectorAll('[data-n]')){b.onclick=()=>{bank=b.dataset.n;frame=0;draw();};}
-              document.getElementById('pause').onclick=()=>{playing=!playing;document.getElementById('pause').textContent=playing?'Pause':'Play';};
-              setInterval(()=>{if(playing){frame=(frame+1)%frames[bank];draw()}},180);draw();
-              </script></html>'''
-              for x in report['source_sprite_files']:
-                  name=x['name'][:-4]
-                  # This is explicit metadata substitution only, NOT replacement art.
-                  html=html.replace(f"'{name}':4",f"'{name}':{x['count']}")
-              (out/'index.html').write_text(html,encoding='utf-8')
-              return report
-
-          if __name__=='__main__':
-              ap=argparse.ArgumentParser()
-              ap.add_argument('--first-volume')
-              ap.add_argument('--raw-test-dir')
-              ap.add_argument('--v35',required=True)
-              ap.add_argument('--out',required=True)
-              args=ap.parse_args()
-              if args.raw_test_dir:
-                  files={name:(Path(args.raw_test_dir)/name).read_bytes() for name in SPRITES}
-                  records={};count=92149;rawbytes=0
-              else:
-                  check(args.first_volume is not None,'--first-volume is required')
-                  files,records,count,rawbytes=extract_original(args.first_volume)
-              report=save_site(files,Path(args.v35),Path(args.out))
-              report['sprite_index_entry_count']=count
-              report['sprite_pak_inflated_bytes']=rawbytes
-              report['source_offsets']={k:{'offset':v[0],'size':v[1]} for k,v in records.items()}
-              (Path(args.out)/'audit.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf8')
-              print(json.dumps(report,ensure_ascii=False,indent=2))
-          PY_PORT
-          /usr/bin/python3 /tmp/v36_probe.py \
-            --first-volume original/Sanctuary.of.Aden.-.Copy.z01 \
-            --v35 previous --out site > reports/V36-source-sprite-result.json
-          sha256sum site/original-map.png site/audit.json \
-            > reports/V36-result-sha256.txt
-
-      - name: "V36 | Verify original source frames and unchanged map"
+      - name: "V37 | Link the original client main() without recreated game logic"
         shell: bash
         run: |
           set -euo pipefail
-          /usr/bin/python3 - <<'PY_VERIFY'
-          from pathlib import Path
-          import json
-          import hashlib
-          from PIL import Image
-          site=Path('site')
-          report=json.loads((site/'audit.json').read_text())
-          files=report['source_sprite_files']
-          expected={'61-0','61-1','61-2','61-3','61-24'}
-          assert {x['name'][:-4] for x in files} == expected
-          assert all(x['count']==4 for x in files), 'Unexpected original frame count'
-          assert all(x['layer_tile_count']>0 for x in files)
-          assert report['source_sprite_pixels_replaced'] is False
-          assert report['four_direction_mapping_verified'] is False
-          assert report['movement_and_collision_implemented'] is False
-          assert len(list((site/'sprites').glob('*.png'))) == 20
-          assert Image.open(site/'original-map.png').size == (1440,920)
-          for f in (site/'sprites').glob('*.png'):
-            im=Image.open(f).convert('RGBA')
-            assert im.size==(128,128)
-            assert im.getchannel('A').getbbox(), f'blank original sprite {f}'
-          before=Path('previous/site/original-map.png').read_bytes()
-          after=(site/'original-map.png').read_bytes()
-          assert before==after, 'V35 original-map PNG changed'
-          assert (site/'index.html').stat().st_size>1000
-          print('V36 PASS: 20 sprite frames from original Sanctuary source + unchanged V35 map.')
-          print('Original character identity, full 4-direction action mapping, and gameplay still unverified.')
-          PY_VERIFY
+          base='original-startup/Sanctuary of Aden - Copy'
+          test -s "$base/Sprite00.idx"
+          test -s "$base/Font/eng.fnt"
+          mkdir -p runtime/lineage/Font
+          cp -a "$base/Sprite00.idx" runtime/lineage/
+          cp -a "$base/Font/eng.fnt" runtime/lineage/Font/
+          # This is a runtime path configuration, not a replacement game world.
+          cat > runtime/Lineage.ini <<'INI'
+          Path = /lineage/
+          NumServers = 1
+          Original Client Test
+              Port = 2001
+              GamePort = 2000
+              Names = 127.0.0.1
+          INI
+          test -s upstream-l1j/src/sprite_table.txt
+          mapfile -t objects < build/objects-list.txt
+          em++ "${objects[@]}" -o dist/lineage.js \
+            -O1 -pthread -fexceptions \
+            -sUSE_SDL=1 -sUSE_SDL_IMAGE=1 -sUSE_SDL_MIXER=1 \
+            -sMODULARIZE=1 -sEXPORT_NAME=createLineage \
+            -sENVIRONMENT=web -sPROXY_TO_PTHREAD=1 \
+            -sPTHREAD_POOL_SIZE=5 -sALLOW_MEMORY_GROWTH=1 \
+            -sINITIAL_MEMORY=201326592 -sSTACK_SIZE=5242880 \
+            -sEXIT_RUNTIME=0 -sFORCE_FILESYSTEM=1 -sASSERTIONS=1 \
+            -sEXPORTED_RUNTIME_METHODS=FS \
+            --embed-file runtime/Lineage.ini@/Lineage.ini \
+            --embed-file upstream-l1j/src/sprite_table.txt@/sprite_table.txt \
+            --preload-file runtime/lineage@/lineage \
+            2>&1 | tee reports/V37-link-log.txt
 
-      - name: "V36 | Upload source sprite playback and verification"
+          cat > dist/index.html <<'HTML_ENTRYPOINT'
+          <!doctype html>
+          <html lang="ko">
+          <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+          <meta name="theme-color" content="#111820">
+          <title>Sanctuary — Original Client Web Runtime</title>
+          <style>
+          :root{color-scheme:dark;font:14px/1.45 system-ui,-apple-system,'Noto Sans KR',sans-serif}
+          *{box-sizing:border-box}body{margin:0;background:#0c1118;color:#eef3fa}
+          header{height:49px;display:flex;gap:12px;align-items:center;justify-content:space-between;padding:0 14px;background:#182230;border-bottom:1px solid #2b394c}
+          header strong{font-size:14px}#state{font-size:12px;color:#9db6cd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+          #stage{position:relative;display:flex;align-items:center;justify-content:center;height:calc(100dvh - 49px - env(safe-area-inset-bottom));overflow:hidden;background:#06090c}
+          #canvas{display:block;width:min(100%,calc((100dvh - 145px)*4/3));height:auto;max-height:calc(100dvh - 145px);aspect-ratio:4/3;object-fit:contain;image-rendering:pixelated;background:#050505;outline:none;touch-action:none}
+          #overlay{position:absolute;inset:0;display:flex;flex-direction:column;gap:9px;align-items:center;justify-content:center;padding:22px;text-align:center;background:rgba(6,9,12,.93)}
+          #overlay.hidden{display:none}#overlay h1{font-size:18px;font-weight:700;margin:0}#overlay p{max-width:440px;margin:0;color:#c1ccda;font-size:13px;word-break:break-word}
+          #overlay button,.controls button{border:1px solid #61758a;background:#2a3b4f;color:white;border-radius:9px;padding:10px 16px;font:inherit;cursor:pointer}
+          #overlay button{margin-top:6px;font-weight:700}
+          #logbox{position:absolute;left:10px;top:8px;width:min(520px,calc(100% - 20px));max-height:25vh;padding:8px 10px;font:11px/1.4 ui-monospace,monospace;overflow:auto;white-space:pre-wrap;background:rgba(0,0,0,.77);border-radius:7px;display:none;pointer-events:none}
+          #logbox.visible{display:block}
+          #controls{display:none;position:absolute;left:0;right:0;bottom:max(8px,env(safe-area-inset-bottom));pointer-events:none;justify-content:space-between;padding:0 max(10px,env(safe-area-inset-left))}
+          .controls{display:grid;grid-template-columns:repeat(3,52px);gap:5px;pointer-events:auto;touch-action:none;user-select:none;-webkit-user-select:none}
+          .controls button{min-width:51px;min-height:47px;padding:2px;font-weight:700;background:rgba(34,53,75,.76);touch-action:none}
+          .controls .up{grid-column:2}.controls .left{grid-column:1;grid-row:2}.controls .down{grid-column:2;grid-row:2}.controls .right{grid-column:3;grid-row:2}
+          #rightkeys{display:flex;align-items:end;pointer-events:auto;gap:8px}
+          #rightkeys button{font-size:13px}
+          #tools{position:absolute;right:10px;top:10px;display:flex;gap:6px}#tools button{font-size:11px;background:rgba(30,49,66,.88);color:#bcd7f0;border:1px solid #40546b;border-radius:6px;padding:5px 8px}
+          @media (pointer:coarse){#controls{display:flex}#canvas{max-height:calc(100dvh - 49px)}.controls{grid-template-columns:repeat(3,44px)}.controls button{min-width:43px;min-height:44px}}
+          </style>
+          </head>
+          <body>
+          <header><strong>Sanctuary | Original Client Runtime</strong><span id="state" role="status" aria-live="polite">초기화 전</span></header>
+          <main id="stage">
+            <canvas id="canvas" width="800" height="600" tabindex="0" aria-label="기존 클라이언트가 그리는 실제 SDL 화면"></canvas>
+            <div id="overlay" role="alert">
+              <h1 id="head">원본 클라이언트 실행 준비</h1>
+              <p id="desc">이 페이지는 게임 화면을 다시 그리지 않습니다. 빌드된 C++ 클라이언트의 WebAssembly 실행 파일을 직접 불러옵니다.</p>
+              <button type="button" id="start">클라이언트 실행</button>
+            </div>
+            <pre id="logbox"></pre>
+            <div id="tools"><button id="logBtn" type="button">로그</button><button id="fullBtn" type="button">전체화면</button></div>
+            <div id="controls">
+              <div class="controls" aria-label="키보드 방향키">
+                <button data-key="ArrowUp" class="up" aria-label="위">▲</button>
+                <button data-key="ArrowLeft" class="left" aria-label="왼쪽">◀</button>
+                <button data-key="ArrowDown" class="down" aria-label="아래">▼</button>
+                <button data-key="ArrowRight" class="right" aria-label="오른쪽">▶</button>
+              </div>
+              <div id="rightkeys" class="controls"><button data-key="Escape">ESC</button><button data-key="Enter">ENTER</button></div>
+            </div>
+          </main>
+          <script>
+          'use strict';
+          const canvas=document.getElementById('canvas');
+          const overlay=document.getElementById('overlay');
+          const state=document.getElementById('state');
+          const head=document.getElementById('head');
+          const desc=document.getElementById('desc');
+          const start=document.getElementById('start');
+          const logbox=document.getElementById('logbox');
+          let launched=false;
+          function status(message){state.textContent=message;}
+          function log(message){const line=String(message??'');logbox.textContent+=(line+'\n');if(logbox.textContent.length>24000)logbox.textContent=logbox.textContent.slice(-16000);logbox.scrollTop=logbox.scrollHeight;console.log('[Lineage]',line);}
+          function problem(message){status('실행 장애');head.textContent='클라이언트 실행 실패';desc.textContent=message;overlay.classList.remove('hidden');start.textContent='다시 시도';start.disabled=false;launched=false;log(message);logbox.classList.add('visible');}
+          function showRuntime(){status('WebAssembly 런타임 초기화 완료 (게임 진입 별도 확인)');overlay.classList.add('hidden');canvas.focus({preventScroll:true});}
+          async function checkCrossOriginIsolation(){
+            if(crossOriginIsolated)return true;
+            if(!('serviceWorker' in navigator) || !isSecureContext)return false;
+            try{
+              await navigator.serviceWorker.register('./coi-serviceworker.js',{scope:'./'});
+              await navigator.serviceWorker.ready;
+              if(navigator.serviceWorker.controller===null){
+                const once='sanctuary-coi-reload';
+                if(sessionStorage.getItem(once)!=='1'){
+                  sessionStorage.setItem(once,'1');
+                  location.reload();
+                  return null;
+                }
+              }
+              return crossOriginIsolated;
+            }catch(err){log('Isolation: '+err);return false;}
+          }
+          function loadScript(src){return new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.async=true;s.onload=resolve;s.onerror=()=>reject(new Error(src+' 파일을 찾거나 실행하지 못했습니다.'));document.head.append(s);});}
+          async function startEngine(){
+            if(launched)return;
+            launched=true;start.disabled=true;status('엔진 로딩 중');head.textContent='원본 C++ 클라이언트 로딩 중';desc.textContent='컴파일된 lineage.js / lineage.wasm 파일을 확인합니다.';
+            try{
+              if(location.protocol==='file:')throw Error('file://에서는 WebAssembly 데이터 파일을 불러올 수 없습니다. GitHub Pages 또는 로컬 HTTP 서버에서 여세요.');
+              const isolated=await checkCrossOriginIsolation();
+              if(isolated===null)return;
+              if(!isolated){log('SharedArrayBuffer 비활성: Cross-Origin-Isolation 필요');throw Error('기존 SDL 스레드 실행에는 COOP/COEP와 SharedArrayBuffer가 필요합니다. HTTPS 환경에서 다시 실행하세요.');}
+              const response=await fetch('./lineage.js',{method:'HEAD',cache:'no-store'});
+              if(!response.ok)throw Error('lineage.js가 없습니다. 아직 C++ 클라이언트의 WebAssembly 빌드/배포가 완료되지 않았습니다.');
+              if(typeof window.createLineage!=='function')await loadScript('./lineage.js');
+              if(typeof window.createLineage!=='function')throw Error('lineage.js에 createLineage() 엔트리 포인트가 없습니다. 빌드 설정을 확인하세요.');
+              status('원본 클라이언트 main() 실행 요청');
+              await window.createLineage({
+                canvas, noInitialRun:false, locateFile:(file,prefix)=>'./'+file,
+                print:(...x)=>log(x.join(' ')), printErr:(...x)=>log('STDERR '+x.join(' ')),
+                setStatus:status,
+                onRuntimeInitialized:showRuntime,
+                onAbort:(what)=>problem('WebAssembly abort: '+what),
+                onExit:(code)=>problem('원본 클라이언트 프로세스 종료 (exit='+code+')'),
+                monitorRunDependencies:(n)=>status(n?'원본 데이터 로딩 중 ('+n+')':'데이터 초기화 완료')
+              });
+            }catch(err){problem(err?.message||String(err));}
+          }
+          start.addEventListener('click',startEngine);
+          window.addEventListener('error',event=>{if(launched)problem(event.message||'알 수 없는 런타임 오류');});
+          window.addEventListener('unhandledrejection',event=>{if(launched)problem(String(event.reason));});
+          document.getElementById('logBtn').addEventListener('click',()=>logbox.classList.toggle('visible'));
+          document.getElementById('fullBtn').addEventListener('click',()=>{if(!document.fullscreenElement)document.getElementById('stage').requestFullscreen?.();else document.exitFullscreen?.();});
+          function keyEvent(key,type){const code=key==='Escape'?'Escape':key==='Enter'?'Enter':key;const ev=new KeyboardEvent(type,{key,code,bubbles:true,cancelable:true});window.dispatchEvent(ev);document.dispatchEvent(ev);canvas.dispatchEvent(ev);}
+          for(const button of document.querySelectorAll('[data-key]')){
+            button.addEventListener('pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);keyEvent(button.dataset.key,'keydown');});
+            for(const type of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(type,e=>{e.preventDefault();keyEvent(button.dataset.key,'keyup');});
+          }
+          </script>
+          </body></html>
+          HTML_ENTRYPOINT
+
+          cp upstream-l1j/COPYING dist/L1J-SOURCE-LICENSE.txt
+          cat > dist/source.txt <<'TEXT'
+          Engine: uglyoldbob/l1j-client, C/C++ sources unchanged
+          Source revision: 83052f6b1c5bda59d4c4cbaf01aa2e72ea409853
+          This is not the original Sanctuary Windows executable.
+          The original client depends on map/animation archives and a compatible game server.
+          No synthetic player, monsters, portals, or map logic has been introduced.
+          TEXT
+
+      - name: "V37 | Enable cross-origin isolation on static GitHub Pages"
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > dist/coi-serviceworker.js <<'SW'
+          'use strict';
+          self.addEventListener('install',event=>event.waitUntil(self.skipWaiting()));
+          self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
+          self.addEventListener('fetch',event=>{
+            const req=event.request;
+            if(new URL(req.url).origin!==self.location.origin)return;
+            event.respondWith(fetch(req).then(res=>{
+              if(!res.ok||res.type==='opaque')return res;
+              const headers=new Headers(res.headers);
+              headers.set('Cross-Origin-Embedder-Policy','require-corp');
+              headers.set('Cross-Origin-Opener-Policy','same-origin');
+              headers.set('Cross-Origin-Resource-Policy','same-origin');
+              return new Response(res.body,{status:res.status,statusText:res.statusText,headers});
+            }));
+          });
+          SW
+          node --check dist/coi-serviceworker.js
+          test -s dist/index.html
+          test -s dist/lineage.js
+          test -s dist/lineage.wasm
+          test -s dist/lineage.data
+          sha256sum dist/lineage.js dist/lineage.wasm dist/lineage.data > reports/V37-runtime-hashes.txt
+          du -h dist/* > reports/V37-deployment-sizes.txt
+
+      - name: "V37 | Upload actual engine compilation and HTML files"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-Original-Data-Web-Port-V36
+          name: Sanctuary-Existing-Client-Wasm-V37
           path: |
-            site/
             reports/
+            dist/
           retention-days: 60
           if-no-files-found: warn
 
-      - name: "V36 | Summarize verified and unverified source port scope"
+      - name: "V37 | Publish existing-client WebAssembly HTML to gh-pages"
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          force_orphan: true
+          enable_jekyll: false
+
+      - name: "V37 | Report actual execution-route status"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V36 | Original Sanctuary sprite proof'
-            echo ''
-            echo 'Same workflow title and file; no new workflow created.'
-            echo 'V35 map image reused byte-for-byte; original Sprite.pak bytes decoded.'
-            echo 'Only the 100MB first archive volume is needed (with Actions cache).'
-            echo 'Candidate 61 motion source visualized; character/action identity is not yet proven.'
-            echo 'No original assets modified, no replacement engine, no invented world.'
-            echo 'No movement, collision, portal implementation, or Pages deployment.'
-            if test -s reports/V36-source-sprite-result.json; then
-              echo '```json'
-              cat reports/V36-source-sprite-result.json
-              echo '```'
+            echo '# build-web.yml | V37 | Existing l1j-client WebAssembly route'
+            echo 'Kept existing build-web.yml, without any new workflow.'
+            echo 'Entire upstream l1j-client source is compiled, not reimplemented.'
+            if test -s dist/lineage.wasm; then
+              echo 'WASM file built successfully.'
+              echo 'Browser entrypoint: gh-pages/index.html.'
+              echo 'Actual game world is NOT verified until remote browser runtime succeeds.'
             else
-              echo 'Sprite extraction failed; inspect preceding job logs.'
+              echo 'WASM compilation failed: inspect compile and linker logs.'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
