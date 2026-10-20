@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V34 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V34 | Original Sanctuary engine runtime test"
+name: "build-web.yml | V35 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V35 | Original Sanctuary engine runtime test"
 
 "on":
   workflow_dispatch:
@@ -13,322 +13,452 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-web-yml-v34-original-engine
+  group: build-web-yml-v35-original-engine
   cancel-in-progress: false
 
 jobs:
-  original_engine_v34:
-    name: "build-web.yml | V34 | Run ORIGINAL Lineage client, no HTML replacement"
-    runs-on: windows-2025
-    timeout-minutes: 90
-
-    defaults:
-      run:
-        shell: pwsh
+  original_engine_v35:
+    name: "build-web.yml | V35 | Original Sanctuary map format and browser port test"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
 
     steps:
-      - name: "V34 | Checkout game2"
+      - name: "V35 | Checkout game2"
         uses: actions/checkout@v4
 
-      - name: "V34 | Download original Sanctuary archive (46 volumes)"
+      - name: "V35 | Checkout l1j-client source reference"
+        uses: actions/checkout@v4
+        with:
+          repository: uglyoldbob/l1j-client
+          ref: 83052f6b1c5bda59d4c4cbaf01aa2e72ea409853
+          path: upstream-l1j
+          persist-credentials: false
+
+      - name: "V35 | Verify upstream parsing code"
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p original native reports site
+          for p in COPYING src/resources/pack.cpp src/resources/tile.cpp \
+                   src/resources/sdl_graphic.cpp src/widgets/sdl_lin_map.cpp \
+                   src/widgets/sprite_motion.cpp; do
+            test -s "upstream-l1j/$p"
+          done
+          git -C upstream-l1j rev-parse HEAD > reports/V35-upstream-sha.txt
+
+      - name: "V35 | Restore small original-data cache"
+        id: asset_cache
+        uses: actions/cache@v4
+        with:
+          key: sanctuary-v1.0.0-v35-original-map4-tiles-v1
+          path: |
+            native/Sanctuary of Aden - Copy/Tile.pak
+            native/Sanctuary of Aden - Copy/Tile.idx
+            native/Sanctuary of Aden - Copy/Sprite.idx
+            native/Sanctuary of Aden - Copy/map/4/80048009.s32
+            native/Sanctuary of Aden - Copy/map/4/80058009.s32
+            native/Sanctuary of Aden - Copy/map/4/8004800a.s32
+            native/Sanctuary of Aden - Copy/map/4/8005800a.s32
+
+      - name: "V35 | Download original 46-volume archive only on cache miss"
+        if: steps.asset_cache.outputs.cache-hit != 'true'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force original, native, reports | Out-Null
-          if ($env:GITHUB_REPOSITORY -ne 'gowellsik-hue/game2') {
-            throw 'Unexpected repository'
-          }
-          gh release download v1.0.0 -R gowellsik-hue/Game `
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'gowellsik-hue/game2'
+          gh release download v1.0.0 -R gowellsik-hue/Game \
             -p 'Sanctuary.of.Aden.-.Copy.*' -D original --clobber
-          if ($LASTEXITCODE -ne 0) { throw 'Original release download failed' }
-          if (@(Get-ChildItem original -File).Count -ne 46) {
-            throw 'Expected exactly 46 original archive volumes'
-          }
-          1..45 | ForEach-Object {
-            $part = 'Sanctuary.of.Aden.-.Copy.z{0:d2}' -f $_
-            if (-not (Test-Path (Join-Path original $part))) {
-              throw "Missing archive part: $part"
-            }
-          }
-          if (-not (Test-Path 'original/Sanctuary.of.Aden.-.Copy.zip')) {
-            throw 'Missing final ZIP volume'
-          }
-          Get-PSDrive -PSProvider FileSystem |
-            Out-File reports/V34-disk-before.txt
+          test "$(find original -maxdepth 1 -type f | wc -l)" -eq 46
+          for i in $(seq -w 1 45); do
+            test -s "original/Sanctuary.of.Aden.-.Copy.z${i}"
+          done
+          test -s original/Sanctuary.of.Aden.-.Copy.zip
 
-      - name: "V34 | Restore original startup files without modification"
+      - name: "V35 | Extract only original tile index, pack and four map segments"
+        if: steps.asset_cache.outputs.cache-hit != 'true'
+        shell: bash
         run: |
-          $ErrorActionPreference = 'Stop'
-          $seven = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
-          if (-not $seven) { $seven = 'C:\Program Files\7-Zip\7z.exe' }
-          if (-not (Test-Path $seven)) { throw '7-Zip unavailable' }
-          & $seven x 'original/Sanctuary.of.Aden.-.Copy.zip' '-onative' '-y' `
-            '-ir!*.exe' '-ir!*.dll' '-ir!*.ocx' '-ir!*.bin' `
-            '-ir!*.ini' '-ir!*.cfg' '-ir!*.config' '-ir!*.manifest' `
-            '-ir!*.idx' '-ir!*.pak' *> reports/V34-original-extract.log
-          if ($LASTEXITCODE -ne 0) { throw 'Original extraction failed' }
-          $root = Join-Path $PWD 'native/Sanctuary of Aden - Copy'
-          foreach ($file in @('Lineage.exe', 'lin.bin', 'Sprite.pak', 'Tile.pak')) {
-            if (-not (Test-Path (Join-Path $root $file))) {
-              throw "Missing original file: $file"
-            }
-          }
-          $path = Join-Path $root 'lin.bin'
-          $hash = (Get-FileHash $path -Algorithm SHA256).Hash
-          $hash | Set-Content reports/V34-lin-original-sha256.txt
-          Get-PSDrive -PSProvider FileSystem |
-            Out-File reports/V34-disk-after.txt
-          Remove-Item original -Recurse -Force
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq p7zip-full
+          7z x 'original/Sanctuary.of.Aden.-.Copy.zip' -onative -y \
+            'Sanctuary of Aden - Copy/Tile.pak' \
+            'Sanctuary of Aden - Copy/Tile.idx' \
+            'Sanctuary of Aden - Copy/Sprite.idx' \
+            'Sanctuary of Aden - Copy/map/4/80048009.s32' \
+            'Sanctuary of Aden - Copy/map/4/80058009.s32' \
+            'Sanctuary of Aden - Copy/map/4/8004800a.s32' \
+            'Sanctuary of Aden - Copy/map/4/8005800a.s32' \
+            > reports/V35-extract.log
+          rm -rf original
 
-      - name: "V34 | Install official Microsoft Visual C++ 2012 Update 4 x86"
+      - name: "V35 | Require real Sanctuary input, not substitute assets"
+        shell: bash
         run: |
-          $ErrorActionPreference = 'Stop'
-          $dll = Join-Path $env:WINDIR 'SysWOW64\MSVCP110.dll'
-          "msvcp110_present_before=$(Test-Path $dll)" |
-            Set-Content reports/V34-runtime-before.txt
-          $url = 'https://download.microsoft.com/download/1/6/B/16B06F60-3B20-4FF2-B699-5E9B7962F9AE/VSU_4/vcredist_x86.exe'
-          $expected = 'B924AD8062EAF4E70437C8BE50FA612162795FF0839479546CE907FFA8D6E386'
-          $installer = Join-Path $env:RUNNER_TEMP 'v34-vcredist2012-x86.exe'
-          Invoke-WebRequest -Uri $url -OutFile $installer -MaximumRedirection 5
-          $actual = (Get-FileHash $installer -Algorithm SHA256).Hash
-          if ($actual -ne $expected) {
-            throw "Microsoft installer SHA256 mismatch: $actual"
-          }
-          $signature = Get-AuthenticodeSignature -FilePath $installer
-          if ($signature.Status -ne 'Valid' -or
-              $signature.SignerCertificate.Subject -notmatch 'Microsoft') {
-            throw "Microsoft installer signature invalid: $($signature.Status)"
-          }
-          "installer_sha256=$actual" |
-            Set-Content reports/V34-installer-verification.txt
-          "installer_signature=$($signature.Status)" |
-            Add-Content reports/V34-installer-verification.txt
-          $process = Start-Process -FilePath $installer `
-            -ArgumentList '/quiet /norestart' -PassThru -Wait
-          "installer_exit_code=$($process.ExitCode)" |
-            Set-Content reports/V34-runtime-install.txt
-          Remove-Item $installer -Force
-          if ($process.ExitCode -notin @(0, 3010, 1638)) {
-            throw "Microsoft VC++ x86 installation failed: $($process.ExitCode)"
-          }
-          if (-not (Test-Path $dll)) {
-            throw 'MSVCP110.dll still absent from SysWOW64'
-          }
-          foreach ($name in @('MSVCP110.dll', 'MSVCR110.dll')) {
-            $path = Join-Path (Split-Path $dll) $name
-            if (-not (Test-Path $path)) { throw "Missing x86 runtime: $name" }
-            $file = Get-Item $path
-            $sig = Get-AuthenticodeSignature -FilePath $path
-            "$name | version=$($file.VersionInfo.FileVersion) | signature=$($sig.Status) | sha256=$((Get-FileHash $path -Algorithm SHA256).Hash)" |
-              Add-Content reports/V34-runtime-install.txt
-          }
+          set -euo pipefail
+          root='native/Sanctuary of Aden - Copy'
+          for f in Tile.pak Tile.idx Sprite.idx; do test -s "$root/$f"; done
+          for f in 80048009 80058009 8004800a 8005800a; do
+            test -s "$root/map/4/$f.s32"
+          done
+          du -sh native > reports/V35-extracted-size.txt
 
-      - name: "V34 | Run original lin.bin with restored x86 runtime"
+      - name: "V35 | Install portable source-data renderer"
+        shell: bash
         run: |
-          $ErrorActionPreference = 'Stop'
-          Add-Type -TypeDefinition @'
-          using System;
-          using System.Collections.Generic;
-          using System.Runtime.InteropServices;
-          using System.Text;
-          public static class V34Windows {
-              private delegate bool Callback(IntPtr hwnd, IntPtr unused);
-              [DllImport("user32.dll")]
-              private static extern bool EnumWindows(Callback callback, IntPtr unused);
-              [DllImport("user32.dll")]
-              private static extern bool EnumChildWindows(IntPtr parent, Callback callback, IntPtr unused);
-              [DllImport("user32.dll")]
-              private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
-              [DllImport("user32.dll", CharSet=CharSet.Unicode)]
-              private static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int length);
-              [DllImport("user32.dll")]
-              private static extern bool IsWindowVisible(IntPtr hwnd);
-              [DllImport("user32.dll", CharSet=CharSet.Unicode)]
-              private static extern IntPtr SendMessageTimeout(
-                  IntPtr hwnd, uint message, IntPtr wparam,
-                  StringBuilder text, uint flags, uint timeout, out IntPtr result);
-              private static string ReadText(IntPtr hwnd) {
-                  var buffer = new StringBuilder(1024);
-                  GetWindowText(hwnd, buffer, buffer.Capacity);
-                  if (buffer.Length == 0) {
-                      IntPtr result;
-                      SendMessageTimeout(hwnd, 0x000D, (IntPtr)buffer.Capacity,
-                          buffer, 0x0002, 200, out result);
-                  }
-                  return buffer.ToString();
-              }
-              public static string[] CaptionsFor(int pid) {
-                  var found = new List<string>();
-                  EnumWindows((hwnd, unused) => {
-                      uint owner;
-                      GetWindowThreadProcessId(hwnd, out owner);
-                      if (owner != (uint)pid || !IsWindowVisible(hwnd)) return true;
-                      var title = ReadText(hwnd);
-                      if (!String.IsNullOrWhiteSpace(title)) found.Add("WINDOW: " + title);
-                      EnumChildWindows(hwnd, (child, unused2) => {
-                          var text = ReadText(child);
-                          if (!String.IsNullOrWhiteSpace(text)) found.Add("CONTROL: " + text);
-                          return true;
-                      }, IntPtr.Zero);
-                      return true;
-                  }, IntPtr.Zero);
-                  return found.ToArray();
-              }
-          }
-          '@
-          $root = Join-Path $PWD 'native/Sanctuary of Aden - Copy'
-          $path = Join-Path $root 'lin.bin'
-          $process = $null
-          $samples = @()
-          $launchError = $null
-          $earlyExitCode = $null
-          $pidValue = $null
-          $aliveAtEnd = $false
-          try {
-            $start = New-Object System.Diagnostics.ProcessStartInfo
-            $start.FileName = $path
-            $start.WorkingDirectory = $root
-            $start.UseShellExecute = $false
-            $process = [System.Diagnostics.Process]::Start($start)
-            if ($null -eq $process) { throw 'Process.Start returned null' }
-            $pidValue = $process.Id
-            for ($i = 1; $i -le 10; $i++) {
-              Start-Sleep -Seconds 3
-              $process.Refresh()
-              $alive = -not $process.HasExited
-              $captions = @()
-              if ($alive) { $captions = @([V34Windows]::CaptionsFor($process.Id)) }
-              $samples += [pscustomobject]@{
-                seconds = $i * 3
-                process_alive = $alive
-                window_and_control_text = $captions
-              }
-              if (-not $alive) {
-                $earlyExitCode = $process.ExitCode
-                break
-              }
-            }
-            $process.Refresh()
-            $aliveAtEnd = -not $process.HasExited
-          } catch {
-            $launchError = $_.Exception.Message
-          } finally {
-            if ($null -ne $process) {
-              try {
-                $process.Refresh()
-                if (-not $process.HasExited) { $process.Kill($true) }
-              } catch { }
-              $process.Dispose()
-            }
-          }
-          $capturedText = (@($samples | ForEach-Object {
-            $_.window_and_control_text
-          }) -join ' ')
-          $observed = [pscustomobject]@{
-            version = 'V34'
-            original_file = 'lin.bin'
-            process_id = $pidValue
-            launch_error = $launchError
-            early_exit_code = $earlyExitCode
-            alive_after_observation = $aliveAtEnd
-            missing_msvcp110_observed = `
-              ($capturedText -match 'Cannot find.*MSVCP110[.]dll')
-            runtime_expired_observed = `
-              ($capturedText -match 'RunTime Expired|Reinstall Lineage')
-            observations = $samples
-          }
-          $observed | ConvertTo-Json -Depth 9 | Set-Content `
-            reports/V34-lin-runtime-results.json -Encoding utf8
-          $hashAfter = (Get-FileHash $path -Algorithm SHA256).Hash
-          $hashBefore = (Get-Content reports/V34-lin-original-sha256.txt -Raw).Trim()
-          if ($hashAfter -ne $hashBefore) {
-            throw 'Original lin.bin hash changed during test'
-          }
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-pil
+          /usr/bin/python3 -c 'from PIL import Image; print(Image.__version__)'
 
-      - name: "V34 | Report real native runtime outcome"
-        if: always()
+      - name: "V35 | Render real Map 4 source tiles without modifying originals"
+        shell: bash
         run: |
-          $ErrorActionPreference = 'Stop'
-          $report = 'reports/V34-lin-runtime-results.json'
-          $lines = @(
-            '# build-web.yml | V34 | ORIGINAL engine x86 runtime test',
-            '',
-            'V33 native lin.bin showed: Cannot find MSVCP110.dll.',
-            'V34 installs the official Microsoft Visual C++ 2012 Update 4 x86 runtime.',
-            'No protected file, system clock, or licensing mechanism was changed.',
-            ''
-          )
-          if (Test-Path 'reports/V34-runtime-install.txt') {
-            $lines += '## Runtime installation'
-            $lines += @(Get-Content reports/V34-runtime-install.txt)
-            $lines += ''
-          }
-          if (Test-Path $report) {
-            $result = Get-Content $report -Raw | ConvertFrom-Json
-            $lines += @(
-              '## Original lin.bin after installation',
-              "- Process started: $($null -ne $result.process_id)",
-              "- Alive at observation end: $($result.alive_after_observation)",
-              "- MSVCP110.dll missing message: $($result.missing_msvcp110_observed)",
-              "- RunTime Expired message: $($result.runtime_expired_observed)",
-              "- Launch exception: $($result.launch_error)",
-              ''
-            )
-            $messages = @($result.observations | ForEach-Object {
-              $_.window_and_control_text
-            } | Where-Object { $_ } | Select-Object -Unique)
-            $lines += '## Actual Windows UI text'
-            if ($messages.Count -eq 0) { $lines += '- No UI text detected' }
-            foreach ($message in $messages | Select-Object -First 45) {
-              $lines += "- $message"
-            }
-          } else {
-            $lines += '- lin.bin test did not complete; inspect earlier step.'
-          }
-          $lines += @(
-            '',
-            '## Limits',
-            '- Running an EXE or observing a window does not prove gameplay.',
-            '- Runtime expiration, if observed, remains a blocker requiring authorized resolution.',
-            '- No EULA clicks, server credentials, or logins were automated.',
-            '- This is native Windows execution, NOT web or GitHub Pages gameplay.',
-            '- No substitute HTML engine was created.'
-          )
-          $summary = $lines -join "`n"
-          $summary | Set-Content reports/V34-summary.md -Encoding utf8
-          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-          Write-Output $summary
+          set -euo pipefail
+          cat > /tmp/v35_map_probe.py <<'PY_PORT'
+          from collections import Counter
+          from functools import lru_cache
+          import hashlib
+          import json
+          from pathlib import Path
+          import struct
+          from PIL import Image
 
-      - name: "V34 | Upload original engine runtime evidence"
+          BASE = Path('native/Sanctuary of Aden - Copy')
+          REPORTS = Path('reports')
+          SITE = Path('site')
+          SEGMENTS = ('80048009', '80058009', '8004800a', '8005800a')
+          CENTER_X, CENTER_Y = 33080, 33403
+          RADIUS = 12
+
+          def check(ok, message):
+              if not ok:
+                  raise ValueError(message)
+
+          def sha256(path):
+              h = hashlib.sha256()
+              with path.open('rb') as f:
+                  for chunk in iter(lambda: f.read(4 * 1024 * 1024), b''):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          def index(path, pack_size=None):
+              data = path.read_bytes()
+              check(len(data) >= 32 and (len(data) - 4) % 28 == 0,
+                    f'Invalid IDX record format: {path}')
+              count = (len(data) - 4) // 28
+              endian = '<'
+              if struct.unpack_from('<I', data)[0] != count:
+                  check(struct.unpack_from('>I', data)[0] == count,
+                        f'IDX count does not match file size: {path}')
+                  endian = '>'
+              records = {}
+              invalid = 0
+              for i in range(count):
+                  offset = 4 + i * 28
+                  start = struct.unpack_from(endian + 'I', data, offset)[0]
+                  name = data[offset + 4:offset + 24].split(b'\0')[0].decode('latin1').lower()
+                  size = struct.unpack_from(endian + 'I', data, offset + 24)[0]
+                  if pack_size is not None and (start > pack_size or size > pack_size - start):
+                      invalid += 1
+                      continue
+                  if name and name not in records:
+                      records[name] = (start, size)
+              check(records, f'No readable IDX records: {path}')
+              return records, {'count': count, 'unique': len(records),
+                               'out_of_bounds': invalid, 'byte_order': endian}
+
+          def map_data(path):
+              data = path.read_bytes()
+              check(len(data) >= 49154, f'Map is too small: {path}')
+              at = 0
+              floor = {}
+              for ix in range(64):
+                  for iy in range(64):
+                      floor[(iy, ix)] = struct.unpack_from('<II', data, at)
+                      at += 8
+              unknown = struct.unpack_from('<H', data, at)[0]
+              at += 2
+              check(unknown < 10000 and at + 6 * unknown <= len(data),
+                    f'Bad map header: {path}')
+              at += unknown * 6
+              attributes = {}
+              for ix in range(64):
+                  for iy in range(64):
+                      attributes[(iy, ix)] = struct.unpack_from('<HH', data, at)
+                      at += 4
+
+              def take(fmt):
+                  nonlocal at
+                  length = struct.calcsize('<' + fmt)
+                  check(at + length <= len(data), f'Truncated map {path}: {fmt}')
+                  answer = struct.unpack_from('<' + fmt, data, at)
+                  at += length
+                  return answer[0] if len(answer) == 1 else answer
+
+              objects = []
+              count = take('I')
+              check(count < 100000, 'Unreasonable object count')
+              for _ in range(count):
+                  object_id = take('H')
+                  num_tiles = take('H')
+                  for __ in range(num_tiles):
+                      x, y = take('BB')
+                      if x == 0xcd and y == 0xcd:
+                          check(at + 5 <= len(data), 'Truncated object skip')
+                          at += 5
+                          continue
+                      height = take('B')
+                      tile_id = take('I')
+                      objects.append((x, y, height, tile_id, object_id))
+              switches = take('I')
+              check(switches < 100000 and at + switches * 5 <= len(data),
+                    'Map switch block invalid')
+              at += switches * 5
+              sets = take('I')
+              check(sets < 100000 and at + sets * 4 <= len(data),
+                    'Map tileset block invalid')
+              at += sets * 4
+              portals = []
+              if at + 2 <= len(data):
+                  num_portals = take('H')
+                  check(num_portals < 10000 and at + num_portals * 9 <= len(data),
+                        'Map portal block invalid')
+                  for _ in range(num_portals):
+                      portals.append(take('BBBHHH'))
+              return {'floor': floor, 'attributes': attributes, 'objects': objects,
+                      'portals': portals, 'remainder': len(data) - at,
+                      'size': len(data), 'filename': path.name}
+
+          def rgb555(p):
+              return ((p >> 10 & 31) * 255 // 31,
+                      (p >> 5 & 31) * 255 // 31,
+                      (p & 31) * 255 // 31, 255)
+
+          def tile_picture(buffer, tile_number, side):
+              check(len(buffer) >= 8, 'Empty .til header')
+              count = struct.unpack_from('<H', buffer)[0]
+              check(0 < count <= 1024 and 0 <= tile_number < count,
+                    f'Bad tile number {tile_number} (count={count})')
+              base = 4 * (2 + count)
+              check(base <= len(buffer), 'Tile offsets exceed pack entry')
+              a = struct.unpack_from('<I', buffer, 4 + tile_number * 4)[0]
+              b = struct.unpack_from('<I', buffer, 8 + tile_number * 4)[0]
+              check(a < b and base + b <= len(buffer), 'Tile offset outside entry')
+              pixels = buffer[base + a:base + b]
+              if pixels[0] & 2:
+                  check(len(pixels) >= 5, 'Special tile truncated')
+                  ox, oy, width, height = pixels[1:5]
+                  check(0 < width <= 128 and 0 < height <= 128,
+                        'Invalid special tile bounds')
+                  img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+                  at = 5
+                  for row in range(height):
+                      check(at < len(pixels), 'Special tile row missing')
+                      runs = pixels[at]
+                      at += 1
+                      x = 0
+                      for _ in range(runs):
+                          check(at + 2 <= len(pixels), 'Special tile run missing')
+                          skip, width_run = pixels[at] // 2, pixels[at + 1]
+                          at += 2
+                          x += skip
+                          check(x + width_run <= width and at + 2 * width_run <= len(pixels),
+                                'Special tile pixels outside bounds')
+                          for i in range(width_run):
+                              value = struct.unpack_from('<H', pixels, at)[0]
+                              at += 2
+                              if value != 0x7fe0:
+                                  img.putpixel((x + i, row), rgb555(value))
+                          x += width_run
+                  return img, (ox, oy)
+              check(len(pixels) >= 1 + 576, 'Ordinary half-tile truncated')
+              img = Image.new('RGBA', (24, 24), (0, 0, 0, 0))
+              at = 1
+              for row in range(24):
+                  n = 2 * (row + 1)
+                  if row > 11:
+                      n -= 4 * (row - 11)
+                  offset = 24 - n if side == 'L' else 0
+                  for j in range(n):
+                      value = struct.unpack_from('<H', pixels, at)[0]
+                      at += 2
+                      if value != 0:
+                          img.putpixel((offset + j, row), rgb555(value))
+              return img, (0, 0)
+
+          def main():
+              SITE.mkdir(parents=True, exist_ok=True)
+              maps = {tag: map_data(BASE / 'map' / '4' / (tag + '.s32'))
+                      for tag in SEGMENTS}
+              pak_path = BASE / 'Tile.pak'
+              tile_index, tile_report = index(BASE / 'Tile.idx', pak_path.stat().st_size)
+              sprite_index, sprite_report = index(BASE / 'Sprite.idx')
+              sprite_names = [name for name in sprite_index if name.endswith('.spr')]
+              check(sprite_names, 'Original Sprite.idx contains no readable sprites')
+
+              def locate(x, y):
+                  tag = f'{x // 64 + 0x7e00:04x}{y // 64 + 0x7e00:04x}'
+                  check(tag in maps, f'Missing real source segment {tag}')
+                  return maps[tag], x % 64, y % 64
+
+              floor_cells = []
+              wanted = set()
+              for y in range(CENTER_Y - RADIUS, CENTER_Y + RADIUS + 1):
+                  for x in range(CENTER_X - RADIUS, CENTER_X + RADIUS + 1):
+                      src, lx, ly = locate(x, y)
+                      values = src['floor'][(lx, ly)]
+                      floor_cells.append((x, y, values))
+                      wanted.update(v >> 8 for v in values)
+
+              overlays = []
+              for tag, src in maps.items():
+                  mx = (int(tag[:4], 16) - 0x7e00) * 64
+                  my = (int(tag[4:], 16) - 0x7e00) * 64
+                  for ox, oy, height, tile, objid in src['objects']:
+                      x, y = mx + ox // 2, my + oy
+                      if abs(x - CENTER_X) <= RADIUS + 2 and abs(y - CENTER_Y) <= RADIUS + 2:
+                          overlays.append((x, y, ox % 2, height, tile, objid))
+                          wanted.add(tile >> 8)
+              missing = sorted(i for i in wanted if f'{i}.til' not in tile_index)
+              check(not missing, f'Missing original tile sets: {missing[:25]}')
+
+              canvas = Image.new('RGBA', (1440, 920), (12, 16, 20, 255))
+              cx, cy = 720, 460
+              def at(x, y):
+                  return ((x + y - CENTER_X - CENTER_Y) * 24,
+                          (y - x - CENTER_Y + CENTER_X) * 12)
+
+              with pak_path.open('rb') as pack:
+                  @lru_cache(maxsize=96)
+                  def get_set(number):
+                      offset, size = tile_index[f'{number}.til']
+                      pack.seek(offset)
+                      content = pack.read(size)
+                      check(len(content) == size, f'Cannot read original tile set {number}')
+                      return content
+
+                  @lru_cache(maxsize=4096)
+                  def graphic(number, variant, side):
+                      return tile_picture(get_set(number), variant, side)
+
+                  drawn = 0
+                  for x, y, values in sorted(floor_cells,
+                                             key=lambda e: (e[1] - e[0], e[0] + e[1])):
+                      dx, dy = at(x, y)
+                      for side_num, value in enumerate(values):
+                          image, (ox, oy) = graphic(value >> 8, value & 255,
+                                                  'L' if side_num == 0 else 'R')
+                          canvas.alpha_composite(image, (cx + dx + 24 * side_num + ox,
+                                                         cy + dy + oy))
+                          drawn += 1
+                  for x, y, half, height, value, objid in sorted(
+                          overlays, key=lambda e: (e[1] - e[0], e[0] + e[1])):
+                      dx, dy = at(x, y)
+                      image, (ox, oy) = graphic(value >> 8, value & 255, 'S')
+                      canvas.alpha_composite(image, (cx + dx + 24 * half + ox,
+                                                     cy + dy + oy))
+                      drawn += 1
+              check(drawn >= 1250, 'Source map did not produce all floor tiles')
+              canvas.convert('RGB').save(SITE / 'original-map.png', optimize=True)
+              pic = canvas.convert('RGB')
+              check(len(pic.quantize(colors=256).getcolors() or []) >= 8,
+                    'Rendered map appears blank')
+              inputs = [pak_path, BASE / 'Tile.idx', BASE / 'Sprite.idx']
+              inputs.extend(BASE / 'map' / '4' / (tag + '.s32') for tag in SEGMENTS)
+              result = {
+                  'version': 'V35',
+                  'scope': 'Read-only original Map 4 tile pixel sample',
+                  'map_id': 4,
+                  'center': {'x': CENTER_X, 'y': CENTER_Y},
+                  'radius': RADIUS,
+                  'floor_cells': len(floor_cells),
+                  'original_tile_draws': drawn,
+                  'source_tile_sets': len(wanted),
+                  'original_sprite_entries': len(sprite_names),
+                  'tile_index': tile_report,
+                  'sprite_index': sprite_report,
+                  'map_segments': [
+                      {'file': src['filename'], 'size': src['size'],
+                       'objects': len(src['objects']),
+                       'portals': len(src['portals']),
+                       'unparsed_bytes': src['remainder']}
+                      for src in maps.values()
+                  ],
+                  'source_sha256': {str(p.relative_to(BASE)): sha256(p) for p in inputs},
+                  'original_art_modified': False,
+                  'sprite_animation_verified': False,
+                  'walkability_verified': False,
+                  'in_game_movement_verified': False,
+                  'map_visual_accuracy_verified': False,
+                  'engine_reused': False,
+              }
+              (SITE / 'audit.json').write_text(
+                  json.dumps(result, ensure_ascii=False, indent=2), encoding='utf8')
+              (SITE / 'index.html').write_text('''<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sanctuary original map probe V35</title><style>html,body{margin:0;background:#0d131b;color:#f1f5fa;font:14px system-ui}header{padding:14px;background:#202b3b}h1{margin:0 0 6px;font-size:17px}p{margin:6px 0}#map{height:calc(100dvh - 116px);overflow:auto}img{display:block;width:1440px;image-rendering:pixelated}a{color:#90ceff}</style><header><h1>Sanctuary / Original Map 4 source pixel probe</h1><p>Original map tiles only. Rendering accuracy, knight animation and collisions not yet verified.</p><a href="audit.json">Original data audit</a></header><main id="map"><img src="original-map.png" alt="Map pixel sample decoded from unmodified original tile files"></main></html>''', encoding='utf8')
+              print(json.dumps({k: v for k, v in result.items() if k != 'source_sha256'},
+                               indent=2, ensure_ascii=False))
+
+          if __name__ == '__main__':
+              main()
+          PY_PORT
+          /usr/bin/python3 /tmp/v35_map_probe.py > reports/V35-original-map-result.json
+          sha256sum site/original-map.png site/audit.json \
+            > reports/V35-output-sha256.txt
+
+      - name: "V35 | Verify real-source rendered output and audit"
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 - <<'PY_VERIFY'
+          import json
+          from pathlib import Path
+          from PIL import Image
+          folder = Path('site')
+          report = json.loads((folder / 'audit.json').read_text())
+          assert report['version'] == 'V35'
+          assert report['floor_cells'] == 625
+          assert report['original_tile_draws'] >= 1250
+          assert report['original_sprite_entries'] > 0
+          assert report['original_art_modified'] is False
+          assert report['map_visual_accuracy_verified'] is False
+          image = Image.open(folder / 'original-map.png')
+          assert image.size == (1440, 920)
+          assert (folder / 'index.html').stat().st_size > 300
+          print('V35 SUCCESS: real original Map 4 tiles decoded into a static image.')
+          print('V35 NOT YET: knight actions, collision, visual validation, interactive gameplay.')
+          PY_VERIFY
+
+      - name: "V35 | Upload result only as Actions artifact, not Pages deploy"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-Original-Engine-V34-Runtime-Evidence
-          path: reports/
-          retention-days: 90
-          if-no-files-found: error
+          name: Sanctuary-Original-Data-Web-Port-V35
+          path: |
+            reports/
+            site/
+          retention-days: 60
+          if-no-files-found: warn
 
-      - name: "V34 | Verify native runtime test evidence"
+      - name: "V35 | Summary of original-data preservation"
         if: always()
+        shell: bash
         run: |
-          $ErrorActionPreference = 'Stop'
-          foreach ($file in @(
-            'V34-runtime-install.txt',
-            'V34-lin-runtime-results.json',
-            'V34-summary.md'
-          )) {
-            if (-not (Test-Path (Join-Path reports $file))) {
-              throw "Missing evidence: $file"
-            }
-          }
-          $result = Get-Content reports/V34-lin-runtime-results.json `
-            -Raw | ConvertFrom-Json
-          if ($null -eq $result.process_id) {
-            throw "Original lin.bin failed to start: $($result.launch_error)"
-          }
-          if ($result.missing_msvcp110_observed) {
-            throw 'The original MSVCP110.dll error persists after installation'
-          }
-          Write-Output 'V34 PASS: Microsoft x86 runtime installed and original lin.bin retested.'
-          Write-Output 'This does NOT establish working gameplay or browser execution.'
+          {
+            echo '# build-web.yml | V35 | Existing workflow, original-data port'
+            echo ''
+            echo 'Same .github/workflows/build-web.yml file, not a new workflow.'
+            echo 'V34 native test was replaced by a bounded static-asset verification.'
+            echo 'Original map files and tile pack are read only; no substitute graphics.'
+            echo 'Not a finished game or interactive browser client.'
+            echo 'GitHub Pages deployment not attempted.'
+            if test -s reports/V35-original-map-result.json; then
+              echo '```json'
+              cat reports/V35-original-map-result.json
+              echo '```'
+            else
+              echo 'The source-data renderer did not complete; inspect job logs.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
