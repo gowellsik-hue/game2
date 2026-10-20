@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V43 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V43 | Original Sanctuary engine runtime test"
+name: "build-web.yml | V44 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V44 | Original Sanctuary engine runtime test"
 
 "on":
   workflow_dispatch:
@@ -13,19 +13,19 @@ permissions:
   contents: write
 
 concurrency:
-  group: build-web-yml-v43-original-engine
+  group: build-web-yml-v44-original-engine
   cancel-in-progress: false
 
 jobs:
-  original_engine_v43:
-    name: "build-web.yml | V43 | Compile existing l1j-client main() to WebAssembly"
+  original_engine_v44:
+    name: "build-web.yml | V44 | Compile existing l1j-client main() to WebAssembly"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - name: "V43 | Checkout existing game2"
+      - name: "V44 | Checkout existing game2"
         uses: actions/checkout@v4
 
-      - name: "V43 | Checkout existing l1j-client C++ engine, unchanged"
+      - name: "V44 | Checkout existing l1j-client C++ engine, unchanged"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -33,12 +33,12 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V43 | Set up Emscripten for the original C++ source"
+      - name: "V44 | Set up Emscripten for the original C++ source"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V43 | Compile ALL existing C++ and C source objects"
+      - name: "V44 | Compile ALL existing C++ and C source objects"
         shell: bash
         run: |
           set -euo pipefail
@@ -46,7 +46,7 @@ jobs:
           test -s upstream-l1j/COPYING
           emcc --version | head -1
           mkdir -p build/objects dist reports
-          cat > /tmp/v43-build-sources.py <<'PY_BUILD'
+          cat > /tmp/v44-build-sources.py <<'PY_BUILD'
           import pathlib, re, subprocess
           src=pathlib.Path('upstream-l1j')
           txt=(src/'Makefile.am').read_text()
@@ -54,40 +54,61 @@ jobs:
           if not m: raise SystemExit('The upstream Lineage_SOURCES declaration changed')
           files=re.findall(r'src/[\w./-]+\.(?:cpp|c)\b',m.group(1))
           if len(files)<55: raise SystemExit('Unexpectedly small engine source list: '+str(len(files)))
-          (pathlib.Path('reports')/'V43-source-list.txt').write_text('\n'.join(files)+'\n')
+          (pathlib.Path('reports')/'V44-source-list.txt').write_text('\n'.join(files)+'\n')
           flags=['-O1','-g0','-pthread','-fexceptions','-sUSE_SDL=1',
                  '-sUSE_SDL_IMAGE=1','-sUSE_SDL_MIXER=1',
-                 '-Iupstream-l1j/src','-Iupstream-l1j/include']
+                 '-Iupstream-l1j/src','-Iupstream-l1j/src/resources','-Iupstream-l1j/include']
           objects=[]
           for n,rel in enumerate(files):
               file=src/rel
               if not file.is_file():raise SystemExit('Missing original client file: '+str(file))
               obj='build/objects/%03d.o'%n
               compiler='emcc' if rel.endswith('.c') else 'em++'
-              argv=[compiler,*flags,'-c',str(file),'-o',obj]
+              staging=file
               if rel == 'src/resources/global_files.cpp':
-                  argv.append('-Dsprintf=v43_sprite_pack_name')
+                  # The unmodified original client expects PAKs to exist during
+                  # global_files::init(). Prepare lazy originals in its worker.
+                  source=file.read_text()
+                  target='void global_files::init()\n{\n'
+                  assert source.count(target)==1
+                  source=source.replace(target,target+'\tif (!v44_prepare_pak_files())\n\t\tprintf("V44: lazy PAK mount unavailable\\n");\n',1)
+                  source='extern "C" int v44_prepare_pak_files();\n'+source
+                  staging=pathlib.Path('build/v44-staged-global_files.cpp')
+                  staging.write_text(source)
+              elif rel == 'src/resources/pack.cpp':
+                  # Missing full-volume packages must be reported, not fed to
+                  # fseek(NULL) / fread(NULL), which crashes as call_indirect.
+                  source=file.read_text()
+                  target='\topen_data();\t//open the data file it is not already\n\tint num_invalid = 0;'
+                  assert source.count(target)==1
+                  source=source.replace(target,'\topen_data();\t//open the data file it is not already\n\tif (!data_buf) {\n\t\tprintf("V44 MISSING ORIGINAL PAK: %s\\n", data_file);\n\t\treturn 1;\n\t}\n\tint num_invalid = 0;',1)
+                  target='unsigned char* pack::load_file(int which, int decrypting)\n{\n\tunsigned char *buf;\n\topen_data();\n'
+                  assert source.count(target)==1
+                  source=source.replace(target,target+'\tif (!data_buf) return 0;\n',1)
+                  staging=pathlib.Path('build/v44-staged-pack.cpp')
+                  staging.write_text(source)
+              argv=[compiler,*flags,'-c',str(staging),'-o',obj]
               print('Compiling',rel,flush=True)
               subprocess.run(argv,check=True)
               objects.append(obj)
           pathlib.Path('build/objects-list.txt').write_text('\n'.join(objects))
           print('Original sources compiled:',len(objects))
           PY_BUILD
-          python3 /tmp/v43-build-sources.py 2>&1 | tee reports/V43-compile-log.txt
+          python3 /tmp/v44-build-sources.py 2>&1 | tee reports/V44-compile-log.txt
           test -s build/objects-list.txt
           test -z "$(git -C upstream-l1j status --porcelain)" || {
             echo 'Upstream original sources were unexpectedly altered' >&2
             exit 1
           }
 
-      - name: "V43 | Cache small unchanged original startup resources"
+      - name: "V44 | Cache small unchanged original startup resources"
         id: startup_cache
         uses: actions/cache@v4
         with:
-          key: original-sanctuary-startup-idx-font-v1.0.0-v41
+          key: original-sanctuary-v44-indexes-text-sprite00-v1
           path: original-startup/
 
-      - name: "V43 | Fetch original Sanctuary startup data on first run"
+      - name: "V44 | Fetch original Sanctuary startup data on first run"
         if: steps.startup_cache.outputs.cache-hit != 'true'
         shell: bash
         env:
@@ -101,20 +122,64 @@ jobs:
             -p 'Sanctuary.of.Aden.-.Copy.*' -D original-download --clobber
           test "$(find original-download -type f | wc -l)" -eq 46
           7z x original-download/Sanctuary.of.Aden.-.Copy.zip \
-            -ooriginal-startup -y '-ir!*.idx' '-ir!*.fnt' \
-            > reports/V43-startup-extract-log.txt
+            -ooriginal-startup -y '-ir!*.idx' '-ir!*.fnt' '-ir!Text.pak' '-ir!Sprite00.pak' \
+            > reports/V44-startup-extract-log.txt
           rm -rf original-download
 
-      - name: "V43 | Link the original client main() without recreated game logic"
+      - name: "V44 | Split original boot PAK files for GitHub Pages byte ranges"
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/pakchunks
+          cat > /tmp/v44-split-original.py <<'PY_SPLIT'
+          import hashlib, json, pathlib
+          base=pathlib.Path('original-startup/Sanctuary of Aden - Copy')
+          output=pathlib.Path('dist/pakchunks')
+          chunk_size=16*1024*1024
+          original_paks={'Text.pak':24846904,'Sprite00.pak':218172787}
+          manifest={'version':'V44','chunkSize':chunk_size,'files':{}}
+          for name,expected in original_paks.items():
+              original=base/name
+              assert original.is_file(), f'Missing ORIGINAL PAK {name}'
+              assert original.stat().st_size==expected, f'Incorrect original {name} size'
+              digest=hashlib.sha256()
+              count=0
+              with original.open('rb') as inp:
+                  while True:
+                      part=inp.read(chunk_size)
+                      if not part: break
+                      digest.update(part)
+                      (output/(name+'.part'+f'{count:03d}')).write_bytes(part)
+                      count+=1
+              with original.open('rb') as inp:
+                  for i in [0,expected//2,expected-1]:
+                      inp.seek(i)
+                      want=inp.read(1)
+                      shard=(output/(name+'.part'+f'{i//chunk_size:03d}'))
+                      with shard.open('rb') as sh:
+                          sh.seek(i%chunk_size)
+                          assert want==sh.read(1), f'Part differs at {name} {i}'
+              manifest['files'][name]={'size':expected,'sha256':digest.hexdigest(),'parts':count}
+              print(f'Original PAK {name}: {expected} bytes, {count} shards, sha256={digest.hexdigest()}',flush=True)
+          (pathlib.Path('dist')/'v44-paks.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          total=sum(p.stat().st_size for p in output.iterdir())
+          assert total==sum(original_paks.values())
+          assert total<300*1024*1024,'Refuse excessive GH Pages data'
+          PY_SPLIT
+          python3 /tmp/v44-split-original.py 2>&1 | tee reports/V44-pak-shards-log.txt
+
+      - name: "V44 | Link the original client main() without recreated game logic"
         shell: bash
         run: |
           set -euo pipefail
           base='original-startup/Sanctuary of Aden - Copy'
+          # Real archive paths verified against the V29 full release manifest:
+          # Sprite00.idx and LOWERCASE font/eng.fnt.
           original_idx="$base/Sprite00.idx"
           original_font="$base/font/eng.fnt"
           original_small_font="$base/font/small.fnt"
           if [[ ! -s "$original_idx" || ! -s "$original_font" || ! -s "$original_small_font" ]]; then
-            echo 'V43 | Missing startup resources; actual extracted file paths:' >&2
+            echo 'V44 | Missing startup resources; actual extracted file paths:' >&2
             find original-startup -type f | sort >&2
             echo "Sprite00.idx present: $(test -s "$original_idx" && echo yes || echo no)" >&2
             echo "font/eng.fnt present: $(test -s "$original_font" && echo yes || echo no)" >&2
@@ -122,16 +187,24 @@ jobs:
             exit 1
           fi
           mkdir -p runtime/lineage/Font
-          cp -a "$original_idx" runtime/lineage/Sprite00.idx
+          # The original C++ pack loader uses Text, Tile, Sprite, and Sprite00..15 indices.
+          # Copy original indices unchanged; missing PAKs are explicitly reported.
+          find "$base" -maxdepth 1 -type f -iname '*.idx' \
+            -exec cp -a '{}' runtime/lineage/ ';'
+          for idx in Text.idx Tile.idx Sprite.idx Sprite00.idx Sprite15.idx; do
+            test -s "runtime/lineage/$idx" || { echo "Missing original index $idx"; exit 1; }
+          done
+          # The l1j-client requests 'Font/eng.fnt'; copy, never edit the source data.
           cp -a "$original_font" runtime/lineage/Font/eng.fnt
+          # Original file is font/small.fnt; the existing client expects Font/SMALL.FNT.
           cp -a "$original_small_font" runtime/lineage/Font/SMALL.FNT
           cmp -s "$original_idx" runtime/lineage/Sprite00.idx
           cmp -s "$original_font" runtime/lineage/Font/eng.fnt
           cmp -s "$original_small_font" runtime/lineage/Font/SMALL.FNT
-          sha256sum "$original_idx" "$original_font" "$original_small_font" > reports/V43-original-startup-hashes.txt
-          printf 'V43: Sprite00.idx=%s, eng.fnt=%s, small.fnt=%s bytes\n' \
+          sha256sum "$original_idx" "$original_font" "$original_small_font" > reports/V44-original-startup-hashes.txt
+          printf 'V44: Sprite00.idx=%s, eng.fnt=%s, small.fnt=%s bytes\n' \
             "$(stat -c %s "$original_idx")" "$(stat -c %s "$original_font")" "$(stat -c %s "$original_small_font")"
-
+          # This is a runtime path configuration, not a replacement game world.
           cat > runtime/Lineage.ini <<'INI'
           Path = /lineage/
           NumServers = 1
@@ -140,10 +213,12 @@ jobs:
               GamePort = 2000
               Names = 127.0.0.1
           INI
-
           test -s upstream-l1j/src/sprite_table.txt
-
-          cat > build/v43-sdl12-compat.cpp <<'CPP_COMPAT'
+          # Emscripten 3.1.74's SDL1 compatibility library exports SDL_PollEvent
+          # and IMG_Load_RW but not these three SDL 1.2 compatibility entrypoints.
+          # Keep the original 60 C/C++ client files unchanged. The following is
+          # a web-platform adapter for missing SDL1 entrypoints and broken SDL1 thread stubs.
+          cat > build/v44-sdl12-compat.cpp <<'CPP_COMPAT'
           #include <SDL/SDL.h>
           #include <SDL/SDL_image.h>
           #include <cstring>
@@ -151,7 +226,11 @@ jobs:
           #include <pthread.h>
           #include <new>
           #include <cstdio>
+          #include <emscripten.h>
 
+          // SDL 1.2 compatibility: Emscripten's JavaScript SDL_CreateThread
+          // intentionally throws. Use the already-enabled WASM pthreads.
+          // The original client's sources remain completely untouched.
           struct SDL_Thread {
             pthread_t native;
             int (SDLCALL *callback)(void *);
@@ -160,90 +239,95 @@ jobs:
           };
           struct SDL_mutex { pthread_mutex_t native; };
 
-          static void *v43_sdl_thread_entry(void *opaque) {
+          static void *v44_sdl_thread_entry(void *opaque) {
             SDL_Thread *t = static_cast<SDL_Thread *>(opaque);
             t->result = t->callback(t->argument);
             return nullptr;
           }
 
-          extern "C" {
-          int v43_sprite_pack_name(char *dst, const char *fmt, ...) {
-            if (!dst || !fmt || std::strcmp(fmt, "Sprite%02d") != 0) {
-              std::fprintf(stderr, "V43 incompatible sprite filename format\n");
-              return -1;
+          // This is a lazy filesystem bridge, not a replacement map or sprite.
+          // It is called on the actual client worker before global_files::init().
+          // Its network accesses are served by our same-origin v44 Service Worker.
+          EM_JS(int, v44_register_original_paks, (), {
+            if (!ENVIRONMENT_IS_WORKER) {
+              console.error('V44: lazy PAK mount requires the WASM worker');
+              return 0;
             }
-            va_list ap;
-            va_start(ap, fmt);
-            const int number = va_arg(ap, int);
-            va_end(ap);
-            if (number < 0 || number > 99) {
-              std::fprintf(stderr, "V43 sprite pack index out of range: %d\n", number);
-              return -1;
+            var original = ['Text.pak','Sprite00.pak'];
+            for (var i=0; i<original.length; ++i) {
+              var fname = original[i];
+              try {
+                if (!FS.analyzePath('/lineage/'+fname).exists) {
+                  var remote = new URL('v44pak/'+fname, self.location.href).href;
+                  FS.createLazyFile('/lineage', fname, remote, true, false);
+                  console.log('V44 ORIGINAL PAK (lazy): '+fname+' -> '+remote);
+                }
+              } catch(e) {
+                console.error('V44 failed to mount original '+fname+': '+e);
+                return 0;
+              }
             }
-            std::memcpy(dst, "Sprite", 6);
-            dst[6] = static_cast<char>('0' + number / 10);
-            dst[7] = static_cast<char>('0' + number % 10);
-            dst[8] = '\0';
-            return 8;
+            return 1;
+          });
+          extern "C" int v44_prepare_pak_files(void) {
+            return v44_register_original_paks();
           }
 
+          extern "C" {
           SDL_Thread * SDLCALL SDL_CreateThread(int (SDLCALL *fn)(void *), void *data) {
             if (!fn) return nullptr;
             SDL_Thread *t = new (std::nothrow) SDL_Thread{};
             if (!t) return nullptr;
             t->callback = fn;
             t->argument = data;
-            const int rc = pthread_create(&t->native, nullptr, v43_sdl_thread_entry, t);
+            const int rc = pthread_create(&t->native, nullptr, v44_sdl_thread_entry, t);
             if (rc != 0) {
-              std::fprintf(stderr, "V43 SDL_CreateThread pthread_create error=%d\n", rc);
+              std::fprintf(stderr, "V44 SDL_CreateThread pthread_create error=%d\n", rc);
               delete t;
               return nullptr;
             }
-            std::fprintf(stderr, "V43 SDL_CreateThread: pthread started\n");
+            std::fprintf(stderr, "V44 SDL_CreateThread: pthread started\n");
             return t;
           }
-
           void SDLCALL SDL_WaitThread(SDL_Thread *t, int *status) {
             if (!t) return;
             const int rc = pthread_join(t->native, nullptr);
             if (status) *status = rc == 0 ? t->result : -1;
-            if (rc != 0) std::fprintf(stderr, "V43 SDL_WaitThread error=%d\n", rc);
+            if (rc != 0) std::fprintf(stderr, "V44 SDL_WaitThread error=%d\n", rc);
             delete t;
           }
-
           SDL_mutex * SDLCALL SDL_CreateMutex(void) {
             SDL_mutex *m = new (std::nothrow) SDL_mutex{};
             if (!m) return nullptr;
             pthread_mutexattr_t attr;
             int rc = pthread_mutexattr_init(&attr);
             if (rc == 0) {
+              // Original sdl_user::change_drawmode() locks draw_mtx recursively.
               rc = pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
               if (rc == 0) rc = pthread_mutex_init(&m->native, &attr);
               pthread_mutexattr_destroy(&attr);
             }
             if (rc != 0) {
-              std::fprintf(stderr, "V43 SDL_CreateMutex error=%d\n", rc);
+              std::fprintf(stderr, "V44 SDL_CreateMutex error=%d\n", rc);
               delete m;
               return nullptr;
             }
             return m;
           }
-
           int SDLCALL SDL_mutexP(SDL_mutex *m) {
             return m && pthread_mutex_lock(&m->native) == 0 ? 0 : -1;
           }
-
           int SDLCALL SDL_mutexV(SDL_mutex *m) {
             return m && pthread_mutex_unlock(&m->native) == 0 ? 0 : -1;
           }
-
           void SDLCALL SDL_DestroyMutex(SDL_mutex *m) {
             if (!m) return;
             pthread_mutex_destroy(&m->native);
             delete m;
           }
-
           int SDLCALL SDL_WaitEvent(SDL_Event *event) {
+            // Original client's main SDL event loop is on a pthread worker.
+            // Emulate SDL 1.2 blocking wait via the available SDL_PollEvent.
             if (!event) return 0;
             for (;;) {
               const int result = SDL_PollEvent(event);
@@ -251,7 +335,6 @@ jobs:
               SDL_Delay(10);
             }
           }
-
           int SDLCALL IMG_isPNG(SDL_RWops *source) {
             if (!source) return 0;
             const int pos = SDL_RWtell(source);
@@ -263,22 +346,20 @@ jobs:
             return got == sizeof(signature) &&
                    std::memcmp(signature, expected, sizeof(expected)) == 0;
           }
-
           SDL_Surface * SDLCALL IMG_LoadPNG_RW(SDL_RWops *source) {
+            // The original client passes an SDL_RWops memory stream.
+            // STB_IMAGE=1 is required for Emscripten's IMG_Load_RW to decode it.
             return source ? IMG_Load_RW(source, 0) : nullptr;
           }
           }
           CPP_COMPAT
-
           em++ -O1 -pthread -fexceptions \
-            -Iupstream-l1j/src -Iupstream-l1j/include \
+            -Iupstream-l1j/src -Iupstream-l1j/src/resources -Iupstream-l1j/include \
             -sUSE_SDL=1 -sUSE_SDL_IMAGE=1 -sUSE_SDL_MIXER=1 \
-            -c build/v43-sdl12-compat.cpp -o build/v43-sdl12-compat.o
-
+            -c build/v44-sdl12-compat.cpp -o build/v44-sdl12-compat.o
           mapfile -t objects < build/objects-list.txt
           test "${#objects[@]}" -eq 60
-
-          em++ "${objects[@]}" build/v43-sdl12-compat.o -o dist/lineage-v43.js \
+          em++ "${objects[@]}" build/v44-sdl12-compat.o -o dist/lineage-v44.js \
             -O1 -pthread -fexceptions \
             -sUSE_SDL=1 -sUSE_SDL_IMAGE=1 -sUSE_SDL_MIXER=1 \
             -sSTB_IMAGE=1 \
@@ -292,8 +373,7 @@ jobs:
             --embed-file runtime/Lineage.ini@/Lineage.ini \
             --embed-file upstream-l1j/src/sprite_table.txt@/sprite_table.txt \
             --preload-file runtime/lineage@/lineage \
-            2>&1 | tee reports/V43-link-log.txt
-
+            2>&1 | tee reports/V44-link-log.txt
           cat > dist/index.html <<'HTML_ENTRYPOINT'
           <!doctype html>
           <html lang="ko">
@@ -301,7 +381,7 @@ jobs:
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
           <meta name="theme-color" content="#111820">
-          <title>Sanctuary — V43 Original Client Web Runtime</title>
+          <title>Sanctuary — V44 Original Client Web Runtime</title>
           <style>
           :root{color-scheme:dark;font:14px/1.45 system-ui,-apple-system,'Noto Sans KR',sans-serif}
           *{box-sizing:border-box}body{margin:0;background:#0c1118;color:#eef3fa}
@@ -326,12 +406,12 @@ jobs:
           </style>
           </head>
           <body>
-          <header><strong>Sanctuary | Original Client Runtime · V43</strong><span id="state" role="status" aria-live="polite">초기화 전</span></header>
+          <header><strong>Sanctuary | Original Client Runtime · V44 (PAK stream test)</strong><span id="state" role="status" aria-live="polite">초기화 전</span></header>
           <main id="stage">
             <canvas id="canvas" width="800" height="600" tabindex="0" aria-label="기존 클라이언트가 그리는 실제 SDL 화면"></canvas>
             <div id="overlay" role="alert">
               <h1 id="head">원본 클라이언트 실행 준비</h1>
-              <p id="desc">이 페이지는 게임 화면을 다시 그리지 않습니다. 빌드된 C++ 클라이언트의 WebAssembly 실행 파일을 직접 불러옵니다.</p>
+              <p id="desc">이 페이지는 게임을 다시 만들지 않습니다. 원본 C++ 클라이언트와 원본 Text·Sprite00 PAK의 부분 읽기를 테스트합니다. 나머지 대형 PAK 및 게임 서버 연결은 아직 미해결입니다.</p>
               <button type="button" id="start">클라이언트 실행</button>
             </div>
             <pre id="logbox"></pre>
@@ -361,35 +441,54 @@ jobs:
           function problem(message){status('실행 장애');head.textContent='클라이언트 실행 실패';desc.textContent=message;overlay.classList.remove('hidden');start.textContent='다시 시도';start.disabled=false;launched=false;log(message);logbox.classList.add('visible');}
           function showRuntime(){status('WebAssembly 런타임 초기화 완료 (게임 진입 별도 확인)');overlay.classList.add('hidden');canvas.focus({preventScroll:true});}
           async function checkCrossOriginIsolation(){
-            if(crossOriginIsolated)return true;
+            // Always install V44 worker even if an earlier worker already isolated the page.
             if(!('serviceWorker' in navigator) || !isSecureContext)return false;
             try{
-              await navigator.serviceWorker.register('./coi-serviceworker.js',{scope:'./'});
+              await navigator.serviceWorker.register('./coi-serviceworker-v44.js',{scope:'./'});
               await navigator.serviceWorker.ready;
               if(navigator.serviceWorker.controller===null){
-                const once='sanctuary-coi-reload';
+                const once='sanctuary-coi-v44-reload';
                 if(sessionStorage.getItem(once)!=='1'){
                   sessionStorage.setItem(once,'1');
                   location.reload();
                   return null;
                 }
               }
+              const ctl=navigator.serviceWorker.controller;
+              if(!ctl || !ctl.scriptURL.includes('coi-serviceworker-v44.js')){
+                const key='v44-worker-upgrade';
+                if(!sessionStorage.getItem(key)){
+                  sessionStorage.setItem(key,'1'); location.reload(); return null;
+                }
+                throw Error('V44 Service Worker upgrade pending; close other game2 tabs and reload.');
+              }
+              sessionStorage.removeItem('v44-worker-upgrade');
               return crossOriginIsolated;
-            }catch(err){log('Isolation: '+err);return false;}
+            }catch(err){log('Isolation: '+err);throw err;}
           }
           function loadScript(src){return new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.async=true;s.onload=resolve;s.onerror=()=>reject(new Error(src+' 파일을 찾거나 실행하지 못했습니다.'));document.head.append(s);});}
           async function startEngine(){
             if(launched)return;
-            launched=true;start.disabled=true;status('엔진 로딩 중');head.textContent='원본 C++ 클라이언트 로딩 중';desc.textContent='컴파일된 lineage-v43.js / lineage-v43.wasm 파일을 확인합니다.';
+            launched=true;start.disabled=true;status('엔진 로딩 중');head.textContent='원본 C++ 클라이언트 로딩 중';desc.textContent='컴파일된 lineage-v44.js / lineage-v44.wasm 파일을 확인합니다.';
             try{
               if(location.protocol==='file:')throw Error('file://에서는 WebAssembly 데이터 파일을 불러올 수 없습니다. GitHub Pages 또는 로컬 HTTP 서버에서 여세요.');
               const isolated=await checkCrossOriginIsolation();
               if(isolated===null)return;
               if(!isolated){log('SharedArrayBuffer 비활성: Cross-Origin-Isolation 필요');throw Error('기존 SDL 스레드 실행에는 COOP/COEP와 SharedArrayBuffer가 필요합니다. HTTPS 환경에서 다시 실행하세요.');}
-              const response=await fetch('./lineage-v43.js',{method:'HEAD',cache:'no-store'});
-              if(!response.ok)throw Error('lineage-v43.js가 없습니다. 아직 C++ 클라이언트의 WebAssembly 빌드/배포가 완료되지 않았습니다.');
-              if(typeof window.createLineage!=='function')await loadScript('./lineage-v43.js');
-              if(typeof window.createLineage!=='function')throw Error('lineage-v43.js에 createLineage() 엔트리 포인트가 없습니다. 빌드 설정을 확인하세요.');
+              // Verify the original-data Range gateway, not just the WASM build.
+              const idx=await fetch('./v44-paks.json',{cache:'no-store'});
+              if(!idx.ok)throw Error('V44 original PAK manifest is missing');
+              const manifest=await idx.json();
+              for(const name of Object.keys(manifest.files)){
+                const check=await fetch('./v44pak/'+name,{method:'HEAD',cache:'no-store'});
+                if(!check.ok || Number(check.headers.get('content-length'))!==manifest.files[name].size)
+                  throw Error('Original PAK streaming unavailable: '+name);
+                log('V44 original '+name+': '+manifest.files[name].size+' bytes (HTTP ranges)');
+              }
+              const response=await fetch('./lineage-v44.js',{method:'HEAD',cache:'no-store'});
+              if(!response.ok)throw Error('lineage-v44.js가 없습니다. 아직 C++ 클라이언트의 WebAssembly 빌드/배포가 완료되지 않았습니다.');
+              if(typeof window.createLineage!=='function')await loadScript('./lineage-v44.js');
+              if(typeof window.createLineage!=='function')throw Error('lineage-v44.js에 createLineage() 엔트리 포인트가 없습니다. 빌드 설정을 확인하세요.');
               status('원본 클라이언트 main() 실행 요청');
               await window.createLineage({
                 canvas, noInitialRun:false, locateFile:(file,prefix)=>'./'+file,
@@ -415,10 +514,8 @@ jobs:
           </script>
           </body></html>
           HTML_ENTRYPOINT
-
-          cp dist/index.html dist/v43.html
+          cp dist/index.html dist/v44.html
           cp upstream-l1j/COPYING dist/L1J-SOURCE-LICENSE.txt
-
           cat > dist/source.txt <<'TEXT'
           Engine: uglyoldbob/l1j-client, C/C++ sources unchanged
           Source revision: 83052f6b1c5bda59d4c4cbaf01aa2e72ea409853
@@ -427,19 +524,85 @@ jobs:
           No synthetic player, monsters, portals, or map logic has been introduced.
           TEXT
 
-      - name: "V43 | Enable cross-origin isolation on static GitHub Pages"
+      - name: "V44 | Serve original PAK ranges from versioned Pages shards"
         shell: bash
         run: |
           set -euo pipefail
-          cat > dist/coi-serviceworker.js <<'SW'
+          cat > dist/coi-serviceworker-v44.js <<'SW'
           'use strict';
+          // V44: all PAK content comes byte-for-byte from the user's original archive.
+          // Pages cannot publish an individual >100MB file, so serve ranges
+          // over 16MiB immutable original fragments through the same-origin SW.
+          const CHUNK_SIZE=16777216;
+          const PACKS={'Text.pak':24846904,'Sprite00.pak':218172787};
           self.addEventListener('install',event=>event.waitUntil(self.skipWaiting()));
           self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
+          const iso=(extra={})=>new Headers({
+            'Cross-Origin-Embedder-Policy':'require-corp',
+            'Cross-Origin-Opener-Policy':'same-origin',
+            'Cross-Origin-Resource-Policy':'same-origin',
+            ...extra
+          });
+          async function rangeResponse(req,name) {
+            const total=PACKS[name];
+            const accept={'Accept-Ranges':'bytes','Content-Type':'application/octet-stream','Cache-Control':'no-store'};
+            if(req.method==='HEAD'){
+              return new Response(null,{status:200,headers:iso({...accept,'Content-Length':String(total)})});
+            }
+            if(req.method!=='GET')return new Response('Method not allowed',{status:405});
+            const match=/^bytes=(\d+)-(\d*)$/.exec(req.headers.get('range')||'');
+            if(!match)return new Response('Range required',{status:416});
+            const from=Number(match[1]);
+            const to=match[2] ? Number(match[2]):Math.min(total-1,from+1048575);
+            if(!Number.isSafeInteger(from)||!Number.isSafeInteger(to)||from<0||to<from||to>=total||to-from>2097151){
+              return new Response('Bad byte range',{status:416,headers:iso({'Content-Range':'bytes */'+total})});
+            }
+            const result=new Uint8Array(to-from+1);
+            let position=from;
+            while(position<=to){
+              const chunkNo=Math.floor(position/CHUNK_SIZE);
+              const localOffset=position%CHUNK_SIZE;
+              const count=Math.min(to-position+1,CHUNK_SIZE-localOffset);
+              const chunkName='pakchunks/'+name+'.part'+String(chunkNo).padStart(3,'0');
+              const url=new URL(chunkName,self.registration.scope);
+              const response=await fetch(url,{
+                headers:{Range:'bytes='+localOffset+'-'+(localOffset+count-1)},
+                cache:'force-cache'
+              });
+              if(!response.ok || (response.status!==200 && response.status!==206)){
+                throw Error('Original PAK shard unavailable: '+chunkName+' ('+response.status+')');
+              }
+              const bytes=new Uint8Array(await response.arrayBuffer());
+              // GitHub Pages may ignore Range and return the whole <=16MiB shard.
+              const data=response.status===206?bytes:bytes.subarray(localOffset,localOffset+count);
+              if(data.length!==count)throw Error('Incorrect PAK shard length: '+chunkName);
+              result.set(data,position-from);
+              position+=count;
+            }
+            return new Response(result,{status:206,headers:iso({
+              ...accept,'Content-Length':String(result.byteLength),
+              'Content-Range':'bytes '+from+'-'+to+'/'+total
+            })});
+          }
           self.addEventListener('fetch',event=>{
             const req=event.request;
-            if(new URL(req.url).origin!==self.location.origin)return;
+            const u=new URL(req.url);
+            if(u.origin!==self.location.origin)return;
+            const packPrefix=new URL('v44pak/',self.registration.scope).pathname;
+            if(u.pathname.startsWith(packPrefix)){
+              const name=decodeURIComponent(u.pathname.slice(packPrefix.length));
+              if(!Object.prototype.hasOwnProperty.call(PACKS,name)){
+                event.respondWith(Promise.resolve(new Response('Original PAK not published in V44',{status:404})));
+              }else{
+                event.respondWith(rangeResponse(req,name).catch(e=>{
+                  console.error('V44 PAK range:',e);
+                  return new Response(String(e),{status:502});
+                }));
+              }
+              return;
+            }
             event.respondWith(fetch(req).then(res=>{
-              if(!res.ok||res.type==='opaque')return res;
+              if(!res.ok || res.type==='opaque')return res;
               const headers=new Headers(res.headers);
               headers.set('Cross-Origin-Embedder-Policy','require-corp');
               headers.set('Cross-Origin-Opener-Policy','same-origin');
@@ -448,27 +611,28 @@ jobs:
             }));
           });
           SW
-          node --check dist/coi-serviceworker.js
+          node --check dist/coi-serviceworker-v44.js
           test -s dist/index.html
-          test -s dist/v43.html
-          test -s dist/lineage-v43.js
-          test -s dist/lineage-v43.wasm
-          test -s dist/lineage-v43.data
-          sha256sum dist/lineage-v43.js dist/lineage-v43.wasm dist/lineage-v43.data > reports/V43-runtime-hashes.txt
-          du -h dist/* > reports/V43-deployment-sizes.txt
+          test -s dist/v44.html
+          test -s dist/v44-paks.json
+          test -s dist/lineage-v44.js
+          test -s dist/lineage-v44.wasm
+          test -s dist/lineage-v44.data
+          sha256sum dist/lineage-v44.js dist/lineage-v44.wasm dist/lineage-v44.data > reports/V44-runtime-hashes.txt
+          du -sh dist dist/pakchunks > reports/V44-deployment-sizes.txt
 
-      - name: "V43 | Upload actual engine compilation and HTML files"
+      - name: "V44 | Upload actual engine compilation and HTML files"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-Existing-Client-Wasm-V43
+          name: Sanctuary-Existing-Client-Wasm-V44
           path: |
             reports/
             dist/
           retention-days: 60
           if-no-files-found: warn
 
-      - name: "V43 | Publish existing-client WebAssembly HTML to gh-pages"
+      - name: "V44 | Publish existing-client WebAssembly HTML to gh-pages"
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -477,20 +641,20 @@ jobs:
           force_orphan: true
           enable_jekyll: false
 
-      - name: "V43 | Report actual execution-route status"
+      - name: "V44 | Report actual execution-route status"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V43 | Existing l1j-client WebAssembly route'
+            echo '# build-web.yml | V44 | Existing l1j-client WebAssembly route'
             echo 'Kept existing build-web.yml, without any new workflow.'
             echo 'All 60 upstream source files remain byte-for-byte unchanged.'
-            echo 'V43 gives HTML, JS, WASM and DATA separate versioned URLs.'
+            echo 'V44 uses staged C++ safety guards and lazy PAK filesystem mounting; upstream repository unchanged.'
             echo 'Full browser runtime remains unverified until a real user run.'
-            if test -s dist/lineage-v43.wasm; then
-              echo 'WASM output exists. Browser/game entry not yet verified.'
-              echo 'Browser entrypoint: gh-pages/v43.html (version-specific URL).'
-              echo 'Actual game world is NOT verified until remote browser runtime succeeds.'
+            if test -s dist/lineage-v44.wasm; then
+              echo 'WASM output exists. The full game and server connection are NOT verified.'
+              echo 'Browser entrypoint: gh-pages/v44.html (version-specific URL).'
+              echo 'Tile.pak and remaining Sprite.pak archives are NOT available in this boot test.'
             else
               echo 'WASM compilation failed: inspect compile and linker logs.'
             fi
