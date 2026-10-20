@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V42 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V42 | Original Sanctuary engine runtime test"
+name: "build-web.yml | V43 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V43 | Original Sanctuary engine runtime test"
 
 "on":
   workflow_dispatch:
@@ -13,19 +13,19 @@ permissions:
   contents: write
 
 concurrency:
-  group: build-web-yml-v42-original-engine
+  group: build-web-yml-v43-original-engine
   cancel-in-progress: false
 
 jobs:
-  original_engine_v42:
-    name: "build-web.yml | V42 | Compile existing l1j-client main() to WebAssembly"
+  original_engine_v43:
+    name: "build-web.yml | V43 | Compile existing l1j-client main() to WebAssembly"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - name: "V42 | Checkout existing game2"
+      - name: "V43 | Checkout existing game2"
         uses: actions/checkout@v4
 
-      - name: "V42 | Checkout existing l1j-client C++ engine, unchanged"
+      - name: "V43 | Checkout existing l1j-client C++ engine, unchanged"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -33,12 +33,12 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V42 | Set up Emscripten for the original C++ source"
+      - name: "V43 | Set up Emscripten for the original C++ source"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V42 | Compile ALL existing C++ and C source objects"
+      - name: "V43 | Compile ALL existing C++ and C source objects"
         shell: bash
         run: |
           set -euo pipefail
@@ -46,7 +46,7 @@ jobs:
           test -s upstream-l1j/COPYING
           emcc --version | head -1
           mkdir -p build/objects dist reports
-          cat > /tmp/v42-build-sources.py <<'PY_BUILD'
+          cat > /tmp/v43-build-sources.py <<'PY_BUILD'
           import pathlib, re, subprocess
           src=pathlib.Path('upstream-l1j')
           txt=(src/'Makefile.am').read_text()
@@ -54,7 +54,7 @@ jobs:
           if not m: raise SystemExit('The upstream Lineage_SOURCES declaration changed')
           files=re.findall(r'src/[\w./-]+\.(?:cpp|c)\b',m.group(1))
           if len(files)<55: raise SystemExit('Unexpectedly small engine source list: '+str(len(files)))
-          (pathlib.Path('reports')/'V42-source-list.txt').write_text('\n'.join(files)+'\n')
+          (pathlib.Path('reports')/'V43-source-list.txt').write_text('\n'.join(files)+'\n')
           flags=['-O1','-g0','-pthread','-fexceptions','-sUSE_SDL=1',
                  '-sUSE_SDL_IMAGE=1','-sUSE_SDL_MIXER=1',
                  '-Iupstream-l1j/src','-Iupstream-l1j/include']
@@ -65,32 +65,29 @@ jobs:
               obj='build/objects/%03d.o'%n
               compiler='emcc' if rel.endswith('.c') else 'em++'
               argv=[compiler,*flags,'-c',str(file),'-o',obj]
-              # Exactly one upstream call formats Sprite00..Sprite15 names.
-              # Keep original C++ file unchanged on disk: remap only that
-              # C printf symbol to a browser-platform compatibility adapter.
               if rel == 'src/resources/global_files.cpp':
-                  argv.append('-Dsprintf=v42_sprite_pack_name')
+                  argv.append('-Dsprintf=v43_sprite_pack_name')
               print('Compiling',rel,flush=True)
               subprocess.run(argv,check=True)
               objects.append(obj)
           pathlib.Path('build/objects-list.txt').write_text('\n'.join(objects))
           print('Original sources compiled:',len(objects))
           PY_BUILD
-          python3 /tmp/v42-build-sources.py 2>&1 | tee reports/V42-compile-log.txt
+          python3 /tmp/v43-build-sources.py 2>&1 | tee reports/V43-compile-log.txt
           test -s build/objects-list.txt
           test -z "$(git -C upstream-l1j status --porcelain)" || {
             echo 'Upstream original sources were unexpectedly altered' >&2
             exit 1
           }
 
-      - name: "V42 | Cache small unchanged original startup resources"
+      - name: "V43 | Cache small unchanged original startup resources"
         id: startup_cache
         uses: actions/cache@v4
         with:
           key: original-sanctuary-startup-idx-font-v1.0.0-v41
           path: original-startup/
 
-      - name: "V42 | Fetch original Sanctuary startup data on first run"
+      - name: "V43 | Fetch original Sanctuary startup data on first run"
         if: steps.startup_cache.outputs.cache-hit != 'true'
         shell: bash
         env:
@@ -105,21 +102,19 @@ jobs:
           test "$(find original-download -type f | wc -l)" -eq 46
           7z x original-download/Sanctuary.of.Aden.-.Copy.zip \
             -ooriginal-startup -y '-ir!*.idx' '-ir!*.fnt' \
-            > reports/V42-startup-extract-log.txt
+            > reports/V43-startup-extract-log.txt
           rm -rf original-download
 
-      - name: "V42 | Link the original client main() without recreated game logic"
+      - name: "V43 | Link the original client main() without recreated game logic"
         shell: bash
         run: |
           set -euo pipefail
           base='original-startup/Sanctuary of Aden - Copy'
-          # Real archive paths verified against the V29 full release manifest:
-          # Sprite00.idx and LOWERCASE font/eng.fnt.
           original_idx="$base/Sprite00.idx"
           original_font="$base/font/eng.fnt"
           original_small_font="$base/font/small.fnt"
           if [[ ! -s "$original_idx" || ! -s "$original_font" || ! -s "$original_small_font" ]]; then
-            echo 'V42 | Missing startup resources; actual extracted file paths:' >&2
+            echo 'V43 | Missing startup resources; actual extracted file paths:' >&2
             find original-startup -type f | sort >&2
             echo "Sprite00.idx present: $(test -s "$original_idx" && echo yes || echo no)" >&2
             echo "font/eng.fnt present: $(test -s "$original_font" && echo yes || echo no)" >&2
@@ -128,17 +123,15 @@ jobs:
           fi
           mkdir -p runtime/lineage/Font
           cp -a "$original_idx" runtime/lineage/Sprite00.idx
-          # The l1j-client requests 'Font/eng.fnt'; copy, never edit the source data.
           cp -a "$original_font" runtime/lineage/Font/eng.fnt
-          # Original file is font/small.fnt; the existing client expects Font/SMALL.FNT.
           cp -a "$original_small_font" runtime/lineage/Font/SMALL.FNT
           cmp -s "$original_idx" runtime/lineage/Sprite00.idx
           cmp -s "$original_font" runtime/lineage/Font/eng.fnt
           cmp -s "$original_small_font" runtime/lineage/Font/SMALL.FNT
-          sha256sum "$original_idx" "$original_font" "$original_small_font" > reports/V42-original-startup-hashes.txt
-          printf 'V42: Sprite00.idx=%s, eng.fnt=%s, small.fnt=%s bytes\n' \
+          sha256sum "$original_idx" "$original_font" "$original_small_font" > reports/V43-original-startup-hashes.txt
+          printf 'V43: Sprite00.idx=%s, eng.fnt=%s, small.fnt=%s bytes\n' \
             "$(stat -c %s "$original_idx")" "$(stat -c %s "$original_font")" "$(stat -c %s "$original_small_font")"
-          # This is a runtime path configuration, not a replacement game world.
+
           cat > runtime/Lineage.ini <<'INI'
           Path = /lineage/
           NumServers = 1
@@ -147,12 +140,10 @@ jobs:
               GamePort = 2000
               Names = 127.0.0.1
           INI
+
           test -s upstream-l1j/src/sprite_table.txt
-          # Emscripten 3.1.74's SDL1 compatibility library exports SDL_PollEvent
-          # and IMG_Load_RW but not these three SDL 1.2 compatibility entrypoints.
-          # Keep the original 60 C/C++ client files unchanged. The following is
-          # a web-platform adapter for missing SDL1 entrypoints and broken SDL1 thread stubs.
-          cat > build/v42-sdl12-compat.cpp <<'CPP_COMPAT'
+
+          cat > build/v43-sdl12-compat.cpp <<'CPP_COMPAT'
           #include <SDL/SDL.h>
           #include <SDL/SDL_image.h>
           #include <cstring>
@@ -161,9 +152,6 @@ jobs:
           #include <new>
           #include <cstdio>
 
-          // SDL 1.2 compatibility: Emscripten's JavaScript SDL_CreateThread
-          // intentionally throws. Use the already-enabled WASM pthreads.
-          // The original client's sources remain completely untouched.
           struct SDL_Thread {
             pthread_t native;
             int (SDLCALL *callback)(void *);
@@ -172,21 +160,16 @@ jobs:
           };
           struct SDL_mutex { pthread_mutex_t native; };
 
-          static void *v42_sdl_thread_entry(void *opaque) {
+          static void *v43_sdl_thread_entry(void *opaque) {
             SDL_Thread *t = static_cast<SDL_Thread *>(opaque);
             t->result = t->callback(t->argument);
             return nullptr;
           }
 
           extern "C" {
-          // V41 wasm offset 0x15c30/0x15c32 maps to this single call in
-          // global_files::init(): sprintf(name, "Sprite%02d", i).
-          // Bypass the incompatible variadic libc format path only at this
-          // known sprite pack filename construction; 0..15 output is identical.
-          // The upstream .cpp files remain byte-for-byte unchanged.
-          int v42_sprite_pack_name(char *dst, const char *fmt, ...) {
+          int v43_sprite_pack_name(char *dst, const char *fmt, ...) {
             if (!dst || !fmt || std::strcmp(fmt, "Sprite%02d") != 0) {
-              std::fprintf(stderr, "V42 incompatible sprite filename format\n");
+              std::fprintf(stderr, "V43 incompatible sprite filename format\n");
               return -1;
             }
             va_list ap;
@@ -194,7 +177,7 @@ jobs:
             const int number = va_arg(ap, int);
             va_end(ap);
             if (number < 0 || number > 99) {
-              std::fprintf(stderr, "V42 sprite pack index out of range: %d\n", number);
+              std::fprintf(stderr, "V43 sprite pack index out of range: %d\n", number);
               return -1;
             }
             std::memcpy(dst, "Sprite", 6);
@@ -203,60 +186,64 @@ jobs:
             dst[8] = '\0';
             return 8;
           }
+
           SDL_Thread * SDLCALL SDL_CreateThread(int (SDLCALL *fn)(void *), void *data) {
             if (!fn) return nullptr;
             SDL_Thread *t = new (std::nothrow) SDL_Thread{};
             if (!t) return nullptr;
             t->callback = fn;
             t->argument = data;
-            const int rc = pthread_create(&t->native, nullptr, v42_sdl_thread_entry, t);
+            const int rc = pthread_create(&t->native, nullptr, v43_sdl_thread_entry, t);
             if (rc != 0) {
-              std::fprintf(stderr, "V42 SDL_CreateThread pthread_create error=%d\n", rc);
+              std::fprintf(stderr, "V43 SDL_CreateThread pthread_create error=%d\n", rc);
               delete t;
               return nullptr;
             }
-            std::fprintf(stderr, "V42 SDL_CreateThread: pthread started\n");
+            std::fprintf(stderr, "V43 SDL_CreateThread: pthread started\n");
             return t;
           }
+
           void SDLCALL SDL_WaitThread(SDL_Thread *t, int *status) {
             if (!t) return;
             const int rc = pthread_join(t->native, nullptr);
             if (status) *status = rc == 0 ? t->result : -1;
-            if (rc != 0) std::fprintf(stderr, "V42 SDL_WaitThread error=%d\n", rc);
+            if (rc != 0) std::fprintf(stderr, "V43 SDL_WaitThread error=%d\n", rc);
             delete t;
           }
+
           SDL_mutex * SDLCALL SDL_CreateMutex(void) {
             SDL_mutex *m = new (std::nothrow) SDL_mutex{};
             if (!m) return nullptr;
             pthread_mutexattr_t attr;
             int rc = pthread_mutexattr_init(&attr);
             if (rc == 0) {
-              // Original sdl_user::change_drawmode() locks draw_mtx recursively.
               rc = pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
               if (rc == 0) rc = pthread_mutex_init(&m->native, &attr);
               pthread_mutexattr_destroy(&attr);
             }
             if (rc != 0) {
-              std::fprintf(stderr, "V42 SDL_CreateMutex error=%d\n", rc);
+              std::fprintf(stderr, "V43 SDL_CreateMutex error=%d\n", rc);
               delete m;
               return nullptr;
             }
             return m;
           }
+
           int SDLCALL SDL_mutexP(SDL_mutex *m) {
             return m && pthread_mutex_lock(&m->native) == 0 ? 0 : -1;
           }
+
           int SDLCALL SDL_mutexV(SDL_mutex *m) {
             return m && pthread_mutex_unlock(&m->native) == 0 ? 0 : -1;
           }
+
           void SDLCALL SDL_DestroyMutex(SDL_mutex *m) {
             if (!m) return;
             pthread_mutex_destroy(&m->native);
             delete m;
           }
+
           int SDLCALL SDL_WaitEvent(SDL_Event *event) {
-            // Original client's main SDL event loop is on a pthread worker.
-            // Emulate SDL 1.2 blocking wait via the available SDL_PollEvent.
             if (!event) return 0;
             for (;;) {
               const int result = SDL_PollEvent(event);
@@ -264,6 +251,7 @@ jobs:
               SDL_Delay(10);
             }
           }
+
           int SDLCALL IMG_isPNG(SDL_RWops *source) {
             if (!source) return 0;
             const int pos = SDL_RWtell(source);
@@ -275,20 +263,22 @@ jobs:
             return got == sizeof(signature) &&
                    std::memcmp(signature, expected, sizeof(expected)) == 0;
           }
+
           SDL_Surface * SDLCALL IMG_LoadPNG_RW(SDL_RWops *source) {
-            // The original client passes an SDL_RWops memory stream.
-            // STB_IMAGE=1 is required for Emscripten's IMG_Load_RW to decode it.
             return source ? IMG_Load_RW(source, 0) : nullptr;
           }
           }
           CPP_COMPAT
+
           em++ -O1 -pthread -fexceptions \
             -Iupstream-l1j/src -Iupstream-l1j/include \
             -sUSE_SDL=1 -sUSE_SDL_IMAGE=1 -sUSE_SDL_MIXER=1 \
-            -c build/v42-sdl12-compat.cpp -o build/v42-sdl12-compat.o
+            -c build/v43-sdl12-compat.cpp -o build/v43-sdl12-compat.o
+
           mapfile -t objects < build/objects-list.txt
           test "${#objects[@]}" -eq 60
-          em++ "${objects[@]}" build/v42-sdl12-compat.o -o dist/lineage.js \
+
+          em++ "${objects[@]}" build/v43-sdl12-compat.o -o dist/lineage-v43.js \
             -O1 -pthread -fexceptions \
             -sUSE_SDL=1 -sUSE_SDL_IMAGE=1 -sUSE_SDL_MIXER=1 \
             -sSTB_IMAGE=1 \
@@ -302,7 +292,8 @@ jobs:
             --embed-file runtime/Lineage.ini@/Lineage.ini \
             --embed-file upstream-l1j/src/sprite_table.txt@/sprite_table.txt \
             --preload-file runtime/lineage@/lineage \
-            2>&1 | tee reports/V42-link-log.txt
+            2>&1 | tee reports/V43-link-log.txt
+
           cat > dist/index.html <<'HTML_ENTRYPOINT'
           <!doctype html>
           <html lang="ko">
@@ -310,7 +301,7 @@ jobs:
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
           <meta name="theme-color" content="#111820">
-          <title>Sanctuary — Original Client Web Runtime</title>
+          <title>Sanctuary — V43 Original Client Web Runtime</title>
           <style>
           :root{color-scheme:dark;font:14px/1.45 system-ui,-apple-system,'Noto Sans KR',sans-serif}
           *{box-sizing:border-box}body{margin:0;background:#0c1118;color:#eef3fa}
@@ -335,7 +326,7 @@ jobs:
           </style>
           </head>
           <body>
-          <header><strong>Sanctuary | Original Client Runtime</strong><span id="state" role="status" aria-live="polite">초기화 전</span></header>
+          <header><strong>Sanctuary | Original Client Runtime · V43</strong><span id="state" role="status" aria-live="polite">초기화 전</span></header>
           <main id="stage">
             <canvas id="canvas" width="800" height="600" tabindex="0" aria-label="기존 클라이언트가 그리는 실제 SDL 화면"></canvas>
             <div id="overlay" role="alert">
@@ -389,16 +380,16 @@ jobs:
           function loadScript(src){return new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.async=true;s.onload=resolve;s.onerror=()=>reject(new Error(src+' 파일을 찾거나 실행하지 못했습니다.'));document.head.append(s);});}
           async function startEngine(){
             if(launched)return;
-            launched=true;start.disabled=true;status('엔진 로딩 중');head.textContent='원본 C++ 클라이언트 로딩 중';desc.textContent='컴파일된 lineage.js / lineage.wasm 파일을 확인합니다.';
+            launched=true;start.disabled=true;status('엔진 로딩 중');head.textContent='원본 C++ 클라이언트 로딩 중';desc.textContent='컴파일된 lineage-v43.js / lineage-v43.wasm 파일을 확인합니다.';
             try{
               if(location.protocol==='file:')throw Error('file://에서는 WebAssembly 데이터 파일을 불러올 수 없습니다. GitHub Pages 또는 로컬 HTTP 서버에서 여세요.');
               const isolated=await checkCrossOriginIsolation();
               if(isolated===null)return;
               if(!isolated){log('SharedArrayBuffer 비활성: Cross-Origin-Isolation 필요');throw Error('기존 SDL 스레드 실행에는 COOP/COEP와 SharedArrayBuffer가 필요합니다. HTTPS 환경에서 다시 실행하세요.');}
-              const response=await fetch('./lineage.js',{method:'HEAD',cache:'no-store'});
-              if(!response.ok)throw Error('lineage.js가 없습니다. 아직 C++ 클라이언트의 WebAssembly 빌드/배포가 완료되지 않았습니다.');
-              if(typeof window.createLineage!=='function')await loadScript('./lineage.js');
-              if(typeof window.createLineage!=='function')throw Error('lineage.js에 createLineage() 엔트리 포인트가 없습니다. 빌드 설정을 확인하세요.');
+              const response=await fetch('./lineage-v43.js',{method:'HEAD',cache:'no-store'});
+              if(!response.ok)throw Error('lineage-v43.js가 없습니다. 아직 C++ 클라이언트의 WebAssembly 빌드/배포가 완료되지 않았습니다.');
+              if(typeof window.createLineage!=='function')await loadScript('./lineage-v43.js');
+              if(typeof window.createLineage!=='function')throw Error('lineage-v43.js에 createLineage() 엔트리 포인트가 없습니다. 빌드 설정을 확인하세요.');
               status('원본 클라이언트 main() 실행 요청');
               await window.createLineage({
                 canvas, noInitialRun:false, locateFile:(file,prefix)=>'./'+file,
@@ -424,7 +415,10 @@ jobs:
           </script>
           </body></html>
           HTML_ENTRYPOINT
+
+          cp dist/index.html dist/v43.html
           cp upstream-l1j/COPYING dist/L1J-SOURCE-LICENSE.txt
+
           cat > dist/source.txt <<'TEXT'
           Engine: uglyoldbob/l1j-client, C/C++ sources unchanged
           Source revision: 83052f6b1c5bda59d4c4cbaf01aa2e72ea409853
@@ -433,7 +427,7 @@ jobs:
           No synthetic player, monsters, portals, or map logic has been introduced.
           TEXT
 
-      - name: "V42 | Enable cross-origin isolation on static GitHub Pages"
+      - name: "V43 | Enable cross-origin isolation on static GitHub Pages"
         shell: bash
         run: |
           set -euo pipefail
@@ -456,24 +450,25 @@ jobs:
           SW
           node --check dist/coi-serviceworker.js
           test -s dist/index.html
-          test -s dist/lineage.js
-          test -s dist/lineage.wasm
-          test -s dist/lineage.data
-          sha256sum dist/lineage.js dist/lineage.wasm dist/lineage.data > reports/V42-runtime-hashes.txt
-          du -h dist/* > reports/V42-deployment-sizes.txt
+          test -s dist/v43.html
+          test -s dist/lineage-v43.js
+          test -s dist/lineage-v43.wasm
+          test -s dist/lineage-v43.data
+          sha256sum dist/lineage-v43.js dist/lineage-v43.wasm dist/lineage-v43.data > reports/V43-runtime-hashes.txt
+          du -h dist/* > reports/V43-deployment-sizes.txt
 
-      - name: "V42 | Upload actual engine compilation and HTML files"
+      - name: "V43 | Upload actual engine compilation and HTML files"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-Existing-Client-Wasm-V42
+          name: Sanctuary-Existing-Client-Wasm-V43
           path: |
             reports/
             dist/
           retention-days: 60
           if-no-files-found: warn
 
-      - name: "V42 | Publish existing-client WebAssembly HTML to gh-pages"
+      - name: "V43 | Publish existing-client WebAssembly HTML to gh-pages"
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -482,19 +477,19 @@ jobs:
           force_orphan: true
           enable_jekyll: false
 
-      - name: "V42 | Report actual execution-route status"
+      - name: "V43 | Report actual execution-route status"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V42 | Existing l1j-client WebAssembly route'
+            echo '# build-web.yml | V43 | Existing l1j-client WebAssembly route'
             echo 'Kept existing build-web.yml, without any new workflow.'
             echo 'All 60 upstream source files remain byte-for-byte unchanged.'
-            echo 'V42: only global_files.cpp Sprite%02d sprintf call remapped at compile time.'
+            echo 'V43 gives HTML, JS, WASM and DATA separate versioned URLs.'
             echo 'Full browser runtime remains unverified until a real user run.'
-            if test -s dist/lineage.wasm; then
+            if test -s dist/lineage-v43.wasm; then
               echo 'WASM output exists. Browser/game entry not yet verified.'
-              echo 'Browser entrypoint: gh-pages/index.html.'
+              echo 'Browser entrypoint: gh-pages/v43.html (version-specific URL).'
               echo 'Actual game world is NOT verified until remote browser runtime succeeds.'
             else
               echo 'WASM compilation failed: inspect compile and linker logs.'
