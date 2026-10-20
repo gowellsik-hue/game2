@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V48 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V48 | Original Windows client legacy-clock bypass test"
+name: "build-web.yml | V49 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V49 | Original Windows client legacy-clock bypass test"
 
 "on":
   workflow_dispatch:
@@ -13,213 +13,188 @@ permissions:
   contents: write
 
 concurrency:
-  group: game2-v48-original-client
+  group: game2-v49-original-client
   cancel-in-progress: false
 
 jobs:
-  boxedwine_original_client_v48:
-    name: "build-web.yml | V48 | Original lin.bin under Boxedwine"
+  original_windows_client_browser_v49:
+    name: "build-web.yml | V49 | Automatically run deployed original client"
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 45
     steps:
-      - name: "V48 | Checkout game2"
-        uses: actions/checkout@v4
-
-      - name: "V48 | Checkout ORIGINAL Boxedwine emulator source"
+      - name: "V49 | Checkout existing game2 gh-pages deployment"
         uses: actions/checkout@v4
         with:
-          repository: danoon2/Boxedwine
-          ref: 26R1.0
-          path: boxedwine-src
+          ref: gh-pages
+          path: published
           persist-credentials: false
 
-      - name: "V48 | Set up Emscripten"
-        uses: emscripten-core/setup-emsdk@v15
-        with:
-          version: '3.1.74'
-
-      - name: "V48 | Verify original original-client package"
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p work/archive work/original reports dist
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq p7zip-full unzip zip
-          gh release download v1.0.0 -R gowellsik-hue/Game \
-            -p 'Sanctuary.of.Aden.-.Copy.*' -D work/archive --clobber
-          test "$(find work/archive -maxdepth 1 -type f | wc -l)" -eq 46
-          7z x work/archive/Sanctuary.of.Aden.-.Copy.zip \
-            -owork/original -y '-ir!Lineage.exe' '-ir!lin.bin' \
-            '-ir!Login.exe' '-ir!*.dll' '-ir!*.ini' \
-            > reports/V48-extract.log
-          original='work/original/Sanctuary of Aden - Copy'
-          test "$(stat -c %s "$original/lin.bin")" -eq 4725240
-          test "$(stat -c %s "$original/Lineage.exe")" -eq 1295176
-          echo '0d40fdf84d19e0ecc043766455fb9c5a215a5c39bbac858ca602f0bf5259f19e  '"$original/lin.bin" | sha256sum -c
-          echo '2124b3da5f53123e0f94a85bd7f9edb2344925fdb4f53d0fc0653ea5c9241414  '"$original/Lineage.exe" | sha256sum -c
-          file "$original/lin.bin" "$original/Lineage.exe" | tee reports/V48-original-PE-types.txt
-          sha256sum "$original/lin.bin" "$original/Lineage.exe" > reports/V48-untouched-original-hashes.txt
-
-      - name: "V48 | Pin Wine guest date without changing host time or EXE"
+      - name: "V49 | Use the already-built V48 Windows client"
         shell: bash
         run: |
           set -euo pipefail
-          cat > work/patch-boxedwine-clock.py <<'PY'
-          from pathlib import Path
-          p=Path('boxedwine-src/platform/linux/platform.cpp')
-          original=p.read_bytes()
-          # Preserve the original source's CRLF line endings.
-          eol=b'\r\n' if b'\r\n' in original else b'\n'
-          old='''unsigned long long int Platform::getSystemTimeAsMicroSeconds() {
-          \tstruct timeval  tv;
-          \tgettimeofday(&tv, NULL);
-          \treturn ((unsigned long long int)tv.tv_sec) * 1000000l + (tv.tv_usec);
-          }'''.encode('utf-8').replace(b'\n',eol)
-          new='''unsigned long long int Platform::getSystemTimeAsMicroSeconds() {
-          \tstruct timeval tv;
-          \tgettimeofday(&tv, NULL);
-          \tconst unsigned long long actual = ((unsigned long long)tv.tv_sec) * 1000000ULL + tv.tv_usec;
-          #ifdef __EMSCRIPTEN__
-          \t// 2013-03-30 00:00:00 UTC, progressing in real time.
-          \t// Guest realtime only; monotonic clock and HOST time are untouched.
-          \tstatic const unsigned long long originalActual = actual;
-          \tstatic const unsigned long long originalGuest = 1364601600000000ULL;
-          \treturn originalGuest + (actual - originalActual);
-          #else
-          \treturn actual;
-          #endif
-          }'''.encode('utf-8').replace(b'\n',eol)
-          assert original.count(old)==1, 'Boxedwine 26R1.0 clock signature changed; stop rather than guess'
-          patched=original.replace(old,new,1)
-          assert patched.count(b'\r\n')-original.count(b'\r\n') == new.count(b'\r\n')-old.count(b'\r\n')
-          p.write_bytes(patched)
-          Path('reports/V48-legacy-clock.txt').write_text(
-              'WinLicense guest realtime is tested at 2013-03-30 UTC.\n'
-              'Neither the host clock nor original PE files are altered.\n'
-              'This is a compatibility test, not proof the protection is bypassed.\n')
-          PY
-          python3 work/patch-boxedwine-clock.py
-          git -C boxedwine-src -c core.whitespace=cr-at-eol diff --check
-          git -C boxedwine-src diff -- platform/linux/platform.cpp > reports/V48-boxedwine-clock.patch
-          test -s reports/V48-boxedwine-clock.patch
-
-      - name: "V48 | Build actual Windows emulator for browser"
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd boxedwine-src/project/emscripten
-          make -j3 BUILD_DIR=Build/Release SHELL_FILE=shell.html \
-            2>&1 | tee ../../../reports/V48-boxedwine-compile.log
-          test -s Build/Release/boxedwine.html
-          test -s Build/Release/boxedwine.js
-          test -s Build/Release/boxedwine.wasm
-          cp Build/Release/boxedwine.html ../../../dist/
-          cp Build/Release/boxedwine.js ../../../dist/
-          cp Build/Release/boxedwine.wasm ../../../dist/
-
-          # Boxedwine 26R1.0 does not contain fsfs.js.
-          # Its HTML shell loads boxedwine-shell.js and boxedwine.css.
-          test -s boxedwine.css
-          test -s boxedwine-shell.js
-          cp boxedwine.css boxedwine-shell.js ../../../dist/
-          test -s ../../../dist/boxedwine.css
-          test -s ../../../dist/boxedwine-shell.js
-
-      - name: "V48 | Get upstream Wine filesystem, package original EXEs"
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p work/boxedwine-web
-          gh release download 26R1.0 -R danoon2/Boxedwine \
-            -p 'Boxedwine26R1Web.zip' -D work --clobber
-          unzip -q work/Boxedwine26R1Web.zip -d work/boxedwine-web
-          find work/boxedwine-web -type f -iname '*.zip' -printf '%p %s bytes\n' > reports/V48-upstream-web-zips.txt
-          rootzip=$(find work/boxedwine-web -type f -name 'boxedwine.zip' | head -1)
-          test -n "$rootzip" && test -s "$rootzip" || {
-            echo 'Official Boxedwine Wine root image missing; see manifest' >&2
-            cat reports/V48-upstream-web-zips.txt >&2
-            exit 1
-          }
-          cp "$rootzip" dist/boxedwine.zip
-          (cd 'work/original/Sanctuary of Aden - Copy' && zip -q -r "$GITHUB_WORKSPACE/dist/sanctuary-boot.zip" .)
-          unzip -tq dist/sanctuary-boot.zip | tail -1
-          unzip -tq dist/boxedwine.zip | tail -1
-          sha256sum dist/sanctuary-boot.zip dist/boxedwine.zip > reports/V48-game-archive-hashes.txt
-
-      - name: "V48 | Auto-run original protected EXE without a start button"
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > dist/index.html <<'HTML'
-          <!doctype html><html lang="ko"><head>
-          <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          mkdir -p reports site
+          for file in index.html Lineage-launcher.html boxedwine.html boxedwine.js \
+            boxedwine.wasm boxedwine.css boxedwine-shell.js boxedwine.zip sanctuary-boot.zip; do
+            test -s "published/v48/$file" || {
+              echo "Missing deployed V48 file: $file" >&2
+              exit 1
+            }
+          done
+          cat > site/index.html <<'HTML'
+          <!doctype html>
+          <html lang="ko"><head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1">
           <title>Sanctuary | Original Windows Client V48</title>
-          <meta http-equiv="refresh" content="0;url=boxedwine.html?app=sanctuary-boot&amp;p=lin.bin&amp;sound=false">
-          </head><body style="background:#101720;color:#eee;font:14px system-ui">
-          원본 Windows 클라이언트를 자동 실행합니다.
-          <a href="boxedwine.html?app=sanctuary-boot&amp;p=lin.bin&amp;sound=false">실행 화면</a>
+          <meta http-equiv="refresh" content="0;url=./v48/">
+          </head><body>
+          <p>Sanctuary V48 원본 Windows 실행 화면으로 이동합니다.</p>
+          <a href="./v48/">원본 게임 실행 화면</a>
           </body></html>
           HTML
-          cat > dist/Lineage-launcher.html <<'HTML'
-          <!doctype html><html lang="ko"><head>
-          <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>Sanctuary | Original Launcher V48</title>
-          <meta http-equiv="refresh" content="0;url=boxedwine.html?app=sanctuary-boot&amp;p=Lineage.exe&amp;sound=false">
-          </head><body style="background:#101720;color:#eee;font:14px system-ui">
-          원본 Lineage.exe 런처를 자동 실행합니다.
-          </body></html>
-          HTML
-          cat > dist/V48-SOURCE.txt <<'TXT'
-          Original EXE source: gowellsik-hue/Game release v1.0.0
-          Original Windows executable bytes unchanged and SHA-256 verified.
-          Boxedwine GNU GPL v2: https://github.com/danoon2/Boxedwine tree/tag 26R1.0
-          Modified Boxedwine source patch: reports/V48-boxedwine-clock.patch
-          Browser guest realtime: 2013-03-30 UTC; monotonic clocks not modified.
-          This is an original-client compatibility experiment, NOT verified gameplay.
-          TXT
-          cp reports/V48-boxedwine-clock.patch dist/V48-boxedwine-clock.patch
-          printf '' > dist/.nojekyll
-          test -s dist/index.html
-          test -s dist/sanctuary-boot.zip
-          test -s dist/boxedwine.zip
-          test -s dist/boxedwine.wasm
-          du -ah dist | sort -rh | head -20 | tee reports/V48-deployment-sizes.txt
+          touch site/.nojekyll
+          echo 'V49 uses the exact V48 original Windows emulator and EXE release files.' > reports/V49-input.txt
+          sha256sum published/v48/boxedwine.wasm published/v48/sanctuary-boot.zip >> reports/V49-input.txt
 
-      - name: "V48 | Preserve original-client experiment logs"
+      - name: "V49 | Set up Python for browser execution"
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: "V49 | Install Chromium for automatic browser execution"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install 'playwright==1.56.0'
+          python -m playwright install --with-deps chromium
+
+      - name: "V49 | Launch original lin.bin and Lineage.exe automatically"
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > probe-v49.py <<'PY'
+          import asyncio
+          import json
+          from pathlib import Path
+          from playwright.async_api import async_playwright
+
+          ROOT = 'http://127.0.0.1:8765/v48/'
+          out = Path('reports')
+          out.mkdir(exist_ok=True)
+
+          async def inspect(browser, label, url, seconds):
+              result = {'label': label, 'url': url, 'messages': [], 'errors': []}
+              ctx = await browser.new_context(viewport={'width': 1080, 'height': 760},
+                                              device_scale_factor=1)
+              page = await ctx.new_page()
+              def note(kind, value):
+                  entries = result['errors'] if kind in ('pageerror', 'requestfailed', 'http') else result['messages']
+                  if len(entries) < 300:
+                      entries.append(f'{kind}: {str(value)[:600]}')
+              page.on('console', lambda m: note('console', m.text))
+              page.on('pageerror', lambda e: note('pageerror', e))
+              page.on('requestfailed', lambda req: note('requestfailed', req.url))
+              page.on('response', lambda res: note('http', f'{res.status} {res.url}') if res.status >= 400 else None)
+              try:
+                  await asyncio.wait_for(page.goto(url, wait_until='domcontentloaded', timeout=25000), timeout=35)
+                  await asyncio.sleep(seconds)
+                  result['final_url'] = page.url
+                  try:
+                      result['browser_state'] = await asyncio.wait_for(page.evaluate('''() => ({
+                        title: document.title,
+                        canvas: (() => {
+                          const c = document.querySelector('canvas');
+                          return c ? {width:c.width,height:c.height,display:getComputedStyle(c).display} : null;
+                        })(),
+                        loading: document.querySelector('#status')?.textContent || '',
+                        output: (document.querySelector('#output')?.value || '').slice(-18000)
+                      })'''), timeout=8)
+                  except Exception as e:
+                      note('pageerror', 'Cannot read emulator state: ' + str(e))
+                  try:
+                      await asyncio.wait_for(page.screenshot(path=str(out/f'V49-{label}.png'),
+                                                             full_page=True, timeout=12000), timeout=18)
+                      result['screenshot'] = f'V49-{label}.png'
+                  except Exception as e:
+                      note('pageerror', 'Screenshot unavailable: ' + str(e))
+              except Exception as e:
+                  note('pageerror', 'Navigation or startup failed: ' + str(e))
+              finally:
+                  try:
+                      await asyncio.wait_for(ctx.close(), timeout=10)
+                  except Exception:
+                      pass
+              return result
+
+          async def main():
+              results = []
+              async with async_playwright() as pw:
+                  browser = await pw.chromium.launch(headless=True,
+                      args=['--no-sandbox','--disable-dev-shm-usage',
+                            '--enable-webgl','--use-gl=angle','--use-angle=swiftshader',
+                            '--enable-unsafe-swiftshader'])
+                  try:
+                      results.append(await inspect(browser, 'lin-bin', ROOT, 55))
+                      results.append(await inspect(browser, 'lineage-launcher',
+                                                   ROOT+'Lineage-launcher.html', 35))
+                  finally:
+                      await browser.close()
+              (out/'V49-browser-results.json').write_text(
+                  json.dumps(results, indent=2, ensure_ascii=False), encoding='utf-8')
+              for result in results:
+                  print('RESULT', result['label'], 'URL', result.get('final_url', 'unavailable'))
+                  for item in result['errors'][:20]:
+                      print('BROWSER_ERROR', item)
+                  for item in result['messages'][-20:]:
+                      print('BROWSER_LOG', item)
+                  state = result.get('browser_state', {})
+                  print('BROWSER_STATE', json.dumps(state, ensure_ascii=False)[-1800:])
+              print('V49 browser execution evidence saved. This is not proof of game play.')
+
+          asyncio.run(main())
+          PY
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory published \
+            > reports/V49-http-server.log 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          for i in $(seq 1 40); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8765/v48/index.html; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS -o /dev/null http://127.0.0.1:8765/v48/index.html
+          python probe-v49.py 2>&1 | tee reports/V49-browser-run.log
+          test -s reports/V49-browser-results.json
+
+      - name: "V49 | Always preserve original-client browser evidence"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-Original-Windows-Client-Boxedwine-V48
-          path: |
-            reports/
-            dist/index.html
-            dist/V48-*
+          name: Sanctuary-Original-Windows-Client-Browser-V49
+          path: reports/
           retention-days: 30
           if-no-files-found: warn
 
-      - name: "V48 | Deploy true Windows EXE runtime to existing game2 Pages"
+      - name: "V49 | Make the original Windows client the default game2 page"
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist
+          publish_dir: ./site
           publish_branch: gh-pages
-          destination_dir: v48
           keep_files: true
           force_orphan: false
           enable_jekyll: false
 
-      - name: "V48 | Explicit status"
+      - name: "V49 | Explicit result and next blocker"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V48 | Original Windows client test'
-            echo 'No l1j-client. Original Win32 lin.bin and Lineage.exe are not modified.'
-            echo 'Boxedwine guest clock reports 2013-03-30 instead of the host wall clock.'
-            echo 'A successful build is NOT proof that the WinLicense runtime has been passed.'
-            echo 'Pages: v48/index.html (lin.bin) and v48/Lineage-launcher.html (Lineage.exe).'
+            echo '# build-web.yml | V49 | Original Windows client browser execution'
+            echo 'This workflow reused the already-built V48 original Windows EXE runtime.'
+            echo 'The homepage now redirects to v48/ instead of the unrelated V45 client.'
+            echo 'Screenshots, browser errors, and Wine console text are in the V49 artifact.'
+            echo 'A successful GitHub Action does not prove protected EXE startup or gameplay.'
           } >> "$GITHUB_STEP_SUMMARY"
