@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V35 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V35 | Original Sanctuary engine runtime test"
+name: "build-web.yml | V36 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V36 | Original Sanctuary engine runtime test"
 
 "on":
   workflow_dispatch:
@@ -11,22 +11,23 @@ run-name: "build-web.yml | V35 | Original Sanctuary engine runtime test"
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
-  group: build-web-yml-v35-original-engine
+  group: build-web-yml-v36-original-engine
   cancel-in-progress: false
 
 jobs:
-  original_engine_v35:
-    name: "build-web.yml | V35 | Original Sanctuary map format and browser port test"
+  original_engine_v36:
+    name: "build-web.yml | V36 | Original Sanctuary map format and browser port test"
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 90
 
     steps:
-      - name: "V35 | Checkout game2"
+      - name: "V36 | Checkout game2"
         uses: actions/checkout@v4
 
-      - name: "V35 | Checkout l1j-client source reference"
+      - name: "V36 | Checkout original l1j-client format reference"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -34,34 +35,40 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V35 | Verify upstream parsing code"
+      - name: "V36 | Verify original format references"
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p original native reports site
-          for p in COPYING src/resources/pack.cpp src/resources/tile.cpp \
-                   src/resources/sdl_graphic.cpp src/widgets/sdl_lin_map.cpp \
-                   src/widgets/sprite_motion.cpp; do
-            test -s "upstream-l1j/$p"
+          mkdir -p original previous reports site
+          for f in COPYING src/resources/pack.cpp src/resources/sdl_graphic.cpp \
+                   src/widgets/sprite_motion.cpp src/widgets/sprite.cpp; do
+            test -s "upstream-l1j/$f"
           done
-          git -C upstream-l1j rev-parse HEAD > reports/V35-upstream-sha.txt
+          git -C upstream-l1j rev-parse HEAD > reports/V36-upstream-commit.txt
 
-      - name: "V35 | Restore small original-data cache"
-        id: asset_cache
+      - name: "V36 | Restore exact V35 original map artifact"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download 39358346661 -R gowellsik-hue/game2 \
+            -n Sanctuary-Original-Data-Web-Port-V35 -D previous
+          test -s previous/site/original-map.png
+          test -s previous/site/audit.json
+          test -s previous/reports/V35-output-sha256.txt
+          ( cd previous && sha256sum -c reports/V35-output-sha256.txt ) \
+            > reports/V36-previous-artifact-hash-check.txt
+
+      - name: "V36 | Restore first Sanctuary archive volume cache"
+        id: first_cache
         uses: actions/cache@v4
         with:
-          key: sanctuary-v1.0.0-v35-original-map4-tiles-v1
-          path: |
-            native/Sanctuary of Aden - Copy/Tile.pak
-            native/Sanctuary of Aden - Copy/Tile.idx
-            native/Sanctuary of Aden - Copy/Sprite.idx
-            native/Sanctuary of Aden - Copy/map/4/80048009.s32
-            native/Sanctuary of Aden - Copy/map/4/80058009.s32
-            native/Sanctuary of Aden - Copy/map/4/8004800a.s32
-            native/Sanctuary of Aden - Copy/map/4/8005800a.s32
+          key: sanctuary-original-v1.0.0-sprite-first-volume-z01-v36
+          path: original/Sanctuary.of.Aden.-.Copy.z01
 
-      - name: "V35 | Download original 46-volume archive only on cache miss"
-        if: steps.asset_cache.outputs.cache-hit != 'true'
+      - name: "V36 | Download ONLY source volume z01 (100MB)"
+        if: steps.first_cache.outputs.cache-hit != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -69,396 +76,307 @@ jobs:
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = 'gowellsik-hue/game2'
           gh release download v1.0.0 -R gowellsik-hue/Game \
-            -p 'Sanctuary.of.Aden.-.Copy.*' -D original --clobber
-          test "$(find original -maxdepth 1 -type f | wc -l)" -eq 46
-          for i in $(seq -w 1 45); do
-            test -s "original/Sanctuary.of.Aden.-.Copy.z${i}"
-          done
-          test -s original/Sanctuary.of.Aden.-.Copy.zip
+            -p 'Sanctuary.of.Aden.-.Copy.z01' -D original --clobber
+          test -s original/Sanctuary.of.Aden.-.Copy.z01
+          test "$(stat -c %s original/Sanctuary.of.Aden.-.Copy.z01)" -eq 100000000
 
-      - name: "V35 | Extract only original tile index, pack and four map segments"
-        if: steps.asset_cache.outputs.cache-hit != 'true'
+      - name: "V36 | Install original-sprite PNG decoder"
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq p7zip-full
-          7z x 'original/Sanctuary.of.Aden.-.Copy.zip' -onative -y \
-            'Sanctuary of Aden - Copy/Tile.pak' \
-            'Sanctuary of Aden - Copy/Tile.idx' \
-            'Sanctuary of Aden - Copy/Sprite.idx' \
-            'Sanctuary of Aden - Copy/map/4/80048009.s32' \
-            'Sanctuary of Aden - Copy/map/4/80058009.s32' \
-            'Sanctuary of Aden - Copy/map/4/8004800a.s32' \
-            'Sanctuary of Aden - Copy/map/4/8005800a.s32' \
-            > reports/V35-extract.log
-          rm -rf original
-
-      - name: "V35 | Require real Sanctuary input, not substitute assets"
-        shell: bash
-        run: |
-          set -euo pipefail
-          root='native/Sanctuary of Aden - Copy'
-          for f in Tile.pak Tile.idx Sprite.idx; do test -s "$root/$f"; done
-          for f in 80048009 80058009 8004800a 8005800a; do
-            test -s "$root/map/4/$f.s32"
-          done
-          du -sh native > reports/V35-extracted-size.txt
-
-      - name: "V35 | Install portable source-data renderer"
-        shell: bash
-        run: |
-          set -euo pipefail
+          test "$(stat -c %s original/Sanctuary.of.Aden.-.Copy.z01)" -eq 100000000
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-pil
           /usr/bin/python3 -c 'from PIL import Image; print(Image.__version__)'
 
-      - name: "V35 | Render real Map 4 source tiles without modifying originals"
+      - name: "V36 | Extract original 61-series SPR frames without running EXE"
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/v35_map_probe.py <<'PY_PORT'
-          from collections import Counter
-          from functools import lru_cache
-          import hashlib
-          import json
+          cat > /tmp/v36_probe.py <<'PY_PORT'
           from pathlib import Path
-          import struct
+          import argparse, hashlib, json, struct, zlib, shutil
           from PIL import Image
 
-          BASE = Path('native/Sanctuary of Aden - Copy')
-          REPORTS = Path('reports')
-          SITE = Path('site')
-          SEGMENTS = ('80048009', '80058009', '8004800a', '8005800a')
-          CENTER_X, CENTER_Y = 33080, 33403
-          RADIUS = 12
+          SPRITES = ('61-0.spr', '61-1.spr', '61-2.spr', '61-3.spr', '61-24.spr')
+          EXPECTED_INDEX_SHA = '97e520a2abd03eb5a3d150f5bdfbf9f02d51319e8b4ed8776ecd4abadaeb0246'
+          EXPECTED_SPR_SHA = {
+              '61-0.spr': '4f3b9d4ed055812899cfb1a90bd58c33aeaa7ee0b808b81f11355e64f84aad13',
+              '61-1.spr': '40f9112806b67851eae3f1645adeb2e1dcbfb47028ba135fce58fb4092a8c0df',
+              '61-2.spr': '35d6944ab775340c7231e551790562209f384b18273c5400410960aaad4dca61',
+              '61-3.spr': 'f344ef42706f7f66a8208b02fa3c4d4ff967b4b5a994241a550f1b5de6ea43f9',
+              '61-24.spr': '5e6f2b15d1d475c4328156de293c2b88cdb475440d30efb00c01e4dbdd79f298',
+          }
 
-          def check(ok, message):
-              if not ok:
-                  raise ValueError(message)
+          def check(a, msg):
+              if not a: raise ValueError(msg)
 
-          def sha256(path):
-              h = hashlib.sha256()
-              with path.open('rb') as f:
-                  for chunk in iter(lambda: f.read(4 * 1024 * 1024), b''):
-                      h.update(chunk)
-              return h.hexdigest()
+          def sha(path):
+              return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
-          def index(path, pack_size=None):
-              data = path.read_bytes()
-              check(len(data) >= 32 and (len(data) - 4) % 28 == 0,
-                    f'Invalid IDX record format: {path}')
-              count = (len(data) - 4) // 28
-              endian = '<'
-              if struct.unpack_from('<I', data)[0] != count:
-                  check(struct.unpack_from('>I', data)[0] == count,
-                        f'IDX count does not match file size: {path}')
-                  endian = '>'
-              records = {}
-              invalid = 0
-              for i in range(count):
-                  offset = 4 + i * 28
-                  start = struct.unpack_from(endian + 'I', data, offset)[0]
-                  name = data[offset + 4:offset + 24].split(b'\0')[0].decode('latin1').lower()
-                  size = struct.unpack_from(endian + 'I', data, offset + 24)[0]
-                  if pack_size is not None and (start > pack_size or size > pack_size - start):
-                      invalid += 1
-                      continue
-                  if name and name not in records:
-                      records[name] = (start, size)
-              check(records, f'No readable IDX records: {path}')
-              return records, {'count': count, 'unique': len(records),
-                               'out_of_bounds': invalid, 'byte_order': endian}
+          def extract_original(part):
+              # Read original ZIP local headers from the first (100MB) volume only.
+              raw=Path(part).read_bytes()
+              def entry(name):
+                  name=('Sanctuary of Aden - Copy/'+name).encode()
+                  offset=0
+                  while True:
+                      i=raw.find(name,offset)
+                      check(i>=0, f'ZIP local header missing: {name.decode()}')
+                      offset=i+len(name)
+                      p=i-30
+                      if p<0 or raw[p:p+4]!=b'PK\x03\x04':continue
+                      _,_,_,method,_,_,_,compressed,_,nlen,nextra=struct.unpack_from('<IHHHHHIIIHH',raw,p)
+                      if raw[p+30:p+30+nlen]!=name:continue
+                      check(method==8,f'unsupported ZIP compression: {name}')
+                      return raw[p+30+nlen+nextra:],compressed
+              idxz, idxn=entry('Sprite.idx')
+              # 778861 comes from release v1.0.0 Sprite.idx's verified compressed size.
+              if idxn<=0:idxn=778861
+              idx=zlib.decompress(idxz[:idxn],-15)
+              check(hashlib.sha256(idx).hexdigest()==EXPECTED_INDEX_SHA,'Sprite.idx SHA changed; not the approved original')
+              count,=struct.unpack_from('<I',idx,0)
+              check(len(idx)==4+count*28,'Sprite.idx format invalid')
+              records={}
+              for j in range(count):
+                  ofs,name,size=struct.unpack_from('<i20si',idx,4+j*28)
+                  filename=name.split(b'\x00')[0].decode('latin1').lower()
+                  if filename in SPRITES:
+                      check(0<=ofs<96*1024*1024 and 0<size<200000,f'SPR source offset out of trial bounds: {filename}')
+                      records[filename]=(ofs,size)
+              check(set(records)==set(SPRITES),'Missing original 61 sprite directions/bank')
+              needed=max(a+b for a,b in records.values())
+              stream,_=entry('Sprite.pak')
+              dec=zlib.decompressobj(-15)
+              out=bytearray()
+              for pos in range(0,len(stream),256*1024):
+                  out.extend(dec.decompress(stream[pos:pos+256*1024]))
+                  if len(out)>=needed:break
+              check(len(out)>=needed,'Original Sprite.pak first volume did not cover selected source offsets')
+              return {name:bytes(out[o:o+n]) for name,(o,n) in records.items()},records,count,len(out)
 
-          def map_data(path):
-              data = path.read_bytes()
-              check(len(data) >= 49154, f'Map is too small: {path}')
-              at = 0
-              floor = {}
-              for ix in range(64):
-                  for iy in range(64):
-                      floor[(iy, ix)] = struct.unpack_from('<II', data, at)
-                      at += 8
-              unknown = struct.unpack_from('<H', data, at)[0]
-              at += 2
-              check(unknown < 10000 and at + 6 * unknown <= len(data),
-                    f'Bad map header: {path}')
-              at += unknown * 6
-              attributes = {}
-              for ix in range(64):
-                  for iy in range(64):
-                      attributes[(iy, ix)] = struct.unpack_from('<HH', data, at)
-                      at += 4
-
-              def take(fmt):
-                  nonlocal at
-                  length = struct.calcsize('<' + fmt)
-                  check(at + length <= len(data), f'Truncated map {path}: {fmt}')
-                  answer = struct.unpack_from('<' + fmt, data, at)
-                  at += length
-                  return answer[0] if len(answer) == 1 else answer
-
-              objects = []
-              count = take('I')
-              check(count < 100000, 'Unreasonable object count')
-              for _ in range(count):
-                  object_id = take('H')
-                  num_tiles = take('H')
-                  for __ in range(num_tiles):
-                      x, y = take('BB')
-                      if x == 0xcd and y == 0xcd:
-                          check(at + 5 <= len(data), 'Truncated object skip')
-                          at += 5
-                          continue
-                      height = take('B')
-                      tile_id = take('I')
-                      objects.append((x, y, height, tile_id, object_id))
-              switches = take('I')
-              check(switches < 100000 and at + switches * 5 <= len(data),
-                    'Map switch block invalid')
-              at += switches * 5
-              sets = take('I')
-              check(sets < 100000 and at + sets * 4 <= len(data),
-                    'Map tileset block invalid')
-              at += sets * 4
-              portals = []
-              if at + 2 <= len(data):
-                  num_portals = take('H')
-                  check(num_portals < 10000 and at + num_portals * 9 <= len(data),
-                        'Map portal block invalid')
-                  for _ in range(num_portals):
-                      portals.append(take('BBBHHH'))
-              return {'floor': floor, 'attributes': attributes, 'objects': objects,
-                      'portals': portals, 'remainder': len(data) - at,
-                      'size': len(data), 'filename': path.name}
+          def as_signed(x):
+              return x if x<128 else x-256
 
           def rgb555(p):
-              return ((p >> 10 & 31) * 255 // 31,
-                      (p >> 5 & 31) * 255 // 31,
-                      (p & 31) * 255 // 31, 255)
+              return ((p>>10&31)*255//31,(p>>5&31)*255//31,(p&31)*255//31,255)
 
-          def tile_picture(buffer, tile_number, side):
-              check(len(buffer) >= 8, 'Empty .til header')
-              count = struct.unpack_from('<H', buffer)[0]
-              check(0 < count <= 1024 and 0 <= tile_number < count,
-                    f'Bad tile number {tile_number} (count={count})')
-              base = 4 * (2 + count)
-              check(base <= len(buffer), 'Tile offsets exceed pack entry')
-              a = struct.unpack_from('<I', buffer, 4 + tile_number * 4)[0]
-              b = struct.unpack_from('<I', buffer, 8 + tile_number * 4)[0]
-              check(a < b and base + b <= len(buffer), 'Tile offset outside entry')
-              pixels = buffer[base + a:base + b]
-              if pixels[0] & 2:
-                  check(len(pixels) >= 5, 'Special tile truncated')
-                  ox, oy, width, height = pixels[1:5]
-                  check(0 < width <= 128 and 0 < height <= 128,
-                        'Invalid special tile bounds')
-                  img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-                  at = 5
-                  for row in range(height):
-                      check(at < len(pixels), 'Special tile row missing')
-                      runs = pixels[at]
-                      at += 1
-                      x = 0
-                      for _ in range(runs):
-                          check(at + 2 <= len(pixels), 'Special tile run missing')
-                          skip, width_run = pixels[at] // 2, pixels[at + 1]
-                          at += 2
-                          x += skip
-                          check(x + width_run <= width and at + 2 * width_run <= len(pixels),
-                                'Special tile pixels outside bounds')
-                          for i in range(width_run):
-                              value = struct.unpack_from('<H', pixels, at)[0]
-                              at += 2
-                              if value != 0x7fe0:
-                                  img.putpixel((x + i, row), rgb555(value))
-                          x += width_run
-                  return img, (ox, oy)
-              check(len(pixels) >= 1 + 576, 'Ordinary half-tile truncated')
-              img = Image.new('RGBA', (24, 24), (0, 0, 0, 0))
-              at = 1
-              for row in range(24):
-                  n = 2 * (row + 1)
-                  if row > 11:
-                      n -= 4 * (row - 11)
-                  offset = 24 - n if side == 'L' else 0
-                  for j in range(n):
-                      value = struct.unpack_from('<H', pixels, at)[0]
-                      at += 2
-                      if value != 0:
-                          img.putpixel((offset + j, row), rgb555(value))
-              return img, (0, 0)
+          def parse_sprite(src):
+              v=memoryview(src); at=0
+              check(len(v)>20,'Sprite source too short')
+              if v[:5].tobytes() == b'SPR_1':
+                  raise ValueError('SPR_1 unsupported; cannot claim an original rendering')
+              if v[:5].tobytes()==b'SPR_0':at=5
+              count=v[at];at+=1
+              palette=None
+              if count==255:
+                  n=v[at] or 256;at+=1
+                  check(at+2*n<len(v),'Sprite palette truncated')
+                  palette=struct.unpack_from('<'+'H'*n,v,at);at+=2*n
+                  count=v[at];at+=1
+              check(1<=count<=96,f'Sprite animation frame count invalid: {count}')
+              frames=[]
+              for _ in range(count):
+                  check(at+14<=len(v),'Sprite frame truncated')
+                  x0,y0,x1,y1,flags,nt=struct.unpack_from('<hhhhIH',v,at);at+=14
+                  check(0<nt<=200 and at+nt*5<=len(v),'Sprite frame layer list truncated')
+                  layer=[]
+                  for j in range(nt):
+                      x,y,h,idx=struct.unpack_from('<BBBH',v,at);at+=5
+                      layer.append((as_signed(x),as_signed(y),h,idx))
+                  frames.append({'bounds':[x0,y0,x1,y1], 'layers':layer})
+              check(at+4<=len(v),'Sprite tile count missing')
+              nt=struct.unpack_from('<I',v,at)[0];at+=4
+              check(1<=nt<=2000 and at+4*nt+4<=len(v),'Sprite tile offset count invalid')
+              offs=struct.unpack_from('<'+'I'*nt,v,at);at+=4*nt
+              declared=struct.unpack_from('<I',v,at)[0];at+=4
+              pixstart=at
+              tiles=[]
+              for i,offset in enumerate(offs):
+                  p=pixstart+offset
+                  check(p+4<=len(v),f'Sprite tile {i} offset out of bounds')
+                  ox,oy,w,h=struct.unpack_from('<BBBB',v,p);p+=4
+                  check(0<w<=160 and 0<h<=160,'Unsupported sprite tile dimensions')
+                  im=Image.new('RGBA',(w,h))
+                  for row in range(h):
+                      check(p<len(v),'Truncated sprite tile scanline')
+                      nseg=v[p];p+=1
+                      x=0
+                      for _ in range(nseg):
+                          check(p+2<=len(v),'Sprite RLE run missing')
+                          skip,n=struct.unpack_from('<BB',v,p);p+=2
+                          x+=skip//2
+                          check(x+n<=w, f'Sprite RLE run exceeds tile width ({x}+{n}>{w})')
+                          for j in range(n):
+                              if palette:
+                                  check(p<len(v),'Sprite palette index missing')
+                                  val=palette[v[p]];p+=1
+                              else:
+                                  check(p+2<=len(v),'Sprite color truncated')
+                                  val=struct.unpack_from('<H',v,p)[0];p+=2
+                              if val!=0x7fe0: im.putpixel((x+j,row),rgb555(val))
+                          x+=n
+                  tiles.append((im,(ox,oy)))
+              images=[]
+              for frame in frames:
+                  # Same 24x12 isometric placement and sprite layer order as upstream.
+                  canvas=Image.new('RGBA',(128,128),(0,0,0,0))
+                  for x,y,h,index in frame['layers']:
+                      check(index<len(tiles),'Sprite layer references absent tile')
+                      tx=x-4;ty=y+1
+                      half=int(tx/2)  # C integer division truncates toward zero.
+                      ox=24*(half+ty)
+                      oy=12*(ty-half)
+                      if tx % 2:
+                          if tx>0:ox+=24
+                          else:oy+=12
+                      sprite,(sx,sy)=tiles[index]
+                      canvas.alpha_composite(sprite,(64+ox+sx,90+oy+sy))
+                  check(canvas.getchannel('A').getbbox() is not None,'Decoded empty frame')
+                  images.append(canvas)
+              return images, {'count':len(frames),'palette_colors':len(palette) if palette else None,'layer_tile_count':len(tiles),'declared_pixel_bytes':declared}
 
-          def main():
-              SITE.mkdir(parents=True, exist_ok=True)
-              maps = {tag: map_data(BASE / 'map' / '4' / (tag + '.s32'))
-                      for tag in SEGMENTS}
-              pak_path = BASE / 'Tile.pak'
-              tile_index, tile_report = index(BASE / 'Tile.idx', pak_path.stat().st_size)
-              sprite_index, sprite_report = index(BASE / 'Sprite.idx')
-              sprite_names = [name for name in sprite_index if name.endswith('.spr')]
-              check(sprite_names, 'Original Sprite.idx contains no readable sprites')
+          def save_site(source,previous,out):
+              out.mkdir(parents=True,exist_ok=True)
+              (out/'sprites').mkdir(exist_ok=True)
+              map_png=previous/'site'/'original-map.png'
+              audit=previous/'site'/'audit.json'
+              checks=previous/'reports'/'V35-output-sha256.txt'
+              check(map_png.is_file() and audit.is_file() and checks.is_file(),'V35 original-map artifact incomplete')
+              for l in checks.read_text().splitlines():
+                  val,filename=l.split(maxsplit=1)
+                  check(sha(previous/filename)==val,'V35 map artifact hash changed: '+filename)
+              v35=json.loads(audit.read_text())
+              check(v35['version']=='V35' and v35['original_art_modified'] is False,'V35 provenance check failed')
+              shutil.copyfile(map_png,out/'original-map.png')
+              report={'version':'V36','source':'Original Sanctuary v1.0.0 first archive volume',
+                 'map_from':'V35 Actions artifact; SHA256-verified',
+                 'map_image_sha256':sha(out/'original-map.png'),
+                 'source_sprite_files':[],'knight_sprite_candidate':61,
+                 'knight_identity_independently_verified':False,
+                 'four_direction_mapping_verified':False,
+                 'source_sprite_pixels_replaced':False,
+                 'native_engine_executed':False,
+                 'movement_and_collision_implemented':False,
+                 'visual_map_accuracy_verified':False}
+              for name,raw in source.items():
+                  check(hashlib.sha256(raw).hexdigest() == EXPECTED_SPR_SHA[name],
+                        f'Original sprite SHA mismatch: {name}')
+                  images,info=parse_sprite(raw)
+                  stem=name[:-4]
+                  for i,im in enumerate(images):
+                      im.save(out/'sprites'/f'{stem}-{i:02d}.png',optimize=True)
+                  info.update(name=name,sha256=hashlib.sha256(raw).hexdigest(),size=len(raw))
+                  report['source_sprite_files'].append(info)
+              (out/'audit.json').write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding='utf-8')
+              # HTML intentionally contains only original-derived images, not gameplay state.
+              html='''<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sanctuary Original Sprite Probe V36</title>
+              <style>html,body{margin:0;background:#101824;color:#e5effc;font:14px system-ui}header{padding:14px;background:#1c2c40}h1{font-size:18px;margin:0 0 8px}p{margin:5px 0}button{background:#34465b;color:white;border:0;border-radius:7px;padding:9px 12px;margin:4px;cursor:pointer}button:focus{outline:2px solid #96ccfd}#viewport{height:calc(100dvh - 176px);min-height:250px;overflow:auto;touch-action:pan-x pan-y}#world{position:relative;width:1440px;height:920px;background:url(original-map.png) no-repeat 0 0}#knight{position:absolute;left:656px;top:370px;width:128px;height:128px;image-rendering:pixelated;pointer-events:none}a{color:#9cd9ff}#controls{display:flex;flex-wrap:wrap;align-items:center}.note{font-size:12px;color:#afc3d8}</style>
+              <header><h1>Sanctuary | V36 Original Sprite Source Probe</h1><p>Original V35 map image + unmodified pixel colors from Sanctuary Sprite.pak. Character ID 61 is a candidate; identity and action mapping require verification.</p><div id="controls"><span>Source frames:</span><button data-n="61-0">61-0</button><button data-n="61-1">61-1</button><button data-n="61-2">61-2</button><button data-n="61-3">61-3</button><button data-n="61-24">61-24</button><button id="pause">Pause</button><span id="details"></span></div><p class="note">No invented sprite, fabricated map, moving avatar, portal, or game loop. <a href="audit.json">Original data SHA256 audit</a></p></header>
+              <div id="viewport"><div id="world"><img id="knight" alt="Original Sanctuary source sprite candidate 61"></div></div>
+              <script>
+              const frames={'61-0':4,'61-1':4,'61-2':4,'61-3':4,'61-24':4};
+              let bank='61-0',frame=0,playing=true;
+              function draw(){document.getElementById('knight').src='sprites/'+bank+'-'+String(frame).padStart(2,'0')+'.png';document.getElementById('details').textContent='source '+bank+' / frame '+(frame+1)+' of '+frames[bank];}
+              for(const b of document.querySelectorAll('[data-n]')){b.onclick=()=>{bank=b.dataset.n;frame=0;draw();};}
+              document.getElementById('pause').onclick=()=>{playing=!playing;document.getElementById('pause').textContent=playing?'Pause':'Play';};
+              setInterval(()=>{if(playing){frame=(frame+1)%frames[bank];draw()}},180);draw();
+              </script></html>'''
+              for x in report['source_sprite_files']:
+                  name=x['name'][:-4]
+                  # This is explicit metadata substitution only, NOT replacement art.
+                  html=html.replace(f"'{name}':4",f"'{name}':{x['count']}")
+              (out/'index.html').write_text(html,encoding='utf-8')
+              return report
 
-              def locate(x, y):
-                  tag = f'{x // 64 + 0x7e00:04x}{y // 64 + 0x7e00:04x}'
-                  check(tag in maps, f'Missing real source segment {tag}')
-                  return maps[tag], x % 64, y % 64
-
-              floor_cells = []
-              wanted = set()
-              for y in range(CENTER_Y - RADIUS, CENTER_Y + RADIUS + 1):
-                  for x in range(CENTER_X - RADIUS, CENTER_X + RADIUS + 1):
-                      src, lx, ly = locate(x, y)
-                      values = src['floor'][(lx, ly)]
-                      floor_cells.append((x, y, values))
-                      wanted.update(v >> 8 for v in values)
-
-              overlays = []
-              for tag, src in maps.items():
-                  mx = (int(tag[:4], 16) - 0x7e00) * 64
-                  my = (int(tag[4:], 16) - 0x7e00) * 64
-                  for ox, oy, height, tile, objid in src['objects']:
-                      x, y = mx + ox // 2, my + oy
-                      if abs(x - CENTER_X) <= RADIUS + 2 and abs(y - CENTER_Y) <= RADIUS + 2:
-                          overlays.append((x, y, ox % 2, height, tile, objid))
-                          wanted.add(tile >> 8)
-              missing = sorted(i for i in wanted if f'{i}.til' not in tile_index)
-              check(not missing, f'Missing original tile sets: {missing[:25]}')
-
-              canvas = Image.new('RGBA', (1440, 920), (12, 16, 20, 255))
-              cx, cy = 720, 460
-              def at(x, y):
-                  return ((x + y - CENTER_X - CENTER_Y) * 24,
-                          (y - x - CENTER_Y + CENTER_X) * 12)
-
-              with pak_path.open('rb') as pack:
-                  @lru_cache(maxsize=96)
-                  def get_set(number):
-                      offset, size = tile_index[f'{number}.til']
-                      pack.seek(offset)
-                      content = pack.read(size)
-                      check(len(content) == size, f'Cannot read original tile set {number}')
-                      return content
-
-                  @lru_cache(maxsize=4096)
-                  def graphic(number, variant, side):
-                      return tile_picture(get_set(number), variant, side)
-
-                  drawn = 0
-                  for x, y, values in sorted(floor_cells,
-                                             key=lambda e: (e[1] - e[0], e[0] + e[1])):
-                      dx, dy = at(x, y)
-                      for side_num, value in enumerate(values):
-                          image, (ox, oy) = graphic(value >> 8, value & 255,
-                                                  'L' if side_num == 0 else 'R')
-                          canvas.alpha_composite(image, (cx + dx + 24 * side_num + ox,
-                                                         cy + dy + oy))
-                          drawn += 1
-                  for x, y, half, height, value, objid in sorted(
-                          overlays, key=lambda e: (e[1] - e[0], e[0] + e[1])):
-                      dx, dy = at(x, y)
-                      image, (ox, oy) = graphic(value >> 8, value & 255, 'S')
-                      canvas.alpha_composite(image, (cx + dx + 24 * half + ox,
-                                                     cy + dy + oy))
-                      drawn += 1
-              check(drawn >= 1250, 'Source map did not produce all floor tiles')
-              canvas.convert('RGB').save(SITE / 'original-map.png', optimize=True)
-              pic = canvas.convert('RGB')
-              check(len(pic.quantize(colors=256).getcolors() or []) >= 8,
-                    'Rendered map appears blank')
-              inputs = [pak_path, BASE / 'Tile.idx', BASE / 'Sprite.idx']
-              inputs.extend(BASE / 'map' / '4' / (tag + '.s32') for tag in SEGMENTS)
-              result = {
-                  'version': 'V35',
-                  'scope': 'Read-only original Map 4 tile pixel sample',
-                  'map_id': 4,
-                  'center': {'x': CENTER_X, 'y': CENTER_Y},
-                  'radius': RADIUS,
-                  'floor_cells': len(floor_cells),
-                  'original_tile_draws': drawn,
-                  'source_tile_sets': len(wanted),
-                  'original_sprite_entries': len(sprite_names),
-                  'tile_index': tile_report,
-                  'sprite_index': sprite_report,
-                  'map_segments': [
-                      {'file': src['filename'], 'size': src['size'],
-                       'objects': len(src['objects']),
-                       'portals': len(src['portals']),
-                       'unparsed_bytes': src['remainder']}
-                      for src in maps.values()
-                  ],
-                  'source_sha256': {str(p.relative_to(BASE)): sha256(p) for p in inputs},
-                  'original_art_modified': False,
-                  'sprite_animation_verified': False,
-                  'walkability_verified': False,
-                  'in_game_movement_verified': False,
-                  'map_visual_accuracy_verified': False,
-                  'engine_reused': False,
-              }
-              (SITE / 'audit.json').write_text(
-                  json.dumps(result, ensure_ascii=False, indent=2), encoding='utf8')
-              (SITE / 'index.html').write_text('''<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sanctuary original map probe V35</title><style>html,body{margin:0;background:#0d131b;color:#f1f5fa;font:14px system-ui}header{padding:14px;background:#202b3b}h1{margin:0 0 6px;font-size:17px}p{margin:6px 0}#map{height:calc(100dvh - 116px);overflow:auto}img{display:block;width:1440px;image-rendering:pixelated}a{color:#90ceff}</style><header><h1>Sanctuary / Original Map 4 source pixel probe</h1><p>Original map tiles only. Rendering accuracy, knight animation and collisions not yet verified.</p><a href="audit.json">Original data audit</a></header><main id="map"><img src="original-map.png" alt="Map pixel sample decoded from unmodified original tile files"></main></html>''', encoding='utf8')
-              print(json.dumps({k: v for k, v in result.items() if k != 'source_sha256'},
-                               indent=2, ensure_ascii=False))
-
-          if __name__ == '__main__':
-              main()
+          if __name__=='__main__':
+              ap=argparse.ArgumentParser()
+              ap.add_argument('--first-volume')
+              ap.add_argument('--raw-test-dir')
+              ap.add_argument('--v35',required=True)
+              ap.add_argument('--out',required=True)
+              args=ap.parse_args()
+              if args.raw_test_dir:
+                  files={name:(Path(args.raw_test_dir)/name).read_bytes() for name in SPRITES}
+                  records={};count=92149;rawbytes=0
+              else:
+                  check(args.first_volume is not None,'--first-volume is required')
+                  files,records,count,rawbytes=extract_original(args.first_volume)
+              report=save_site(files,Path(args.v35),Path(args.out))
+              report['sprite_index_entry_count']=count
+              report['sprite_pak_inflated_bytes']=rawbytes
+              report['source_offsets']={k:{'offset':v[0],'size':v[1]} for k,v in records.items()}
+              (Path(args.out)/'audit.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf8')
+              print(json.dumps(report,ensure_ascii=False,indent=2))
           PY_PORT
-          /usr/bin/python3 /tmp/v35_map_probe.py > reports/V35-original-map-result.json
+          /usr/bin/python3 /tmp/v36_probe.py \
+            --first-volume original/Sanctuary.of.Aden.-.Copy.z01 \
+            --v35 previous --out site > reports/V36-source-sprite-result.json
           sha256sum site/original-map.png site/audit.json \
-            > reports/V35-output-sha256.txt
+            > reports/V36-result-sha256.txt
 
-      - name: "V35 | Verify real-source rendered output and audit"
+      - name: "V36 | Verify original source frames and unchanged map"
         shell: bash
         run: |
           set -euo pipefail
           /usr/bin/python3 - <<'PY_VERIFY'
-          import json
           from pathlib import Path
+          import json
+          import hashlib
           from PIL import Image
-          folder = Path('site')
-          report = json.loads((folder / 'audit.json').read_text())
-          assert report['version'] == 'V35'
-          assert report['floor_cells'] == 625
-          assert report['original_tile_draws'] >= 1250
-          assert report['original_sprite_entries'] > 0
-          assert report['original_art_modified'] is False
-          assert report['map_visual_accuracy_verified'] is False
-          image = Image.open(folder / 'original-map.png')
-          assert image.size == (1440, 920)
-          assert (folder / 'index.html').stat().st_size > 300
-          print('V35 SUCCESS: real original Map 4 tiles decoded into a static image.')
-          print('V35 NOT YET: knight actions, collision, visual validation, interactive gameplay.')
+          site=Path('site')
+          report=json.loads((site/'audit.json').read_text())
+          files=report['source_sprite_files']
+          expected={'61-0','61-1','61-2','61-3','61-24'}
+          assert {x['name'][:-4] for x in files} == expected
+          assert all(x['count']==4 for x in files), 'Unexpected original frame count'
+          assert all(x['layer_tile_count']>0 for x in files)
+          assert report['source_sprite_pixels_replaced'] is False
+          assert report['four_direction_mapping_verified'] is False
+          assert report['movement_and_collision_implemented'] is False
+          assert len(list((site/'sprites').glob('*.png'))) == 20
+          assert Image.open(site/'original-map.png').size == (1440,920)
+          for f in (site/'sprites').glob('*.png'):
+            im=Image.open(f).convert('RGBA')
+            assert im.size==(128,128)
+            assert im.getchannel('A').getbbox(), f'blank original sprite {f}'
+          before=Path('previous/site/original-map.png').read_bytes()
+          after=(site/'original-map.png').read_bytes()
+          assert before==after, 'V35 original-map PNG changed'
+          assert (site/'index.html').stat().st_size>1000
+          print('V36 PASS: 20 sprite frames from original Sanctuary source + unchanged V35 map.')
+          print('Original character identity, full 4-direction action mapping, and gameplay still unverified.')
           PY_VERIFY
 
-      - name: "V35 | Upload result only as Actions artifact, not Pages deploy"
+      - name: "V36 | Upload source sprite playback and verification"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-Original-Data-Web-Port-V35
+          name: Sanctuary-Original-Data-Web-Port-V36
           path: |
-            reports/
             site/
+            reports/
           retention-days: 60
           if-no-files-found: warn
 
-      - name: "V35 | Summary of original-data preservation"
+      - name: "V36 | Summarize verified and unverified source port scope"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V35 | Existing workflow, original-data port'
+            echo '# build-web.yml | V36 | Original Sanctuary sprite proof'
             echo ''
-            echo 'Same .github/workflows/build-web.yml file, not a new workflow.'
-            echo 'V34 native test was replaced by a bounded static-asset verification.'
-            echo 'Original map files and tile pack are read only; no substitute graphics.'
-            echo 'Not a finished game or interactive browser client.'
-            echo 'GitHub Pages deployment not attempted.'
-            if test -s reports/V35-original-map-result.json; then
+            echo 'Same workflow title and file; no new workflow created.'
+            echo 'V35 map image reused byte-for-byte; original Sprite.pak bytes decoded.'
+            echo 'Only the 100MB first archive volume is needed (with Actions cache).'
+            echo 'Candidate 61 motion source visualized; character/action identity is not yet proven.'
+            echo 'No original assets modified, no replacement engine, no invented world.'
+            echo 'No movement, collision, portal implementation, or Pages deployment.'
+            if test -s reports/V36-source-sprite-result.json; then
               echo '```json'
-              cat reports/V35-original-map-result.json
+              cat reports/V36-source-sprite-result.json
               echo '```'
             else
-              echo 'The source-data renderer did not complete; inspect job logs.'
+              echo 'Sprite extraction failed; inspect preceding job logs.'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
