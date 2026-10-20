@@ -1,0 +1,16 @@
+{
+  "version": "V45",
+  "chunkSize": 16777216,
+  "files": {
+    "Text.pak": {
+      "size": 24846904,
+      "sha256": "a26ac0d2f2e60b28d4dc6ed83714c3139a2859ca41688d460f00fc91c0ba9941",
+      "parts": 2
+    },
+    "Sprite00.pak": {
+      "size": 218172787,
+      "sha256": "cb9c7a02bad79bceb086fbe30464462d1ff47abcb1cbd5c5897218154b3b6720",
+      "parts": 14
+    }
+  }
+}

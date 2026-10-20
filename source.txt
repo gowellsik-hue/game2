@@ -1,0 +1,5 @@
+Engine: uglyoldbob/l1j-client, C/C++ sources unchanged
+Source revision: 83052f6b1c5bda59d4c4cbaf01aa2e72ea409853
+This is not the original Sanctuary Windows executable.
+The original client depends on map/animation archives and a compatible game server.
+No synthetic player, monsters, portals, or map logic has been introduced.

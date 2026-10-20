@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#111820">
+<title>Sanctuary — V45 Original Client Web Runtime</title>
+<style>
+:root{color-scheme:dark;font:14px/1.45 system-ui,-apple-system,'Noto Sans KR',sans-serif}
+*{box-sizing:border-box}body{margin:0;background:#0c1118;color:#eef3fa}
+header{height:49px;display:flex;gap:12px;align-items:center;justify-content:space-between;padding:0 14px;background:#182230;border-bottom:1px solid #2b394c}
+header strong{font-size:14px}#state{font-size:12px;color:#9db6cd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#stage{position:relative;display:flex;align-items:center;justify-content:center;height:calc(100dvh - 49px - env(safe-area-inset-bottom));overflow:hidden;background:#06090c}
+#canvas{display:block;width:min(100%,calc((100dvh - 145px)*4/3));height:auto;max-height:calc(100dvh - 145px);aspect-ratio:4/3;object-fit:contain;image-rendering:pixelated;background:#050505;outline:none;touch-action:none}
+#overlay{position:absolute;inset:0;display:flex;flex-direction:column;gap:9px;align-items:center;justify-content:center;padding:22px;text-align:center;background:rgba(6,9,12,.93)}
+#overlay.hidden{display:none}#overlay h1{font-size:18px;font-weight:700;margin:0}#overlay p{max-width:440px;margin:0;color:#c1ccda;font-size:13px;word-break:break-word}
+#overlay button,.controls button{border:1px solid #61758a;background:#2a3b4f;color:white;border-radius:9px;padding:10px 16px;font:inherit;cursor:pointer}
+#logbox{position:absolute;left:10px;top:8px;width:min(520px,calc(100% - 20px));max-height:25vh;padding:8px 10px;font:11px/1.4 ui-monospace,monospace;overflow:auto;white-space:pre-wrap;background:rgba(0,0,0,.77);border-radius:7px;display:none;pointer-events:none}
+#logbox.visible{display:block}
+#controls{display:none;position:absolute;left:0;right:0;bottom:max(8px,env(safe-area-inset-bottom));pointer-events:none;justify-content:space-between;padding:0 max(10px,env(safe-area-inset-left))}
+.controls{display:grid;grid-template-columns:repeat(3,52px);gap:5px;pointer-events:auto;touch-action:none;user-select:none;-webkit-user-select:none}
+.controls button{min-width:51px;min-height:47px;padding:2px;font-weight:700;background:rgba(34,53,75,.76);touch-action:none}
+.controls .up{grid-column:2}.controls .left{grid-column:1;grid-row:2}.controls .down{grid-column:2;grid-row:2}.controls .right{grid-column:3;grid-row:2}
+#rightkeys{display:flex;align-items:end;pointer-events:auto;gap:8px}
+#rightkeys button{font-size:13px}
+#tools{position:absolute;right:10px;top:10px;display:flex;gap:6px}#tools button{font-size:11px;background:rgba(30,49,66,.88);color:#bcd7f0;border:1px solid #40546b;border-radius:6px;padding:5px 8px}
+@media (pointer:coarse){#controls{display:flex}#canvas{max-height:calc(100dvh - 49px)}.controls{grid-template-columns:repeat(3,44px)}.controls button{min-width:43px;min-height:44px}}
+</style>
+</head>
+<body>
+<header><strong>Sanctuary | Original Client Runtime · V45 (auto-start / original audio)</strong><span id="state" role="status" aria-live="polite">초기화 전</span></header>
+<main id="stage">
+  <canvas id="canvas" width="800" height="600" tabindex="0" aria-label="기존 클라이언트가 그리는 실제 SDL 화면"></canvas>
+  <div id="overlay" role="alert">
+    <h1 id="head">원본 클라이언트 자동 실행</h1>
+    <p id="desc">원본 C++ 클라이언트를 자동으로 실행합니다. 원본 Text·Sprite00 PAK와 music0.mp3를 사용합니다.</p>
+  </div>
+  <pre id="logbox"></pre>
+  <div id="tools"><button id="logBtn" type="button">로그</button><button id="fullBtn" type="button">전체화면</button></div>
+  <div id="controls">
+    <div class="controls" aria-label="키보드 방향키">
+      <button data-key="ArrowUp" class="up" aria-label="위">▲</button>
+      <button data-key="ArrowLeft" class="left" aria-label="왼쪽">◀</button>
+      <button data-key="ArrowDown" class="down" aria-label="아래">▼</button>
+      <button data-key="ArrowRight" class="right" aria-label="오른쪽">▶</button>
+    </div>
+    <div id="rightkeys" class="controls"><button data-key="Escape">ESC</button><button data-key="Enter">ENTER</button></div>
+  </div>
+</main>
+<script>
+'use strict';
+const canvas=document.getElementById('canvas');
+const overlay=document.getElementById('overlay');
+const state=document.getElementById('state');
+const head=document.getElementById('head');
+const desc=document.getElementById('desc');
+const logbox=document.getElementById('logbox');
+let launched=false;
+function status(message){state.textContent=message;}
+function log(message){const line=String(message??'');logbox.textContent+=(line+'\n');if(logbox.textContent.length>24000)logbox.textContent=logbox.textContent.slice(-16000);logbox.scrollTop=logbox.scrollHeight;console.log('[Lineage]',line);}
+function problem(message){status('실행 장애');head.textContent='클라이언트 실행 실패';desc.textContent=message;overlay.classList.remove('hidden');launched=false;log(message);logbox.classList.add('visible');}
+function showRuntime(){status('WebAssembly 런타임 초기화 완료 (게임 진입 별도 확인)');overlay.classList.add('hidden');canvas.focus({preventScroll:true});}
+async function checkCrossOriginIsolation(){
+  if(!('serviceWorker' in navigator) || !isSecureContext)return false;
+  try{
+    await navigator.serviceWorker.register('./coi-serviceworker-v45.js',{scope:'./'});
+    await navigator.serviceWorker.ready;
+    if(navigator.serviceWorker.controller===null){
+      const once='sanctuary-coi-v45-reload';
+      if(sessionStorage.getItem(once)!=='1'){
+        sessionStorage.setItem(once,'1');
+        location.reload();
+        return null;
+      }
+    }
+    const ctl=navigator.serviceWorker.controller;
+    if(!ctl || !ctl.scriptURL.includes('coi-serviceworker-v45.js')){
+      const key='v45-worker-upgrade';
+      if(!sessionStorage.getItem(key)){
+        sessionStorage.setItem(key,'1'); location.reload(); return null;
+      }
+      throw Error('V45 Service Worker upgrade pending; close other game2 tabs and reload.');
+    }
+    sessionStorage.removeItem('v45-worker-upgrade');
+    return crossOriginIsolated;
+  }catch(err){log('Isolation: '+err);throw err;}
+}
+function loadScript(src){return new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.async=true;s.onload=resolve;s.onerror=()=>reject(new Error(src+' 파일을 찾거나 실행하지 못했습니다.'));document.head.append(s);});}
+async function startEngine(){
+  if(launched)return;
+  launched=true;status('엔진 로딩 중');head.textContent='원본 C++ 클라이언트 로딩 중';desc.textContent='컴파일된 lineage-v45.js / lineage-v45.wasm 파일을 확인합니다.';
+  try{
+    if(location.protocol==='file:')throw Error('GitHub Pages 또는 로컬 HTTP 서버에서 실행해야 합니다.');
+    const isolated=await checkCrossOriginIsolation();
+    if(isolated===null)return;
+    if(!isolated)throw Error('WebAssembly 스레드 실행을 위한 브라우저 격리 설정이 필요합니다.');
+    const idx=await fetch('./v45-paks.json',{cache:'no-store'});
+    if(!idx.ok)throw Error('V45 original PAK manifest is missing');
+    const manifest=await idx.json();
+    for(const name of Object.keys(manifest.files)){
+      const check=await fetch('./v45pak/'+name,{method:'HEAD',cache:'no-store'});
+      if(!check.ok || Number(check.headers.get('content-length'))!==manifest.files[name].size)
+        throw Error('Original PAK streaming unavailable: '+name);
+      log('V45 original '+name+': '+manifest.files[name].size+' bytes (HTTP ranges)');
+    }
+    const response=await fetch('./lineage-v45.js',{method:'HEAD',cache:'no-store'});
+    if(!response.ok)throw Error('lineage-v45.js가 없습니다. 아직 WebAssembly 빌드·배포가 완료되지 않았습니다.');
+    if(typeof window.createLineage!=='function')await loadScript('./lineage-v45.js');
+    if(typeof window.createLineage!=='function')throw Error('lineage-v45.js에 createLineage() 엔트리 포인트가 없습니다.');
+    status('원본 클라이언트 main() 실행 요청');
+    await window.createLineage({
+      canvas, noInitialRun:false, locateFile:(file,prefix)=>'./'+file,
+      print:(...x)=>log(x.join(' ')), printErr:(...x)=>log('STDERR '+x.join(' ')),
+      setStatus:status,
+      onRuntimeInitialized:showRuntime,
+      onAbort:(what)=>problem('WebAssembly abort: '+what),
+      onExit:(code)=>problem('원본 클라이언트 프로세스 종료 (exit='+code+')'),
+      monitorRunDependencies:(n)=>status(n?'원본 데이터 로딩 중 ('+n+')':'데이터 초기화 완료')
+    });
+  }catch(err){problem(err?.message||String(err));}
+}
+window.addEventListener('load',()=>{startEngine();},{once:true});
+window.addEventListener('error',event=>{if(launched)problem(event.message||'알 수 없는 런타임 오류');});
+window.addEventListener('unhandledrejection',event=>{
+  const reason=event.reason;
+  if(reason?.name==='NotAllowedError'){
+    event.preventDefault();
+    log('V45: 브라우저에서 음악 자동재생이 제한됐지만 게임은 계속 실행합니다.');
+    return;
+  }
+  if(launched)problem(reason?.message||String(reason));
+});
+document.getElementById('logBtn').addEventListener('click',()=>logbox.classList.toggle('visible'));
+document.getElementById('fullBtn').addEventListener('click',()=>{if(!document.fullscreenElement)document.getElementById('stage').requestFullscreen?.();else document.exitFullscreen?.();});
+function keyEvent(key,type){const code=key==='Escape'?'Escape':key==='Enter'?'Enter':key;const ev=new KeyboardEvent(type,{key,code,bubbles:true,cancelable:true});window.dispatchEvent(ev);document.dispatchEvent(ev);canvas.dispatchEvent(ev);}
+for(const button of document.querySelectorAll('[data-key]')){
+  button.addEventListener('pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);keyEvent(button.dataset.key,'keydown');});
+  for(const type of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(type,e=>{e.preventDefault();keyEvent(button.dataset.key,'keyup');});
+}
+</script>
+</body></html>
