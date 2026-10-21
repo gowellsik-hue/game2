@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V59 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V59 | Sanctuary game2 GitHub Pages"
+name: "build-web.yml | V60 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V60 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
@@ -13,325 +13,225 @@ permissions:
   contents: write
 
 concurrency:
-  group: game2-v59-v45-graphics
+  group: game2-v60-v59-error-diagnostics
   cancel-in-progress: false
 
 jobs:
-  repair_v45_graphics:
-    name: "build-web.yml | V59 | Fix original V45 graphics without rebuilding audio"
+  repair_v60_error_reporting:
+    name: "build-web.yml | V60 | Repair log scrolling and reveal actual worker errors"
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 25
     steps:
-      - name: "V59 | Checkout sound-working V45 Pages files"
+      - name: "V60 | Checkout deployed V59 success baseline"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
 
-      - name: "V59 | Verify unchanged audio and WebAssembly baseline"
+      - name: "V60 | Lock original V45 music, V59 sprite data and WebAssembly"
         shell: bash
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = 'gowellsik-hue/game2'
-          for f in v45.html lineage-v45.js lineage-v45.wasm lineage-v45.data \
-                   coi-serviceworker-v45.js v45-paks.json; do
-            test -s "published/$f"
+          for f in v59.html lineage-v59.js lineage-v59.data \
+                   lineage-v45.wasm lineage-v45.js lineage-v45.data \
+                   v45-paks.json coi-serviceworker-v45.js; do
+            test -s "published/$f" || { echo "Missing original file $f" >&2; exit 1; }
           done
-          mkdir -p reports original-archive
-          sha256sum published/lineage-v45.wasm published/lineage-v45.js \
-                    published/lineage-v45.data > reports/V59-original-files.sha256
-          node --check published/lineage-v45.js
-
-      - name: "V59 | Obtain only original Sanctuary sprite archives"
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq p7zip-full
-          gh release download v1.0.0 -R gowellsik-hue/Game \
-            -p 'Sanctuary.of.Aden.-.Copy.*' -D original-archive --clobber
-          test "$(find original-archive -maxdepth 1 -type f | wc -l)" -eq 46
-          test -s original-archive/Sanctuary.of.Aden.-.Copy.zip
-          mkdir -p original-banks
-          7z x original-archive/Sanctuary.of.Aden.-.Copy.zip \
-            -ooriginal-banks -y \
-            'Sanctuary of Aden - Copy/Sprite.pak' \
-            'Sanctuary of Aden - Copy/Sprite09.pak' \
-            'Sanctuary of Aden - Copy/Sprite13.pak' \
-            > reports/V59-original-extraction.txt
-          for b in Sprite Sprite09 Sprite13; do
-            test -s "original-banks/Sanctuary of Aden - Copy/$b.pak"
-          done
-          rm -rf original-archive
-
-      - name: "V59 | Add genuine startup graphics and repair V45 frame rendering"
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/v59-graphics.py <<'PY'
-          import hashlib, json, struct
+          mkdir -p reports
+          sha256sum published/lineage-v59.data published/lineage-v45.wasm \
+                    published/lineage-v45.js published/lineage-v45.data \
+                    published/coi-serviceworker-v45.js > reports/V60-unchanged-assets.sha256
+          python3 - <<'PY'
           from pathlib import Path
+          import json, hashlib
+          root=Path('published')
+          source=(root/'lineage-v59.js').read_text(encoding='utf-8')
+          anchor='  loadPackage({'
+          assert source.count(anchor)==1
+          start=source.index(anchor)+len('  loadPackage(')
+          metadata,_=json.JSONDecoder().raw_decode(source[start:])
+          binary=(root/'lineage-v59.data').read_bytes()
+          assert len(binary)==metadata['remote_package_size']
+          music=next(f for f in metadata['files']
+                     if f['filename']=='/lineage/sound/music0.mp3')
+          raw=binary[music['start']:music['end']]
+          assert len(raw)==1632319
+          digest=hashlib.sha256(raw).hexdigest()
+          (Path('reports')/'V60-original-music.sha256').write_text(digest+'  music0.mp3\n')
+          print('Unmodified original sound data:',len(raw),'bytes; SHA256:',digest)
+          PY
 
-          root = Path('published')
-          source_js = (root/'lineage-v45.js').read_text(encoding='utf-8')
-          original_data = (root/'lineage-v45.data').read_bytes()
-          blob = bytearray(original_data)
-          anchor = '  loadPackage({'
-          assert source_js.count(anchor) == 1
-          start = source_js.index(anchor) + len('  loadPackage(')
-          metadata, _ = json.JSONDecoder().raw_decode(source_js[start:])
-          assert metadata['remote_package_size'] == len(original_data)
-          files = {f['filename']: f for f in metadata['files']}
-          music = files['/lineage/sound/music0.mp3']
-          music_hash = hashlib.sha256(original_data[music['start']:music['end']]).hexdigest()
-          assert music['end'] - music['start'] == 1632319
-          shards = json.loads((root/'v45-paks.json').read_text())
-          assert shards['version'] == 'V45'
+      - name: "V60 | Remove log flood, enable touch scrolling and expose thread failures"
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/v60-update.py <<'PY'
+          from pathlib import Path
+          import re
+          root=Path('published')
 
-          # Rebuild the genuine Text.pak from the already deployed original shards.
-          def read_shards(name, offset, size):
-              chunk_size = shards['chunkSize']
-              total = shards['files'][name]['size']
-              assert 0 <= offset <= total and 0 < size <= total-offset
-              result = bytearray()
-              while size:
-                  part_no, inner = divmod(offset, chunk_size)
-                  count = min(size, chunk_size-inner)
-                  part = root/'pakchunks'/f'{name}.part{part_no:03d}'
-                  with part.open('rb') as f:
-                      f.seek(inner)
-                      block = f.read(count)
-                  assert len(block) == count, (name,part_no)
-                  result.extend(block)
-                  offset += count
-                  size -= count
-              return bytes(result)
+          def once(source, old, new, label):
+              count=source.count(old)
+              assert count==1, f'V59 {label} anchor changed ({count} matches)'
+              return source.replace(old,new,1)
 
-          text_size = shards['files']['Text.pak']['size']
-          text_pack = read_shards('Text.pak', 0, text_size)
-          assert hashlib.sha256(text_pack).hexdigest() == shards['files']['Text.pak']['sha256']
-
-          # These are the actual original-client startup sprite names, not mock images.
-          required = {
-              'Sprite': ['12.img','13.img','330.img','53.img','55.img','57.img','65.img'],
-              'Sprite09': ['59.img'],
-              'Sprite13': ['811.png'],
-              'Sprite00': ['814.png'],
-          }
-          verified = {
-              '811.png': 'ae86f1f811671f3380a9ebdf3cc8dc8b8f42890f55d1da4dd1cd3a38966f89c9',
-              '330.img': 'ff667357e92707a69a17f11f30a4d694a659598118dc87931b483d450f067e51',
-              '59.img': 'aaeb78aa53bc8cc2ad386eb228c28afcad905ae2de78f0eb5351bf567bbab897',
-          }
-          report = {'original_runtime': 'lineage-v45.wasm', 'audio_sha256':music_hash,
-                    'original_startup_graphics':{}}
-          for bank, names in required.items():
-              item = files[f'/lineage/{bank}.idx']
-              original_index = original_data[item['start']:item['end']]
-              count = struct.unpack_from('<I',original_index)[0]
-              assert len(original_index) == 4 + 28*count, bank
-              entries = {}
-              for i in range(count):
-                  offset,raw,size = struct.unpack_from('<i20si',original_index,4+28*i)
-                  name = raw.split(b'\0',1)[0].decode('latin1').lower()
-                  if name in names and size > 0 and offset >= 0:
-                      entries[name] = (offset,raw,size)
-              assert set(entries) == set(names), (bank,set(names)-set(entries))
-              compact_index = bytearray(struct.pack('<I',len(names)))
-              compact_pack = bytearray()
-              path = Path('original-banks/Sanctuary of Aden - Copy')/(bank+'.pak')
-              source = None if bank == 'Sprite00' else path.open('rb')
-              try:
-                  for name in names:
-                      offset,raw,size = entries[name]
-                      if source is None:
-                          payload = read_shards('Sprite00.pak',offset,size)
-                      else:
-                          source.seek(offset)
-                          payload = source.read(size)
-                      assert len(payload) == size
-                      digest = hashlib.sha256(payload).hexdigest()
-                      if name in verified:
-                          assert digest == verified[name],name
-                      compact_index += struct.pack('<i20si',len(compact_pack),raw,size)
-                      compact_pack += payload
-                      report['original_startup_graphics'][name] = {
-                          'bank':bank,'size':size,'sha256':digest}
-              finally:
-                  if source is not None: source.close()
-              # Keep all original package offsets unchanged. Only shorten the
-              # index entry used at startup and add a compact genuine PAK file.
-              assert len(compact_index) <= len(original_index)
-              blob[item['start']:item['start']+len(compact_index)] = compact_index
-              item['end'] = item['start'] + len(compact_index)
-              begin = len(blob)
-              blob.extend(compact_pack)
-              metadata['files'].append({'filename':f'/lineage/{bank}.pak',
-                                        'start':begin,'end':len(blob)})
-
-          begin = len(blob)
-          blob.extend(text_pack)
-          metadata['files'].append({'filename':'/lineage/Text.pak',
-                                    'start':begin,'end':len(blob)})
-          metadata['remote_package_size'] = len(blob)
-          assert bytes(blob[music['start']:music['end']]) == original_data[music['start']:music['end']]
-
-          # Fix two Emscripten SDL 1.2 implementation defects in JS ONLY.
-          timer_old = '''var _SDL_AddTimer = function(interval, callback, param) {
-            if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(18, 0, 1, interval, callback, param);
-            return safeSetTimeout(() => getWasmTableEntry(callback)(interval, param), interval);
-          };'''
-          timer_new = '''var v59Timers = new Map();
-          var v59TimerID = 0;
-          var _SDL_AddTimer = function(interval, callback, param) {
-            if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(18, 0, 1, interval, callback, param);
-            var id = ++v59TimerID;
-            var current = interval;
-            var entry = {handle: null};
-            function tick() {
-              if (!v59Timers.has(id)) return;
-              entry.handle = null;
-              var next = getWasmTableEntry(callback)(current, param);
-              if (next > 0 && v59Timers.has(id)) {
-                current = next;
-                entry.handle = safeSetTimeout(tick, next);
-              } else v59Timers.delete(id);
-            }
-            v59Timers.set(id, entry);
-            entry.handle = safeSetTimeout(tick, interval);
-            return id;
-          };'''
-          remove_old = '''function _SDL_RemoveTimer(id) {
-            if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(31, 0, 1, id);
-            clearTimeout(id);
-            return true;
-          }'''
-          remove_new = '''function _SDL_RemoveTimer(id) {
-            if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(31, 0, 1, id);
-            var entry = v59Timers.get(id);
-            if (!entry) return false;
-            if (entry.handle !== null) {
-              clearTimeout(entry.handle);
-              runtimeKeepalivePop();
-            }
-            v59Timers.delete(id);
-            return true;
-          }'''
-          surface_old = '''  if (depth !== 32) {
-              // TODO: Actually fill pixel data to created surface.
-              // TODO: Take into account depth and pitch parameters.
-              err("TODO: Partially unimplemented SDL_CreateRGBSurfaceFrom called!");
-              return surf;
-            }'''
-          surface_new = '''  if (depth === 16 && pixels) {
-              var surfaceData = SDL.surfaces[surf];
-              var image16 = surfaceData.ctx.createImageData(width, height);
-              var memory16 = GROWABLE_HEAP_U8();
-              for (var y16 = 0; y16 < height; y16++) {
-                for (var x16 = 0; x16 < width; x16++) {
-                  var sp = pixels + y16 * pitch + x16 * 2;
-                  var pixel16 = memory16[sp] | (memory16[sp + 1] << 8);
-                  var dp = (y16 * width + x16) * 4;
-                  image16.data[dp] = ((pixel16 >>> 10) & 31) * 255 / 31;
-                  image16.data[dp + 1] = ((pixel16 >>> 5) & 31) * 255 / 31;
-                  image16.data[dp + 2] = (pixel16 & 31) * 255 / 31;
-                  image16.data[dp + 3] = 255;
+          original_js=(root/'lineage-v59.js').read_text(encoding='utf-8')
+          worker_old='''    worker.onerror = e => {
+                var message = "worker sent an error!";
+                if (worker.pthread_ptr) {
+                  message = `Pthread ${ptrToString(worker.pthread_ptr)} sent an error!`;
                 }
-              }
-              surfaceData.ctx.putImageData(image16, 0, 0);
-              return surf;
+                err(`${message} ${e.filename}:${e.lineno}: ${e.message}`);
+                throw e;
+              };'''
+          # Keep everything except the worker error-reporting branch byte-identical.
+          worker_new='''    worker.onerror = e => {
+                var message = "worker sent an error!";
+                if (worker.pthread_ptr) {
+                  message = `Pthread ${ptrToString(worker.pthread_ptr)} sent an error!`;
+                }
+                var reason = e.error?.stack || e.error?.message || e.message || e.type;
+                err(`${message} ${e.filename}:${e.lineno}:${e.colno || 0} ${reason}`);
+                throw e.error || e;
+              };'''
+          original_js=once(original_js,worker_old,worker_new,'worker error handler')
+          assert 'lineage-v45.wasm' in original_js
+          assert 'lineage-v59.data' in original_js
+          (root/'lineage-v60.js').write_text(original_js,encoding='utf-8')
+
+          page=(root/'v59.html').read_text(encoding='utf-8')
+          css_start=page.index('#logbox{')
+          css_end=page.index('}',css_start)+1
+          css=page[css_start:css_end]
+          assert 'pointer-events:none' in css
+          revised_css=css.replace('pointer-events:none',
+              'pointer-events:auto;touch-action:pan-y;overscroll-behavior:contain;-webkit-overflow-scrolling:touch')
+          revised_css=revised_css.replace('max-height:25vh','max-height:40vh')
+          page=once(page,css,revised_css,'logbox scrolling CSS')
+
+          log_old=r"function log(message){const line=String(message??'');logbox.textContent+=(line+'\n');if(logbox.textContent.length>24000)logbox.textContent=logbox.textContent.slice(-16000);logbox.scrollTop=logbox.scrollHeight;console.log('[Lineage]',line);}"
+          log_new=r'''function log(message){
+            const line=String(message??'');
+            const visible=logbox.classList.contains('visible');
+            const follow=!visible || logbox.scrollTop+logbox.clientHeight>=logbox.scrollHeight-32;
+            logbox.textContent+=(line+'\n');
+            if(logbox.textContent.length>64000)logbox.textContent=logbox.textContent.slice(-52000);
+            if(visible && follow)logbox.scrollTop=logbox.scrollHeight;
+            console.log('[Lineage]',line);
+          }
+          let filteredSpriteLines=0;
+          function enginePrint(message){
+            const line=String(message??'');
+            if(/^(?:mspdf for sprite \d+ is \d+|Sprite \d+ has .*|Weapon on sprite \d+.*|\s*\d{2,7}\s*)$/.test(line)){
+              filteredSpriteLines++;
+              if(filteredSpriteLines%1000===0)log('스프라이트 디버그 출력 '+filteredSpriteLines+'행 생략');
+              return;
             }
-            if (depth !== 32) {
-              err("Unsupported SDL_CreateRGBSurfaceFrom depth: " + depth);
-              return surf;
-            }'''
-          # Normalize only leading indentation: the original source expressions
-          # are preserved, not guessed from a minified or alternate build.
-          def patch_once(content, old, new):
-              old = '\n'.join(line.lstrip() for line in old.splitlines())
-              # Compare exact unindented lines with original's common block indentation.
-              lines = content.splitlines(keepends=True)
-              block = old.splitlines()
-              for i in range(len(lines)-len(block)+1):
-                  if [x.strip() for x in lines[i:i+len(block)]] == [x.strip() for x in block]:
-                      indent = lines[i][:len(lines[i])-len(lines[i].lstrip())]
-                      replacement = '\n'.join(indent + x if x else '' for x in new.splitlines())
-                      lines[i:i+len(block)] = [replacement + '\n']
-                      return ''.join(lines)
-              raise AssertionError('V45 SDL source no longer matches expected block: '+block[0])
-          source_js = patch_once(source_js,timer_old,timer_new)
-          source_js = patch_once(source_js,remove_old,remove_new)
-          source_js = patch_once(source_js,surface_old,surface_new)
-          encoded = json.dumps(metadata,separators=(',',':'))
-          # Determine the new JSON position after the small SDL edits.
-          assert source_js.count(anchor) == 1
-          at = source_js.index(anchor)+len('  loadPackage(')
-          _,old_count = json.JSONDecoder().raw_decode(source_js[at:])
-          source_js = source_js[:at]+encoded+source_js[at+old_count:]
-          source_js = source_js.replace('lineage-v45.data','lineage-v59.data')
-          assert 'lineage-v45.wasm' in source_js
-          assert 'lineage-v59.data' in source_js
-          assert 'lineage-v45.data' not in source_js
-          assert len(blob) < 50*1024*1024
-          (root/'lineage-v59.js').write_text(source_js,encoding='utf-8')
-          (root/'lineage-v59.data').write_bytes(blob)
-          page=(root/'v45.html').read_text(encoding='utf-8')
-          assert page.count('lineage-v45.js') >= 2
-          page=page.replace('lineage-v45.js','lineage-v59.js')
-          page=page.replace('V45 Original Client Web Runtime','V59 Original Client Web Runtime')
-          page=page.replace('V45 (auto-start / original audio)','V59 (V45 original audio preserved)')
+            log(line);
+          }
+          function errorDetail(value,depth=0){
+            if(value==null)return String(value);
+            if(typeof value==='string')return value;
+            if(depth>3)return String(value);
+            const parts=[];
+            for(const key of ['type','name','message','filename','lineno','colno','stack','status']){
+              const item=value[key];
+              if(item!==undefined && item!==null && item!=='')parts.push(key+': '+String(item));
+            }
+            if(value.error && value.error!==value)parts.push('cause: '+errorDetail(value.error,depth+1));
+            if(value.reason && value.reason!==value)parts.push('reason: '+errorDetail(value.reason,depth+1));
+            return parts.join('\n')||String(value);
+          }'''
+          page=once(page,log_old,log_new,'log output and diagnostic filtering')
+
+          old_problem="function problem(message){status('실행 장애');head.textContent='클라이언트 실행 실패';desc.textContent=message;overlay.classList.remove('hidden');launched=false;log(message);logbox.classList.add('visible');}"
+          new_problem="""function problem(message){
+            const detail=String(message??'실행 오류');
+            status('실행 장애');
+            head.textContent='클라이언트 실행 실패';
+            desc.textContent=detail.slice(0,1500);
+            overlay.classList.remove('hidden');
+            launched=false;
+            log(detail);
+            logbox.classList.add('visible');
+            requestAnimationFrame(()=>{logbox.scrollTop=logbox.scrollHeight;});
+          }"""
+          page=once(page,old_problem,new_problem,'fatal error log auto-scroll')
+
+          old_print="print:(...x)=>log(x.join(' ')), printErr:(...x)=>log('STDERR '+x.join(' ')),"
+          new_print="print:(...x)=>enginePrint(x.join(' ')), printErr:(...x)=>log('STDERR '+x.join(' ')),"
+          page=once(page,old_print,new_print,'sprite debug log filter')
+
+          old_error="window.addEventListener('error',event=>{if(launched)problem(event.message||'알 수 없는 런타임 오류');});"
+          new_error="window.addEventListener('error',event=>{if(launched)problem('브라우저/작업 스레드 오류\\n'+errorDetail(event));});"
+          page=once(page,old_error,new_error,'browser worker detailed error')
+
+          old_reject="if(launched)problem(reason?.message||String(reason));"
+          new_reject="if(launched)problem('비동기 작업 오류\\n'+errorDetail(reason));"
+          page=once(page,old_reject,new_reject,'promise rejection detailed error')
+
+          old_button="document.getElementById('logBtn').addEventListener('click',()=>logbox.classList.toggle('visible'));"
+          new_button="document.getElementById('logBtn').addEventListener('click',()=>{if(logbox.classList.toggle('visible'))requestAnimationFrame(()=>{logbox.scrollTop=logbox.scrollHeight;});});"
+          page=once(page,old_button,new_button,'manual log toggle')
+
+          page=once(page,'V59 Original Client Web Runtime','V60 Original Client Web Runtime','page title')
+          page=once(page,'V59 (V45 original audio preserved)','V60 (V45 original audio preserved)','visible version')
+          assert page.count('lineage-v59.js')>=2
+          page=page.replace('lineage-v59.js','lineage-v60.js')
+          assert 'lineage-v60.js' in page and 'lineage-v45.wasm' in page
           assert 'coi-serviceworker-v45.js' in page
-          assert 'lineage-v59.js' in page
+          assert 'music0.mp3' in page
           assert 'boxedwine' not in page.lower()
           (root/'index.html').write_text(page,encoding='utf-8')
-          (root/'v59.html').write_text(page,encoding='utf-8')
-          (Path('reports')/'V59-original-graphics.json').write_text(json.dumps(report,indent=2))
-          print('V59 genuine graphics:',sorted(report['original_startup_graphics']))
-          print('V59 untouched audio SHA256:',music_hash)
-          print('V59 data size:',len(blob))
+          (root/'v60.html').write_text(page,encoding='utf-8')
+          code=re.search(r'<script>\n(.*?)\n</script>',page,re.S)
+          assert code,'Unable to extract V60 inline JavaScript'
+          Path('/tmp/v60-inline.js').write_text(code.group(1)+'\n',encoding='utf-8')
+          print('V60 only changes: worker exception detail, inline log display and error detail')
           PY
-          python3 /tmp/v59-graphics.py
-          node --check published/lineage-v59.js
-          cmp published/index.html published/v59.html
-          sha256sum -c reports/V59-original-files.sha256
+          python3 /tmp/v60-update.py
+          node --check published/lineage-v60.js
+          node --check /tmp/v60-inline.js
+          cmp published/index.html published/v60.html
+          sha256sum -c reports/V60-unchanged-assets.sha256
+          test ! -f published/lineage-v60.wasm
+          test ! -f published/lineage-v60.data
 
-      - name: "V59 | Deploy only V45-preserving graphics correction"
+      - name: "V60 | Publish repaired page, not another engine build"
         shell: bash
         run: |
           set -euo pipefail
-          git -C published add -- index.html v59.html lineage-v59.js lineage-v59.data
+          git -C published add -- index.html v60.html lineage-v60.js
           git -C published config user.name 'github-actions[bot]'
           git -C published config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           if ! git -C published diff --cached --quiet; then
-            git -C published commit -m 'build-web.yml V59: restore original startup graphics and SDL draw ticks'
+            git -C published commit -m 'build-web.yml V60: repair mobile log scroll and reveal WASM worker errors'
             git -C published push origin HEAD:gh-pages
           fi
-          echo 'V59 files pushed to gh-pages; public Pages publication is asynchronous.'
+          echo 'V60 pushed to gh-pages; Pages publication is asynchronous.'
 
-      - name: "V59 | Upload verified original asset report"
+      - name: "V60 | Upload unchanged resource verification"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V59-original-graphics
+          name: Sanctuary-game2-V60-log-and-error-diagnostics
           path: |
-            reports/V59-original-graphics.json
-            reports/V59-original-files.sha256
-            reports/V59-original-extraction.txt
-          retention-days: 30
+            reports/V60-original-music.sha256
+            reports/V60-unchanged-assets.sha256
           if-no-files-found: warn
+          retention-days: 30
 
-      - name: "V59 | Summary"
+      - name: "V60 | Report separately what changed and what is not yet fixed"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V59 | Sanctuary game2 GitHub Pages'
-            echo 'Original V45 WebAssembly and V45 JS/data remain untouched.'
-            echo 'The V59 JS fixes SDL timer repetition and 16-bit surface rendering.'
-            echo 'V59 preloads genuine original startup sprites and Text.pak, leaving original audio bytes identical.'
-            echo 'No unrelated executable, game engine or fake graphics are included.'
-            echo 'Gameplay and mobile screen output must still be verified on GitHub Pages.'
+            echo '# build-web.yml | V60 | Sanctuary game2 GitHub Pages'
+            echo 'Starts directly from the successfully published V59 code; no original archive download or recompilation.'
+            echo 'V45 WebAssembly, the existing V59 data containing original music and graphics, and the PAK service worker are unchanged.'
+            echo 'Mobile log now scrolls, opens at the latest failure, and avoids flooding the DOM with repetitive sprite messages.'
+            echo 'A single worker error-reporting branch reveals the underlying stack when the browser provides it.'
+            echo 'This is a diagnostics and UI repair, not a claim that gameplay or rendering is fixed.'
           } >> "$GITHUB_STEP_SUMMARY"
