@@ -1,6 +1,14 @@
 
-name: "build-web.yml | V50 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V50 | Original Windows and browser executable audit"
+# FILE: .github/workflows/build-web.yml
+# VERSION: V51
+# SOURCE: gowellsik-hue/Game, V229R41 GitHub Pages, run 39377710319
+# PURPOSE: Restore the last actually playable existing web engine to game2,
+#          without modifying ANY of its 5472 existing files, and expose
+#          Sanctuary maps 45/46 already integrated in that baseline.
+# NOT INCLUDED: new monster balances, unverified Sanctuary spawn coordinates,
+#               protected Windows EXE execution, or reimplemented game logic.
+name: "build-web.yml | V51 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V51 | Restore playable V229R41 and original maps"
 
 "on":
   workflow_dispatch:
@@ -10,335 +18,172 @@ run-name: "build-web.yml | V50 | Original Windows and browser executable audit"
       - .github/workflows/build-web.yml
 
 permissions:
-  contents: read
+  contents: write
+  actions: read
 
 concurrency:
-  group: game2-v50-original-client
+  group: game2-v51-restore
   cancel-in-progress: false
 
 jobs:
-  original_windows_candidates:
-    name: "build-web.yml | V50 | Test original executable candidates on Windows"
-    runs-on: windows-2022
-    timeout-minutes: 50
-    steps:
-      - name: "V50 | Set up Python on Windows"
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: "V50 | Download and selectively extract original release"
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $archive = Join-Path $env:GITHUB_WORKSPACE 'work/archive'
-          $output = Join-Path $env:GITHUB_WORKSPACE 'work/original'
-          $reports = Join-Path $env:GITHUB_WORKSPACE 'reports'
-          New-Item -ItemType Directory -Force -Path $archive,$output,$reports | Out-Null
-          gh release download v1.0.0 -R gowellsik-hue/Game -p 'Sanctuary.of.Aden.-.Copy.*' -D $archive --clobber
-          if ($LASTEXITCODE -ne 0) { throw 'Original release download failed' }
-          if (@(Get-ChildItem -LiteralPath $archive -File).Count -ne 46) { throw 'Expected 46 original archive parts' }
-          $seven = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
-          if (-not $seven) { $seven = Join-Path $env:ProgramFiles '7-Zip/7z.exe' }
-          if (-not (Test-Path -LiteralPath $seven)) { throw '7-Zip is not installed on Windows runner' }
-          $zip = Join-Path $archive 'Sanctuary.of.Aden.-.Copy.zip'
-          & $seven x $zip "-o$output" '-y' '-ir!*.exe' '-ir!*.bin' '-ir!*.dll' '-ir!*.ini' '-ir!*.cfg' '-ir!*.dat' '-ir!*.sys' '-ir!*.vxd' 2>&1 |
-            Out-File -FilePath (Join-Path $reports 'V50-extract.txt') -Encoding utf8
-          if ($LASTEXITCODE -ne 0) { throw 'Original executable extraction failed' }
-          $root = Join-Path $output 'Sanctuary of Aden - Copy'
-          foreach ($name in @('lin.bin','Lineage.exe','Login.exe','Redemption.exe','Launcher.exe','aegisty.bin','TW13032701.exe','TW13032701.bin')) {
-            if (-not (Test-Path -LiteralPath (Join-Path $root $name))) { throw "Missing original executable: $name" }
-          }
-          $expected = @{
-            'lin.bin' = '0d40fdf84d19e0ecc043766455fb9c5a215a5c39bbac858ca602f0bf5259f19e'
-            'Lineage.exe' = '2124b3da5f53123e0f94a85bd7f9edb2344925fdb4f53d0fc0653ea5c9241414'
-          }
-          foreach ($name in $expected.Keys) {
-            $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $root $name)).Hash.ToLowerInvariant()
-            if ($digest -ne $expected[$name]) { throw "Original file hash mismatch: $name" }
-          }
-          Write-Host 'V50 original 46-part archive and two protected original hashes verified'
-
-      - name: "V50 | Test each original PE without Wine and package unchanged binaries"
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          @'
-          import ctypes
-          import hashlib
-          import json
-          import os
-          import subprocess
-          import time
-          import zipfile
-          from pathlib import Path
-
-          base = Path(os.environ['GITHUB_WORKSPACE'])
-          root = base/'work'/'original'/'Sanctuary of Aden - Copy'
-          reports = base/'reports'
-          payload = base/'payload'
-          payload.mkdir(parents=True, exist_ok=True)
-          names = ['Login.exe','Redemption.exe','Lineage.exe','Launcher.exe',
-                   'aegisty.bin','TW13032701.exe','TW13032701.bin','lin.bin']
-
-          def window_titles(pid):
-              titles = []
-              user32 = ctypes.windll.user32
-              CALLBACK = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-              user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p,ctypes.POINTER(ctypes.c_ulong)]
-              user32.GetWindowTextW.argtypes = [ctypes.c_void_p,ctypes.c_wchar_p,ctypes.c_int]
-              user32.EnumChildWindows.argtypes = [ctypes.c_void_p,CALLBACK,ctypes.c_void_p]
-              user32.EnumWindows.argtypes = [CALLBACK,ctypes.c_void_p]
-              def read_title(hwnd):
-                  buffer = ctypes.create_unicode_buffer(512)
-                  user32.GetWindowTextW(hwnd,buffer,512)
-                  if buffer.value: titles.append(buffer.value[:300])
-              def child(hwnd, unused):
-                  read_title(hwnd)
-                  return True
-              def visit(hwnd, unused):
-                  owner = ctypes.c_ulong()
-                  user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
-                  if owner.value == pid:
-                      read_title(hwnd)
-                      user32.EnumChildWindows(hwnd,CALLBACK(child),0)
-                  return True
-              user32.EnumWindows(CALLBACK(visit),0)
-              return list(dict.fromkeys(titles))
-
-          results = []
-          for name in names:
-              exe = root/name
-              entry = {'name':name, 'bytes':exe.stat().st_size,
-                       'sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),
-                       'platform':'Windows Server 2022, native 32-bit PE loader'}
-              header = exe.open('rb').read(256)
-              entry['mz_header'] = header[:2] == b'MZ'
-              print('PROBING', name, flush=True)
-              try:
-                  proc = subprocess.Popen([str(exe)], executable=str(exe), cwd=str(root),
-                                          stdin=subprocess.DEVNULL,
-                                          stdout=subprocess.DEVNULL,
-                                          stderr=subprocess.DEVNULL)
-                  entry['pid'] = proc.pid
-                  start = time.monotonic()
-                  titles = []
-                  while time.monotonic()-start < 10:
-                      titles += window_titles(proc.pid)
-                      if proc.poll() is not None:
-                          break
-                      time.sleep(0.5)
-                  entry['window_titles'] = list(dict.fromkeys(titles))[:15]
-                  entry['alive_after_probe'] = proc.poll() is None
-                  entry['exit_code'] = proc.poll()
-                  if proc.poll() is None:
-                      subprocess.run(['taskkill','/PID',str(proc.pid),'/T','/F'],
-                                     stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
-                                     timeout=20,check=False)
-              except Exception as exc:
-                  entry['start_error'] = str(exc)[:1200]
-              results.append(entry)
-              print('RESULT', json.dumps(entry, ensure_ascii=False), flush=True)
-
-          with (payload/'sanctuary-candidates-v50.zip').open('wb') as stream:
-              with zipfile.ZipFile(stream,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=3,
-                                   allowZip64=True) as package:
-                  for file in sorted(root.rglob('*')):
-                      if file.is_file():
-                          package.write(file, file.relative_to(root).as_posix())
-          with zipfile.ZipFile(payload/'sanctuary-candidates-v50.zip') as package:
-              assert all(name in package.namelist() for name in names)
-              assert package.testzip() is None
-
-          (reports/'V50-native-results.json').write_text(
-              json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
-          print('V50: Native startup probed; no result here proves gameplay.')
-          '@ | Set-Content -LiteralPath 'probe-v50-native.py' -Encoding utf8
-          python probe-v50-native.py
-          if ($LASTEXITCODE -ne 0) { throw 'Native executable audit failed' }
-          if (-not (Test-Path 'reports/V50-native-results.json')) { throw 'Native results missing' }
-
-      - name: "V50 | Preserve Windows evidence and pass original files to browser"
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Sanctuary-Original-Windows-Candidates-V50
-          path: |
-            payload/sanctuary-candidates-v50.zip
-            reports/V50-native-results.json
-            reports/V50-extract.txt
-          retention-days: 30
-          if-no-files-found: warn
-
-  original_browser_candidates:
-    name: "build-web.yml | V50 | Compare original executables in existing Boxedwine"
-    needs: original_windows_candidates
+  restore_original_web_v51:
+    name: "build-web.yml | V51 | Exact V229R41 engine restore"
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    permissions:
-      contents: write
+    timeout-minutes: 75
     steps:
-      - name: "V50 | Restore existing game2 Pages runtime"
+      - name: "V51 | Checkout current game2 repository"
         uses: actions/checkout@v4
-        with:
-          ref: gh-pages
-          path: published
-          persist-credentials: false
 
-      - name: "V50 | Restore original executable candidates and Windows results"
-        uses: actions/download-artifact@v4
-        with:
-          name: Sanctuary-Original-Windows-Candidates-V50
-          path: handoff
+      - name: "V51 | Download proven playable V229R41 Pages artifact from Game"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GAME_ARTIFACT_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p r41 reports site/v51
+          # Use the immutable artifact from the known-good, successful run.
+          # The repository is PUBLIC. An optional GAME_ARTIFACT_TOKEN may be used
+          # if GitHub restricts cross-repository Actions downloads.
+          if ! gh run download 39377710319 \
+               -R gowellsik-hue/Game \
+               -n github-pages -D r41; then
+            echo 'V51 | Cross-repository download unavailable; trying public REST endpoint.'
+            curl -fLsS --retry 3 --retry-delay 3 \
+              -H 'Accept: application/vnd.github+json' \
+              -o r41/public-artifact.zip \
+              'https://api.github.com/repos/gowellsik-hue/Game/actions/artifacts/12244076880/zip'
+            unzip -tq r41/public-artifact.zip
+            unzip -j -o r41/public-artifact.zip artifact.tar -d r41
+          fi
+          test -s r41/artifact.tar
+          echo 'V51 | Immutable R41 source run: 39377710319' > reports/V51-source.txt
+          echo 'V51 | Artifact ID: 12244076880' >> reports/V51-source.txt
+          sha256sum r41/artifact.tar | tee -a reports/V51-source.txt
+          echo '4ee38b800d1256ab4deff583c98dd1ac94d22718323d427aca69e33793a076fa  r41/artifact.tar' | sha256sum -c
 
-      - name: "V50 | Reuse V48 Boxedwine, keep all older pages"
+      - name: "V51 | Restore all 5472 original web files without changing contents"
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p site/v50 reports
-          for name in boxedwine.html boxedwine.js boxedwine.wasm boxedwine.css boxedwine-shell.js boxedwine.zip; do
-            test -s "published/v48/$name"
-            cp "published/v48/$name" "site/v50/$name"
-          done
-          test -s handoff/payload/sanctuary-candidates-v50.zip
-          cp handoff/payload/sanctuary-candidates-v50.zip site/v50/sanctuary-candidates-v50.zip
-          cp handoff/reports/V50-native-results.json reports/
-          cp handoff/reports/V50-extract.txt reports/
-          python3 - <<'PY'
+          # The Pages artifact contains a tar. Do not recreate the engine or edit
+          # the packed RGSS game, JS, sprites, audio, map data, or its manifests.
+          tar -tf r41/artifact.tar > reports/V51-tar-file-list.txt
+          python3 - <<'PY_TAR'
           from pathlib import Path
-          from zipfile import ZipFile
-          z=Path('site/v50/sanctuary-candidates-v50.zip')
-          required=['Login.exe','Redemption.exe','Lineage.exe','Launcher.exe',
-                    'aegisty.bin','TW13032701.exe','TW13032701.bin','lin.bin']
-          with ZipFile(z) as archive:
-              for name in required: assert name in archive.namelist(),name
-              assert archive.testzip() is None
-          print('V50 packaged unmodified original executable candidates')
-          PY
-          cat > site/v50/index.html <<'HTML'
-          <!doctype html><html lang="ko"><head>
-          <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>Sanctuary | Original Windows Client V50</title>
-          <meta http-equiv="refresh" content="0;url=boxedwine.html?app=sanctuary-candidates-v50&amp;p=Login.exe&amp;sound=false">
-          </head><body>
-          <p>원본 Login.exe 자동 실행 시험입니다. 게임 실행 성공 여부는 아직 확인되지 않았습니다.</p>
-          <a href="boxedwine.html?app=sanctuary-candidates-v50&amp;p=Login.exe&amp;sound=false">실행 화면</a>
+          import tarfile
+          with tarfile.open('r41/artifact.tar') as tar:
+              for item in tar:
+                  p=Path(item.name)
+                  assert not p.is_absolute() and '..' not in p.parts, item.name
+                  assert item.isfile() or item.isdir(), ('unexpected entry type',item.name)
+          print('V51 | Source TAR paths and entry types verified')
+          PY_TAR
+          tar -xf r41/artifact.tar -C site/v51 --no-same-owner
+          python3 - <<'PY_VERIFY'
+          from pathlib import Path
+          import hashlib, json
+          site=Path('site/v51')
+          files=[p for p in site.rglob('*') if p.is_file()]
+          assert len(files)==5472, ('incomplete original R41 archive',len(files))
+          assert not any(p.is_symlink() for p in site.rglob('*'))
+          size=sum(p.stat().st_size for p in files)
+          assert size==240474300, ('original bytes mismatch',size)
+          sha=lambda p:hashlib.sha256((site/p).read_bytes()).hexdigest()
+          original={
+            'index.html':'e57c8db821f3286d79de960767c22061cd9aae68e2c7524d96ede3e5e26cf26d',
+            'knight/index.html':'a297b34f5aec6a71c4fed86e6d0f5e5234401e47a2c7693db4b0fe9bb92c3bdc',
+            'elf/index.html':'c4a3b2556c05dad54317168eca7a2421c961139bc3f500ca33a4bae74b7b387a',
+            'knight/mkxp.wasm':'83f6138820a3587ec569bca801d3032ec39edfda1cb49fbb90ab3928821966bd',
+            'knight/gameasync/mapping.js':'66a37333eec81a86f2d32fa78ec05e3a9b0cb588fac3816596f752a91e7686b9',
+            'knight/gameasync/Data/Scripts.rxdata':'f249b698ae6d1c72535ae2b12559e8bb10494657febc67ba0b23195944f4f7d0',
+            'knight/gameasync/Data/MMUQTFCAEUWWMMVPHJPLWSKVJOHMECOINFTBCWIOMap045.rxdata':'d9dc66271e48f051b0d35a2dce109777a14fd396f87fcd7d0e76b044b482e3ba',
+            'knight/gameasync/Data/MMUQTFCAEUWWMMVPHJPLWSKVJOHMECOINFTBCWIOMap046.rxdata':'c3f4cee70c9aff3459245727ccd49403079caa959aeebf00cf9eed99fb852059'
+          }
+          for file,expected in original.items():
+              assert sha(file)==expected, ('source hash changed',file)
+          panoramas=site/'knight/gameasync/Graphics/Panoramas'
+          counts={k:len(list(panoramas.glob(f'SLTI_{k}*'))) for k in (45,46)}
+          assert counts=={45:45,46:66},('native-image source baseline mismatch',counts)
+          assert (site/'knight/gameasync/Graphics/Tilesets/SLTI_45_Original.png').is_file()
+          assert (site/'knight/gameasync/Graphics/Tilesets/SLTI_46_Original.png').is_file()
+          bridge=(site/'knight/index.html').read_text(encoding='utf-8')
+          assert 'V229R41' in bridge
+          assert "var gain=k==='BGS'?0.20:(k==='BGM'?0.60:1);" in bridge
+          report={'version':'V51','sourceRepository':'gowellsik-hue/Game',
+                  'sourceWorkflowRun':39377710319,'sourceVersion':'V229R41',
+                  'originalFilesRestored':len(files),'originalBytesRestored':size,
+                  'existingFileContentsEdited':False,'monsterStatsEdited':False,
+                  'spawnCoordinatesModified':False,'preexistingSanctuaryMapAssets':counts,
+                  'fullOriginalWindowsExePorted':False,
+                  'game2RootRedirectTo':'v51/knight/'}
+          Path('reports/V51-restore.json').write_text(
+              json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+          print('PASS: all 5472 R41 original files restored; map45/46 and audio unchanged')
+          PY_VERIFY
+          node --check site/v51/knight/js/dpad.js
+          node --check site/v51/knight/js/drive.js
+          node --check site/v51/knight/gameasync/mapping.js
+
+      - name: "V51 | Make game2 auto-open existing Knight game; preserve original character menu"
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Only the game2 root page is new. Inside v51/ all R41 files remain byte-identical.
+          cat > site/index.html <<'HTML'
+          <!doctype html>
+          <html lang="ko"><head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+          <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+          <meta http-equiv="refresh" content="0;url=./v51/knight/">
+          <title>Sanctuary | game2 | V51</title>
+          </head><body style="background:#080808;color:#fff;font:14px system-ui">
+          기존 플레이 가능 기사 엔진을 자동으로 불러옵니다.
+          <a href="./v51/knight/">기사 게임</a>
+          <a href="./v51/">기사·요정 선택</a>
           </body></html>
           HTML
-          cat > site/index.html <<'HTML'
-          <!doctype html><html lang="ko"><head>
-          <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>Sanctuary | Original Windows Client V50</title>
-          <meta http-equiv="refresh" content="0;url=./v50/">
-          </head><body><a href="./v50/">원본 실행 시험으로 이동</a></body></html>
-          HTML
-          touch site/.nojekyll site/v50/.nojekyll
-          sha256sum site/v50/*.wasm site/v50/*.zip > reports/V50-deployed-hashes.txt
+          touch site/.nojekyll site/v51/.nojekyll
+          test -s site/v51/index.html
+          test -s site/v51/knight/index.html
+          test -s site/v51/elf/index.html
+          test -s site/v51/knight/mkxp.wasm
+          test -s site/v51/knight/gameasync/Graphics/Tilesets/SLTI_45_Original.png
+          test -s site/v51/knight/gameasync/Graphics/Tilesets/SLTI_46_Original.png
+          du -sh site | tee reports/V51-publish-size.txt
+          echo 'V51 | Root redirects to /game2/v51/knight/; original menu remains /game2/v51/'
 
-      - name: "V50 | Set up Chromium browser test"
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: "V50 | Install Chromium"
+      - name: "V51 | Check nested GitHub Pages URLs before deployment"
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install 'playwright==1.56.0'
-          python -m playwright install --with-deps chromium
-
-      - name: "V50 | Automatically open all eight original clients and capture screens"
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > probe-v50-browser.py <<'PY'
-          import asyncio
-          import json
-          from pathlib import Path
-          from urllib.parse import urlencode
-          from playwright.async_api import async_playwright
-
-          names = ['Login.exe','Redemption.exe','Lineage.exe','Launcher.exe',
-                   'aegisty.bin','TW13032701.exe','TW13032701.bin','lin.bin']
-          output = Path('reports')
-          base = 'http://127.0.0.1:8765/v50/boxedwine.html?'
-
-          async def run(browser, name):
-              entry = {'name':name,'messages':[],'errors':[]}
-              context = await browser.new_context(viewport={'width':1000,'height':750})
-              page = await context.new_page()
-              def log(kind, message):
-                  target = entry['errors'] if kind in ('pageerror','requestfailed','http') else entry['messages']
-                  if len(target)<160:
-                      target.append((kind+': '+str(message))[:650])
-              page.on('console',lambda m:log('console',m.text))
-              page.on('pageerror',lambda e:log('pageerror',e))
-              page.on('requestfailed',lambda request:log('requestfailed',request.url))
-              page.on('response',lambda response:log('http',f'{response.status} {response.url}') if response.status>=400 else None)
-              url = base+urlencode({'app':'sanctuary-candidates-v50','p':name,'sound':'false'})
-              try:
-                  await page.goto(url,wait_until='domcontentloaded',timeout=35000)
-                  await asyncio.sleep(13)
-                  entry['url']=page.url
-                  entry['state']=await page.evaluate('''() => ({
-                    title:document.title,
-                    canvas:(()=>{const c=document.querySelector('canvas');return c?{width:c.width,height:c.height}:null})(),
-                    output:(document.getElementById('output')?.value||'').slice(-14000)
-                  })''')
-                  filename='V50-'+name.replace('.','-')+'.png'
-                  await page.screenshot(path=str(output/filename),full_page=True,timeout=15000)
-                  entry['screenshot']=filename
-              except Exception as exc:
-                  log('pageerror',str(exc))
-              finally:
-                  await context.close()
-              return entry
-
-          async def main():
-              async with async_playwright() as playwright:
-                  browser=await playwright.chromium.launch(headless=True,args=[
-                      '--no-sandbox','--disable-dev-shm-usage','--enable-webgl',
-                      '--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader'])
-                  try:
-                      results=[]
-                      for name in names:
-                          result=await run(browser,name)
-                          results.append(result)
-                          print('CANDIDATE',name,'errors=',len(result['errors']),flush=True)
-                          for line in (result.get('state',{}).get('output','').splitlines())[-12:]:
-                              print('WINE',name,line[:350],flush=True)
-                  finally:
-                      await browser.close()
-              (output/'V50-browser-results.json').write_text(
-                  json.dumps(results,indent=2,ensure_ascii=False),encoding='utf-8')
-              print('V50: Original executables tested automatically. Runtime screens are NOT proof of gameplay.')
-
-          asyncio.run(main())
-          PY
-          python3 -m http.server 8765 --bind 127.0.0.1 --directory site \
-            > reports/V50-http-server.txt 2>&1 &
+          python3 -m http.server 8765 --directory site > reports/V51-local-http.txt 2>&1 &
           server=$!
           trap 'kill "$server" 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do
-            if curl -fsS -o /dev/null http://127.0.0.1:8765/v50/boxedwine.html; then break; fi
+            if curl -fsS -o /dev/null http://127.0.0.1:8765/v51/knight/index.html; then break; fi
             sleep 1
           done
-          curl -fsS -o /dev/null http://127.0.0.1:8765/v50/boxedwine.html
-          python probe-v50-browser.py 2>&1 | tee reports/V50-browser-run.txt
-          test -s reports/V50-browser-results.json
+          for file in \
+            'index.html' 'v51/index.html' 'v51/knight/index.html' \
+            'v51/elf/index.html' 'v51/knight/mkxp.wasm' \
+            'v51/knight/gameasync/mapping.js' \
+            'v51/knight/gameasync/Graphics/Tilesets/SLTI_45_Original.png' \
+            'v51/knight/gameasync/Graphics/Tilesets/SLTI_46_Original.png'; do
+            curl -fsS -o /dev/null "http://127.0.0.1:8765/$file"
+            printf 'HTTP OK %s\n' "$file"
+          done | tee reports/V51-http-checks.txt
 
-      - name: "V50 | Upload original-client Windows and browser comparison"
+      - name: "V51 | Save immutable source verification report"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-Original-Executable-Audit-V50
+          name: Sanctuary-game2-V51-V229R41-Exact-Restore
           path: reports/
           retention-days: 30
           if-no-files-found: warn
 
-      - name: "V50 | Publish candidate test in existing game2 Pages"
+      - name: "V51 | Deploy restored playable engine to SAME game2 GitHub Pages"
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -348,15 +193,16 @@ jobs:
           force_orphan: false
           enable_jekyll: false
 
-      - name: "V50 | Report what was actually verified"
+      - name: "V51 | Final status"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V50 | Original executable comparison'
-            echo 'Windows-2022: native start attempts for eight original EXE/BIN candidates.'
-            echo 'Chromium: automatically captured eight Boxedwine execution screens and console logs.'
-            echo 'Original binaries were not patched; V48 Boxedwine is reused unchanged.'
-            echo 'Default GitHub Pages entry points to /game2/v50/ after deployment.'
-            echo 'Build and screenshot success do not prove that game logic, login, maps or combat work.'
+            echo '# build-web.yml | V51 | Restore actual playable V229R41 to game2'
+            echo 'Source: gowellsik-hue/Game run 39377710319 (github-pages).'
+            echo 'All 5472 original engine/game files are copied, without modifying game logic.'
+            echo 'Knight default: https://gowellsik-hue.github.io/game2/'
+            echo 'Original character selection: https://gowellsik-hue.github.io/game2/v51/'
+            echo 'Existing map 45/46 resources are preserved; further native Sanctuary data not yet integrated.'
+            echo 'Build/deploy success does not prove mobile gameplay until live runtime testing.'
           } >> "$GITHUB_STEP_SUMMARY"
