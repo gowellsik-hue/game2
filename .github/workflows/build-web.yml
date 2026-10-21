@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V56 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V56 | Sanctuary game2 GitHub Pages"
+name: "build-web.yml | V57 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V57 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
@@ -13,26 +13,26 @@ permissions:
   contents: write
 
 concurrency:
-  group: game2-v56-original-v45-runtime
+  group: game2-v57-original-v45-runtime
   cancel-in-progress: false
 
 jobs:
-  original_engine_v56:
-    name: "build-web.yml | V56 | Repair original V45 graphics and frame pump"
+  original_engine_v57:
+    name: "build-web.yml | V57 | Repair original V45 graphics and frame pump"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - name: "V56 | Checkout game2 source"
+      - name: "V57 | Checkout game2 source"
         uses: actions/checkout@v4
 
-      - name: "V56 | Restore known V45 audio and PAK baseline from game2 Pages"
+      - name: "V57 | Restore known V45 audio and PAK baseline from game2 Pages"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           persist-credentials: true
 
-      - name: "V56 | Checkout existing C++ client revision used by V45"
+      - name: "V57 | Checkout existing C++ client revision used by V45"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -40,12 +40,12 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V56 | Set up same Emscripten version as sound-working V45"
+      - name: "V57 | Set up same Emscripten version as sound-working V45"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V56 | Restore exact original V45 embedded files without modifying audio"
+      - name: "V57 | Restore exact original V45 embedded files without modifying audio"
         shell: bash
         run: |
           set -euo pipefail
@@ -90,9 +90,9 @@ jobs:
           INI
           cmp -s upstream-l1j/src/sprite_table.txt runtime/sprite_table.txt
           test -s runtime/Lineage.ini
-          echo 'V56 restored the V45 embedded sprite table and configuration'
+          echo 'V57 restored the V45 embedded sprite table and configuration'
 
-      - name: "V56 | Download verified original Sanctuary graphic archives"
+      - name: "V57 | Download verified original Sanctuary graphic archives"
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -105,13 +105,13 @@ jobs:
             -p 'Sanctuary.of.Aden.-.Copy.*' -D work/archive --clobber
           test "$(find work/archive -maxdepth 1 -type f | wc -l)" -eq 46
           test -s work/archive/Sanctuary.of.Aden.-.Copy.zip
-          echo 'V56 original Sanctuary archive present: 46 volumes'
+          echo 'V57 original Sanctuary archive present: 46 volumes'
 
-      - name: "V56 | Extract real startup images into compact original sprite banks"
+      - name: "V57 | Extract real startup images into compact original sprite banks"
         shell: bash
         run: |
           set -euo pipefail
-          cat > work/v56-original-startup.py <<'PY'
+          cat > work/v57-original-startup.py <<'PY'
           from pathlib import Path
           import struct, subprocess, shutil, json, hashlib
 
@@ -175,21 +175,21 @@ jobs:
               (base/(bank+'.idx')).write_bytes(struct.pack('<I',len(records))+b''.join(records))
               (base/(bank+'.pak')).write_bytes(packed)
               original.unlink()
-          Path('reports/V56-original-startup-assets.json').write_text(
+          Path('reports/V57-original-startup-assets.json').write_text(
               json.dumps(report,ensure_ascii=False,indent=2))
           print('Original startup resources packaged:',len(report['packaged']))
           assert '811.png' in report['packaged'] or location['811.png']=='Sprite00'
           PY
-          python3 work/v56-original-startup.py
+          python3 work/v57-original-startup.py
           rm -rf work/archive work/selective-original
-          test -s reports/V56-original-startup-assets.json
+          test -s reports/V57-original-startup-assets.json
 
-      - name: "V56 | Compile original client with bounded rendering fixes"
+      - name: "V57 | Compile original client with bounded rendering fixes"
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p build/objects dist
-          cat > work/v56-compile.py <<'PY'
+          cat > work/v57-compile.py <<'PY'
           from pathlib import Path
           import re,subprocess
           original=Path('upstream-l1j')
@@ -212,8 +212,8 @@ jobs:
                   code=source.read_text()
                   needle='void global_files::init()\n{\n'
                   assert code.count(needle)==1
-                  code='extern "C" int v56_prepare_pak_files();\n'+code
-                  code=code.replace(needle,needle+'\tif (!v56_prepare_pak_files())\n\t\tprintf("V56: original PAK mount failed\\n");\n',1)
+                  code='extern "C" int v57_prepare_pak_files();\n'+code
+                  code=code.replace(needle,needle+'\tif (!v57_prepare_pak_files())\n\t\tprintf("V57: original PAK mount failed\\n");\n',1)
                   # The original sprite table is binary and not null-terminated.
                   code=code.replace('buffer = new unsigned char[filesize];',
                                     'buffer = new unsigned char[filesize+16]();')
@@ -221,7 +221,7 @@ jobs:
                   code=source.read_text()
                   needle='\topen_data();\t//open the data file it is not already\n\tint num_invalid = 0;'
                   assert code.count(needle)==1
-                  code=code.replace(needle,'\topen_data();\t//open the data file it is not already\n\tif (!data_buf) {\n\t\tprintf("V56 missing original pack: %s\\n", data_file);\n\t\treturn 1;\n\t}\n\tint num_invalid = 0;',1)
+                  code=code.replace(needle,'\topen_data();\t//open the data file it is not already\n\tif (!data_buf) {\n\t\tprintf("V57 missing original pack: %s\\n", data_file);\n\t\treturn 1;\n\t}\n\tint num_invalid = 0;',1)
                   needle='unsigned char* pack::load_file(int which, int decrypting)\n{\n\tunsigned char *buf;\n\topen_data();\n'
                   assert code.count(needle)==1
                   code=code.replace(needle,needle+'\tif (!data_buf) return 0;\n',1)
@@ -229,12 +229,12 @@ jobs:
                   code=source.read_text()
                   needle='\t\t\tMix_PlayMusic(cur_music, -1);'
                   assert code.count(needle)==1
-                  code=code.replace(needle, '\t\t\tif (cur_music) {\n\t\t\t\tif (Mix_PlayMusic(cur_music,-1)<0)\n\t\t\t\t\tprintf("V56 audio playback unavailable\\n");\n\t\t\t}',1)
+                  code=code.replace(needle, '\t\t\tif (cur_music) {\n\t\t\t\tif (Mix_PlayMusic(cur_music,-1)<0)\n\t\t\t\t\tprintf("V57 audio playback unavailable\\n");\n\t\t\t}',1)
               elif relative=='src/sdl_master.cpp':
                   code=source.read_text()
                   needle='\tadd_draw_timer(50);\t//20 fps'
                   assert code.count(needle)==1
-                  code=code.replace(needle,'\t// V56: SDL_WaitEvent delivers original SDL_USEREVENT draw ticks at 20 fps.',1)
+                  code=code.replace(needle,'\t// V57: SDL_WaitEvent delivers original SDL_USEREVENT draw ticks at 20 fps.',1)
                   # Yield while the original game-client thread initializes instead of busy-spinning.
                   waiting='\t\twhile (!clients[0]->are_you_ready()) {};'
                   assert code.count(waiting)==1
@@ -273,19 +273,19 @@ jobs:
                        '-I'+str(source.parent),'-c',str(output),'-o',str(obj)]
               subprocess.run(command,check=True)
               objects.append(str(obj))
-              print('V56 compiled',relative,flush=True)
+              print('V57 compiled',relative,flush=True)
           Path('build/objects-list.txt').write_text('\n'.join(objects)+'\n')
-          print('V56 original C/C++ source files:',len(objects))
+          print('V57 original C/C++ source files:',len(objects))
           PY
-          python3 work/v56-compile.py 2>&1 | tee reports/V56-compile.txt
+          python3 work/v57-compile.py 2>&1 | tee reports/V57-compile.txt
           test -s build/objects-list.txt
           test -z "$(git -C upstream-l1j status --porcelain)"
 
-      - name: "V56 | Preserve V45 SDL compatibility and repair 20 fps frame pump"
+      - name: "V57 | Preserve V45 SDL compatibility and repair 20 fps frame pump"
         shell: bash
         run: |
           set -euo pipefail
-          cat > build/v56-sdl-compat.cpp <<'CPP'
+          cat > build/v57-sdl-compat.cpp <<'CPP'
           #include <SDL/SDL.h>
           #include <SDL/SDL_image.h>
           #include <cstring>
@@ -301,12 +301,12 @@ jobs:
             int result;
           };
           struct SDL_mutex { pthread_mutex_t native; };
-          static void *v56_thread_entry(void *arg) {
+          static void *v57_thread_entry(void *arg) {
             SDL_Thread *t=static_cast<SDL_Thread *>(arg);
             t->result=t->callback(t->argument);
             return nullptr;
           }
-          EM_JS(int, v56_mount_original_paks, (), {
+          EM_JS(int, v57_mount_original_paks, (), {
             if (!ENVIRONMENT_IS_WORKER) return 0;
             for (const name of ['Text.pak','Sprite00.pak']) {
               try {
@@ -315,20 +315,20 @@ jobs:
                   FS.createLazyFile('/lineage',name,remote,true,false);
                 }
               } catch(e) {
-                console.error('V56 original resource mount:',name,e);
+                console.error('V57 original resource mount:',name,e);
                 return 0;
               }
             }
             return 1;
           });
-          extern "C" int v56_prepare_pak_files() { return v56_mount_original_paks(); }
+          extern "C" int v57_prepare_pak_files() { return v57_mount_original_paks(); }
           extern "C" {
           SDL_Thread * SDLCALL SDL_CreateThread(int (SDLCALL *fn)(void *),void *data) {
             if (!fn) return nullptr;
             SDL_Thread *t=new (std::nothrow) SDL_Thread{};
             if (!t) return nullptr;
             t->callback=fn; t->argument=data;
-            if (pthread_create(&t->native,nullptr,v56_thread_entry,t)!=0) {
+            if (pthread_create(&t->native,nullptr,v57_thread_entry,t)!=0) {
               delete t; return nullptr;
             }
             return t;
@@ -392,10 +392,10 @@ jobs:
           em++ -O1 -pthread -fexceptions \
             -Iupstream-l1j/src -Iupstream-l1j/src/resources -Iupstream-l1j/include \
             -sUSE_SDL=1 -sUSE_SDL_IMAGE=1 -sUSE_SDL_MIXER=1 \
-            -c build/v56-sdl-compat.cpp -o build/v56-sdl-compat.o
+            -c build/v57-sdl-compat.cpp -o build/v57-sdl-compat.o
           mapfile -t objects < build/objects-list.txt
           test "${#objects[@]}" -eq 60
-          em++ "${objects[@]}" build/v56-sdl-compat.o -o dist/lineage-v56.js \
+          em++ "${objects[@]}" build/v57-sdl-compat.o -o dist/lineage-v57.js \
             -O1 -pthread -fexceptions \
             -sUSE_SDL=1 -sUSE_SDL_IMAGE=1 -sUSE_SDL_MIXER=1 \
             -sSTB_IMAGE=1 \
@@ -408,13 +408,13 @@ jobs:
             --embed-file runtime/Lineage.ini@/Lineage.ini \
             --embed-file runtime/sprite_table.txt@/sprite_table.txt \
             --preload-file runtime/lineage@/lineage \
-            2>&1 | tee reports/V56-link.txt
-          test -s dist/lineage-v56.js
-          test -s dist/lineage-v56.wasm
-          test -s dist/lineage-v56.data
-          sha256sum dist/lineage-v56.* > reports/V56-runtime-sha256.txt
+            2>&1 | tee reports/V57-link.txt
+          test -s dist/lineage-v57.js
+          test -s dist/lineage-v57.wasm
+          test -s dist/lineage-v57.data
+          sha256sum dist/lineage-v57.* > reports/V57-runtime-sha256.txt
 
-      - name: "V56 | Publish real engine entrypoint, not an emulator or mock screen"
+      - name: "V57 | Publish real engine entrypoint, not an emulator or mock screen"
         shell: bash
         run: |
           set -euo pipefail
@@ -424,42 +424,42 @@ jobs:
           original=(base/'v45.html').read_text(encoding='utf-8')
           assert 'lineage-v45.js' in original
           assert 'coi-serviceworker-v45.js' in original
-          page=original.replace('lineage-v45.js','lineage-v56.js')
-          page=page.replace('lineage-v45.wasm','lineage-v56.wasm')
-          page=page.replace('V45 Original Client Web Runtime','V56 Original Client Web Runtime')
+          page=original.replace('lineage-v45.js','lineage-v57.js')
+          page=page.replace('lineage-v45.wasm','lineage-v57.wasm')
+          page=page.replace('V45 Original Client Web Runtime','V57 Original Client Web Runtime')
           page=page.replace('V45 (auto-start / original audio)',
-                            'V56 (original audio and actual game graphics)')
+                            'V57 (original audio and actual game graphics)')
           # The original V45 PAK service worker and remote shards remain unchanged.
           assert 'v45-paks.json' in page and 'coi-serviceworker-v45.js' in page
           assert 'boxedwine' not in page.lower()
           (base/'index.html').write_text(page,encoding='utf-8')
-          (base/'v56.html').write_text(page,encoding='utf-8')
+          (base/'v57.html').write_text(page,encoding='utf-8')
           PY
-          cp dist/lineage-v56.js dist/lineage-v56.wasm dist/lineage-v56.data published/
+          cp dist/lineage-v57.js dist/lineage-v57.wasm dist/lineage-v57.data published/
           touch published/.nojekyll
-          node --check published/lineage-v56.js
+          node --check published/lineage-v57.js
           test -s published/pakchunks/Sprite00.pak.part000
           test -s published/pakchunks/Text.pak.part000
 
-      - name: "V56 | Install headless browser for real frame verification"
+      - name: "V57 | Install headless browser for real frame verification"
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install 'playwright==1.56.0' 'pillow>=10,<13'
           python3 -m playwright install --with-deps chromium
 
-      - name: "V56 | Test actual source-engine pixels before changing public Pages"
+      - name: "V57 | Test actual source-engine pixels before changing public Pages"
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p reports/site-root
           ln -s "$GITHUB_WORKSPACE/published" reports/site-root/game2
-          cat > work/v56-browser-test.py <<'PY'
+          cat > work/v57-browser-test.py <<'PY'
           import asyncio,io,json
           from pathlib import Path
           from PIL import Image
           from playwright.async_api import async_playwright
-          report={'version':'V56','errors':[],'messages':[],'failed_requests':[]}
+          report={'version':'V57','errors':[],'messages':[],'failed_requests':[]}
           async def main():
               async with async_playwright() as playwright:
                   browser=await playwright.chromium.launch(headless=True,args=[
@@ -470,15 +470,18 @@ jobs:
                   page.on('pageerror',lambda err:report['errors'].append(str(err)))
                   page.on('requestfailed',lambda req:report['failed_requests'].append(req.url))
                   try:
-                      await page.goto('http://127.0.0.1:8765/game2/v56.html',wait_until='domcontentloaded',timeout=30000)
+                      await page.goto('http://127.0.0.1:8765/game2/v57.html',wait_until='domcontentloaded',timeout=30000)
+                      await page.wait_for_function('crossOriginIsolated && typeof SharedArrayBuffer === "function"',timeout=20000)
+                      report['cross_origin_isolated']=await page.evaluate('crossOriginIsolated')
+                      report['service_worker_controlled']=await page.evaluate('!!navigator.serviceWorker?.controller')
                       await page.wait_for_timeout(65000)
                       report['state']=await page.locator('#state').inner_text(timeout=4000)
                       report['log']=(await page.locator('#logbox').inner_text())[-14000:]
-                      await page.screenshot(path='reports/V56-screen.png')
+                      await page.screenshot(path='reports/V57-screen.png')
                       # Analyze only the renderer pixels. Log/overlay text is not game output.
                       await page.add_style_tag(content='#logbox,#overlay,#controls,#tools{display:none!important}')
                       await page.wait_for_timeout(1500)
-                      data=await page.locator('#canvas').screenshot(path='reports/V56-canvas.png')
+                      data=await page.locator('#canvas').screenshot(path='reports/V57-canvas.png')
                       picture=Image.open(io.BytesIO(data)).convert('RGB').resize((128,96))
                       pixels=list(picture.getdata())
                       nonblack=sum(max(p)>30 for p in pixels)
@@ -489,67 +492,89 @@ jobs:
                       report['graphics_rendered']=False
                   finally:
                       await browser.close()
-              Path('reports/V56-browser.json').write_text(json.dumps(report,indent=2,ensure_ascii=False))
-              print('V56 source renderer verified:',report.get('graphics_rendered'),flush=True)
-              print('V56 canvas nonblack fraction:',report.get('nonblack_fraction'),flush=True)
+              Path('reports/V57-browser.json').write_text(json.dumps(report,indent=2,ensure_ascii=False))
+              print('V57 source renderer verified:',report.get('graphics_rendered'),flush=True)
+              print('V57 canvas nonblack fraction:',report.get('nonblack_fraction'),flush=True)
               for error in report['errors'][-10:]:print('JS ERROR',error[:300],flush=True)
               for line in report.get('log','').splitlines()[-20:]:print('GAME LOG',line[:300],flush=True)
               if not report.get('graphics_rendered'):
-                  raise SystemExit('V56 original game produced no visible graphics; refusing a fake success/deployment')
+                  raise SystemExit('V57 original game produced no visible graphics; refusing a fake success/deployment')
           asyncio.run(main())
           PY
-          python3 -m http.server 8765 --bind 127.0.0.1 --directory reports/site-root \
-            > reports/V56-http-server.log 2>&1 &
+          # Pthread WebAssembly requires COOP/COEP on the initial document,
+          # not just a Service Worker header added after registration.
+          cat > work/v57-local-server.py <<'PY'
+          from functools import partial
+          from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+          from pathlib import Path
+
+          class IsolatedHandler(SimpleHTTPRequestHandler):
+              def end_headers(self):
+                  self.send_header('Cross-Origin-Opener-Policy', 'same-origin')
+                  self.send_header('Cross-Origin-Embedder-Policy', 'require-corp')
+                  self.send_header('Cross-Origin-Resource-Policy', 'same-origin')
+                  super().end_headers()
+
+          root=Path('reports/site-root').resolve()
+          ThreadingHTTPServer(('127.0.0.1',8765),
+              partial(IsolatedHandler,directory=str(root))).serve_forever()
+          PY
+          python3 work/v57-local-server.py > reports/V57-http-server.log 2>&1 &
           server=$!
           trap 'kill "$server" 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do
-            if curl -fsS -o /dev/null http://127.0.0.1:8765/game2/v56.html; then break; fi
+            if curl -fsS -o /dev/null http://127.0.0.1:8765/game2/v57.html; then break; fi
             sleep 1
           done
-          python3 work/v56-browser-test.py
+          # Check the actual server headers before starting the browser.
+          curl -fsSI http://127.0.0.1:8765/game2/v57.html > reports/V57-http-headers.txt
+          grep -qi '^Cross-Origin-Opener-Policy: same-origin' reports/V57-http-headers.txt
+          grep -qi '^Cross-Origin-Embedder-Policy: require-corp' reports/V57-http-headers.txt
+          python3 work/v57-browser-test.py
 
-      - name: "V56 | Upload original resource proofs and actual browser result"
+      - name: "V57 | Upload original resource proofs and actual browser result"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V56-Original-Graphics-Render
+          name: Sanctuary-game2-V57-Original-Graphics-Render
           path: |
-            reports/V56-original-startup-assets.json
-            reports/V56-compile.txt
-            reports/V56-link.txt
-            reports/V56-runtime-sha256.txt
-            reports/V56-browser.json
-            reports/V56-screen.png
-            reports/V56-canvas.png
-            reports/V56-http-server.log
+            reports/V57-original-startup-assets.json
+            reports/V57-compile.txt
+            reports/V57-link.txt
+            reports/V57-runtime-sha256.txt
+            reports/V57-browser.json
+            reports/V57-screen.png
+            reports/V57-canvas.png
+            reports/V57-http-server.log
+            reports/V57-http-headers.txt
           retention-days: 30
           if-no-files-found: warn
 
-      - name: "V56 | Deploy only after real original graphics rendered"
+      - name: "V57 | Deploy only after real original graphics rendered"
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json
-          with open('reports/V56-browser.json') as f:
+          with open('reports/V57-browser.json') as f:
               report=json.load(f)
           assert report['graphics_rendered'],'Refusing blank-screen deployment'
           PY
-          git -C published add -- index.html v56.html \
-            lineage-v56.js lineage-v56.wasm lineage-v56.data .nojekyll
+          git -C published add -- index.html v57.html \
+            lineage-v57.js lineage-v57.wasm lineage-v57.data .nojekyll
           git -C published config user.name 'github-actions[bot]'
           git -C published config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           if ! git -C published diff --cached --quiet; then
-            git -C published commit -m 'build-web.yml V56: repair original Sanctuary graphics from V45 baseline'
+            git -C published commit -m 'build-web.yml V57: repair original Sanctuary graphics from V45 baseline'
             git -C published push origin HEAD:gh-pages
           fi
 
-      - name: "V56 | Report outcome without claiming unverified gameplay"
+      - name: "V57 | Report outcome without claiming unverified gameplay"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V56 | Original Sanctuary engine runtime test'
+            echo '# build-web.yml | V57 | Original Sanctuary engine runtime test'
             echo 'Retains V45 original music and full original Text/Sprite00 PAKs.'
             echo 'Restores original startup graphics by byte-exact asset extraction and compact bank indexes.'
             echo 'Replaces SDL timer dependency with the same 50ms draw event cadence.'
