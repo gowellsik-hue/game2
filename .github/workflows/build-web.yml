@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V52 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V52 | Sanctuary game2 GitHub Pages"
+name: "build-web.yml | V53 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V53 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
@@ -13,83 +13,123 @@ permissions:
   contents: write
 
 concurrency:
-  group: game2-v52-sanctuary
+  group: game2-v53-v45-audio
   cancel-in-progress: false
 
 jobs:
-  restore_sanctuary_v52:
-    name: "build-web.yml | V52 | Restore Sanctuary original client"
+  restore_v45_runtime:
+    name: "build-web.yml | V53 | Restore sound-working V45 runtime"
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
-      - name: "V52 | Checkout existing game2 GitHub Pages"
+      - name: "V53 | Checkout existing game2 Pages"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
 
-      - name: "V52 | Restore only original Sanctuary Windows client"
+      - name: "V53 | Verify the real V45 browser engine and sound assets"
         shell: bash
         run: |
           set -euo pipefail
-          for file in boxedwine.html boxedwine.js boxedwine.wasm boxedwine.css boxedwine-shell.js boxedwine.zip sanctuary-candidates-v50.zip; do
-            test -s "published/v50/$file"
+          test "$GITHUB_REPOSITORY" = 'gowellsik-hue/game2'
+          for f in v45.html lineage-v45.js lineage-v45.wasm lineage-v45.data \
+                   coi-serviceworker-v45.js v45-paks.json; do
+            test -s "published/$f" || { echo "Missing original V45 file: $f" >&2; exit 1; }
           done
-          mkdir -p published/v52
-          for file in boxedwine.html boxedwine.js boxedwine.wasm boxedwine.css boxedwine-shell.js boxedwine.zip; do
-            cp "published/v50/$file" "published/v52/$file"
-          done
-          cp published/v50/sanctuary-candidates-v50.zip published/v52/sanctuary-original-v52.zip
+          grep -Fq 'music0.mp3' published/lineage-v45.js
+          grep -Fq 'lineage-v45.js' published/v45.html
+          grep -Fq 'coi-serviceworker-v45.js' published/v45.html
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          p = Path('published')
+          info = json.loads((p / 'v45-paks.json').read_text())
+          assert info['version'] == 'V45'
+          assert set(info['files']) == {'Text.pak', 'Sprite00.pak'}
+          for name, record in info['files'].items():
+              files = [p / 'pakchunks' / f'{name}.part{i:03d}' for i in range(record['parts'])]
+              assert all(f.is_file() for f in files), name
+              assert sum(f.stat().st_size for f in files) == record['size'], name
+          print('V53: original V45 runtime, music and PAK shards verified')
+          PY
 
-          cat > published/v52/index.html <<'HTML'
-          <!doctype html>
-          <html lang="ko"><head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-          <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-          <meta http-equiv="refresh" content="0;url=./boxedwine.html?app=sanctuary-original-v52&amp;p=Login.exe&amp;sound=false">
-          <title>Sanctuary | Original Windows Client V52</title>
-          </head><body>
-          <a href="./boxedwine.html?app=sanctuary-original-v52&amp;p=Login.exe&amp;sound=false">Sanctuary 원본 클라이언트 실행</a>
-          </body></html>
-          HTML
-
-          cat > published/index.html <<'HTML'
-          <!doctype html>
-          <html lang="ko"><head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-          <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-          <meta http-equiv="refresh" content="0;url=./v52/">
-          <title>Sanctuary | game2 | V52</title>
-          </head><body>
-          <a href="./v52/">Sanctuary V52</a>
-          </body></html>
-          HTML
-          touch published/.nojekyll published/v52/.nojekyll
-
-      - name: "V52 | Remove unrelated V51 Single Lineage deployment"
+      - name: "V53 | Replace wrong Boxedwine home with the V45 audio runtime"
         shell: bash
         run: |
           set -euo pipefail
-          if test -d published/v51; then
-            git -C published rm -rq -- v51
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('published')
+          source = (p / 'v45.html').read_text(encoding='utf-8')
+          title = 'V45 Original Client Web Runtime'
+          header = 'V45 (auto-start / original audio)'
+          assert source.count(title) == 1
+          assert source.count(header) == 1
+          page = source.replace(title, 'V53 Original Client Web Runtime', 1)
+          page = page.replace(header, 'V53 (V45 original audio baseline)', 1)
+          for needed in ('lineage-v45.js', 'v45-paks.json',
+                         'coi-serviceworker-v45.js', 'music0.mp3'):
+              assert needed in page, needed
+          assert 'boxedwine' not in page.lower()
+          # Both entrypoints use the original V45 HTML runtime.
+          (p / 'index.html').write_text(page, encoding='utf-8')
+          (p / 'v53.html').write_text(page, encoding='utf-8')
+          print('V53: homepage loads existing V45 WebAssembly directly')
+          PY
+          cmp published/index.html published/v53.html
+          node --check published/lineage-v45.js
+          node --check published/coi-serviceworker-v45.js
+          test -s published/lineage-v45.data
+          test -s published/lineage-v45.wasm
+
+      - name: "V53 | Remove the incorrect V52 Boxedwine deployment"
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test -d published/v52; then
+            git -C published rm -rq -- v52
           fi
-          git -C published add -A
-          git -C published -c user.name='github-actions[bot]' \
-            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit -m 'build-web.yml V52: restore Sanctuary and remove unrelated V51'
-          git -C published push origin HEAD:gh-pages
+          git -C published add -- index.html v53.html
+          git -C published config user.name 'github-actions[bot]'
+          git -C published config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git -C published diff --cached --quiet; then
+            echo 'V53 is already present; nothing to commit'
+          else
+            git -C published commit -m 'build-web.yml V53: restore V45 sound-working browser runtime'
+            git -C published push origin HEAD:gh-pages
+          fi
 
-      - name: "V52 | Final status"
+      - name: "V53 | Check live game2 homepage automatically"
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://gowellsik-hue.github.io/game2/index.html'
+          for i in $(seq 1 30); do
+            if curl -fsSL --retry 2 --max-time 15 -H 'Cache-Control: no-cache' \
+              "${url}?v53=${GITHUB_RUN_ID}-${i}" -o /tmp/v53-live.html; then
+              if grep -Fq 'V53 Original Client Web Runtime' /tmp/v53-live.html && \
+                 grep -Fq 'lineage-v45.js' /tmp/v53-live.html && \
+                 ! grep -qi 'boxedwine' /tmp/v53-live.html; then
+                echo 'V53 live: original V45 browser runtime is now the game2 homepage'
+                exit 0
+              fi
+            fi
+            echo "V53 Pages not updated yet ($i/30)"
+            sleep 10
+          done
+          echo 'V53 did not reach public Pages; inspect Pages deployment' >&2
+          exit 1
+
+      - name: "V53 | Summary"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V52 | Sanctuary game2 GitHub Pages'
-            echo 'game2 gh-pages V50 original Windows client is the only V52 runtime source.'
-            echo 'The unrelated V51 Single Lineage directory is removed.'
-            echo 'The game2 homepage redirects to /game2/v52/.'
-            echo 'Original Windows client browser compatibility is not yet proof of gameplay.'
+            echo '# build-web.yml | V53 | Sanctuary game2 GitHub Pages'
+            echo 'V53 home: original V45 browser client, not Boxedwine or Windows Login.exe.'
+            echo 'The original V45 JS/WASM/DATA, music and PAK resources are not rebuilt or modified.'
+            echo 'Wrong V52 Boxedwine directory is removed; old V45 source remains.'
+            echo 'Web entrypoint correction does not by itself prove game rendering or gameplay.'
           } >> "$GITHUB_STEP_SUMMARY"
