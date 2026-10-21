@@ -1,14 +1,6 @@
 
-# FILE: .github/workflows/build-web.yml
-# VERSION: V51
-# SOURCE: gowellsik-hue/Game, V229R41 GitHub Pages, run 39377710319
-# PURPOSE: Restore the last actually playable existing web engine to game2,
-#          without modifying ANY of its 5472 existing files, and expose
-#          Sanctuary maps 45/46 already integrated in that baseline.
-# NOT INCLUDED: new monster balances, unverified Sanctuary spawn coordinates,
-#               protected Windows EXE execution, or reimplemented game logic.
-name: "build-web.yml | V51 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V51 | Restore playable V229R41 and original maps"
+name: "build-web.yml | V52 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V52 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
@@ -19,190 +11,85 @@ run-name: "build-web.yml | V51 | Restore playable V229R41 and original maps"
 
 permissions:
   contents: write
-  actions: read
 
 concurrency:
-  group: game2-v51-restore
+  group: game2-v52-sanctuary
   cancel-in-progress: false
 
 jobs:
-  restore_original_web_v51:
-    name: "build-web.yml | V51 | Exact V229R41 engine restore"
+  restore_sanctuary_v52:
+    name: "build-web.yml | V52 | Restore Sanctuary original client"
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 60
     steps:
-      - name: "V51 | Checkout current game2 repository"
+      - name: "V52 | Checkout existing game2 GitHub Pages"
         uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: published
+          fetch-depth: 1
 
-      - name: "V51 | Download proven playable V229R41 Pages artifact from Game"
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GAME_ARTIFACT_TOKEN || github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p r41 reports site/v51
-          # Use the immutable artifact from the known-good, successful run.
-          # The repository is PUBLIC. An optional GAME_ARTIFACT_TOKEN may be used
-          # if GitHub restricts cross-repository Actions downloads.
-          if ! gh run download 39377710319 \
-               -R gowellsik-hue/Game \
-               -n github-pages -D r41; then
-            echo 'V51 | Cross-repository download unavailable; trying public REST endpoint.'
-            curl -fLsS --retry 3 --retry-delay 3 \
-              -H 'Accept: application/vnd.github+json' \
-              -o r41/public-artifact.zip \
-              'https://api.github.com/repos/gowellsik-hue/Game/actions/artifacts/12244076880/zip'
-            unzip -tq r41/public-artifact.zip
-            unzip -j -o r41/public-artifact.zip artifact.tar -d r41
-          fi
-          test -s r41/artifact.tar
-          echo 'V51 | Immutable R41 source run: 39377710319' > reports/V51-source.txt
-          echo 'V51 | Artifact ID: 12244076880' >> reports/V51-source.txt
-          sha256sum r41/artifact.tar | tee -a reports/V51-source.txt
-          echo '4ee38b800d1256ab4deff583c98dd1ac94d22718323d427aca69e33793a076fa  r41/artifact.tar' | sha256sum -c
-
-      - name: "V51 | Restore all 5472 original web files without changing contents"
+      - name: "V52 | Restore only original Sanctuary Windows client"
         shell: bash
         run: |
           set -euo pipefail
-          # The Pages artifact contains a tar. Do not recreate the engine or edit
-          # the packed RGSS game, JS, sprites, audio, map data, or its manifests.
-          tar -tf r41/artifact.tar > reports/V51-tar-file-list.txt
-          python3 - <<'PY_TAR'
-          from pathlib import Path
-          import tarfile
-          with tarfile.open('r41/artifact.tar') as tar:
-              for item in tar:
-                  p=Path(item.name)
-                  assert not p.is_absolute() and '..' not in p.parts, item.name
-                  assert item.isfile() or item.isdir(), ('unexpected entry type',item.name)
-          print('V51 | Source TAR paths and entry types verified')
-          PY_TAR
-          tar -xf r41/artifact.tar -C site/v51 --no-same-owner
-          python3 - <<'PY_VERIFY'
-          from pathlib import Path
-          import hashlib, json
-          site=Path('site/v51')
-          files=[p for p in site.rglob('*') if p.is_file()]
-          assert len(files)==5472, ('incomplete original R41 archive',len(files))
-          assert not any(p.is_symlink() for p in site.rglob('*'))
-          size=sum(p.stat().st_size for p in files)
-          assert size==240474300, ('original bytes mismatch',size)
-          sha=lambda p:hashlib.sha256((site/p).read_bytes()).hexdigest()
-          original={
-            'index.html':'e57c8db821f3286d79de960767c22061cd9aae68e2c7524d96ede3e5e26cf26d',
-            'knight/index.html':'a297b34f5aec6a71c4fed86e6d0f5e5234401e47a2c7693db4b0fe9bb92c3bdc',
-            'elf/index.html':'c4a3b2556c05dad54317168eca7a2421c961139bc3f500ca33a4bae74b7b387a',
-            'knight/mkxp.wasm':'83f6138820a3587ec569bca801d3032ec39edfda1cb49fbb90ab3928821966bd',
-            'knight/gameasync/mapping.js':'66a37333eec81a86f2d32fa78ec05e3a9b0cb588fac3816596f752a91e7686b9',
-            'knight/gameasync/Data/Scripts.rxdata':'f249b698ae6d1c72535ae2b12559e8bb10494657febc67ba0b23195944f4f7d0',
-            'knight/gameasync/Data/MMUQTFCAEUWWMMVPHJPLWSKVJOHMECOINFTBCWIOMap045.rxdata':'d9dc66271e48f051b0d35a2dce109777a14fd396f87fcd7d0e76b044b482e3ba',
-            'knight/gameasync/Data/MMUQTFCAEUWWMMVPHJPLWSKVJOHMECOINFTBCWIOMap046.rxdata':'c3f4cee70c9aff3459245727ccd49403079caa959aeebf00cf9eed99fb852059'
-          }
-          for file,expected in original.items():
-              assert sha(file)==expected, ('source hash changed',file)
-          panoramas=site/'knight/gameasync/Graphics/Panoramas'
-          counts={k:len(list(panoramas.glob(f'SLTI_{k}*'))) for k in (45,46)}
-          assert counts=={45:45,46:66},('native-image source baseline mismatch',counts)
-          assert (site/'knight/gameasync/Graphics/Tilesets/SLTI_45_Original.png').is_file()
-          assert (site/'knight/gameasync/Graphics/Tilesets/SLTI_46_Original.png').is_file()
-          bridge=(site/'knight/index.html').read_text(encoding='utf-8')
-          assert 'V229R41' in bridge
-          assert "var gain=k==='BGS'?0.20:(k==='BGM'?0.60:1);" in bridge
-          report={'version':'V51','sourceRepository':'gowellsik-hue/Game',
-                  'sourceWorkflowRun':39377710319,'sourceVersion':'V229R41',
-                  'originalFilesRestored':len(files),'originalBytesRestored':size,
-                  'existingFileContentsEdited':False,'monsterStatsEdited':False,
-                  'spawnCoordinatesModified':False,'preexistingSanctuaryMapAssets':counts,
-                  'fullOriginalWindowsExePorted':False,
-                  'game2RootRedirectTo':'v51/knight/'}
-          Path('reports/V51-restore.json').write_text(
-              json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
-          print('PASS: all 5472 R41 original files restored; map45/46 and audio unchanged')
-          PY_VERIFY
-          node --check site/v51/knight/js/dpad.js
-          node --check site/v51/knight/js/drive.js
-          node --check site/v51/knight/gameasync/mapping.js
+          for file in boxedwine.html boxedwine.js boxedwine.wasm boxedwine.css boxedwine-shell.js boxedwine.zip sanctuary-candidates-v50.zip; do
+            test -s "published/v50/$file"
+          done
+          mkdir -p published/v52
+          for file in boxedwine.html boxedwine.js boxedwine.wasm boxedwine.css boxedwine-shell.js boxedwine.zip; do
+            cp "published/v50/$file" "published/v52/$file"
+          done
+          cp published/v50/sanctuary-candidates-v50.zip published/v52/sanctuary-original-v52.zip
 
-      - name: "V51 | Make game2 auto-open existing Knight game; preserve original character menu"
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Only the game2 root page is new. Inside v51/ all R41 files remain byte-identical.
-          cat > site/index.html <<'HTML'
+          cat > published/v52/index.html <<'HTML'
           <!doctype html>
           <html lang="ko"><head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
           <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-          <meta http-equiv="refresh" content="0;url=./v51/knight/">
-          <title>Sanctuary | game2 | V51</title>
-          </head><body style="background:#080808;color:#fff;font:14px system-ui">
-          기존 플레이 가능 기사 엔진을 자동으로 불러옵니다.
-          <a href="./v51/knight/">기사 게임</a>
-          <a href="./v51/">기사·요정 선택</a>
+          <meta http-equiv="refresh" content="0;url=./boxedwine.html?app=sanctuary-original-v52&amp;p=Login.exe&amp;sound=false">
+          <title>Sanctuary | Original Windows Client V52</title>
+          </head><body>
+          <a href="./boxedwine.html?app=sanctuary-original-v52&amp;p=Login.exe&amp;sound=false">Sanctuary 원본 클라이언트 실행</a>
           </body></html>
           HTML
-          touch site/.nojekyll site/v51/.nojekyll
-          test -s site/v51/index.html
-          test -s site/v51/knight/index.html
-          test -s site/v51/elf/index.html
-          test -s site/v51/knight/mkxp.wasm
-          test -s site/v51/knight/gameasync/Graphics/Tilesets/SLTI_45_Original.png
-          test -s site/v51/knight/gameasync/Graphics/Tilesets/SLTI_46_Original.png
-          du -sh site | tee reports/V51-publish-size.txt
-          echo 'V51 | Root redirects to /game2/v51/knight/; original menu remains /game2/v51/'
 
-      - name: "V51 | Check nested GitHub Pages URLs before deployment"
+          cat > published/index.html <<'HTML'
+          <!doctype html>
+          <html lang="ko"><head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+          <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+          <meta http-equiv="refresh" content="0;url=./v52/">
+          <title>Sanctuary | game2 | V52</title>
+          </head><body>
+          <a href="./v52/">Sanctuary V52</a>
+          </body></html>
+          HTML
+          touch published/.nojekyll published/v52/.nojekyll
+
+      - name: "V52 | Remove unrelated V51 Single Lineage deployment"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m http.server 8765 --directory site > reports/V51-local-http.txt 2>&1 &
-          server=$!
-          trap 'kill "$server" 2>/dev/null || true' EXIT
-          for i in $(seq 1 30); do
-            if curl -fsS -o /dev/null http://127.0.0.1:8765/v51/knight/index.html; then break; fi
-            sleep 1
-          done
-          for file in \
-            'index.html' 'v51/index.html' 'v51/knight/index.html' \
-            'v51/elf/index.html' 'v51/knight/mkxp.wasm' \
-            'v51/knight/gameasync/mapping.js' \
-            'v51/knight/gameasync/Graphics/Tilesets/SLTI_45_Original.png' \
-            'v51/knight/gameasync/Graphics/Tilesets/SLTI_46_Original.png'; do
-            curl -fsS -o /dev/null "http://127.0.0.1:8765/$file"
-            printf 'HTTP OK %s\n' "$file"
-          done | tee reports/V51-http-checks.txt
+          if test -d published/v51; then
+            git -C published rm -rq -- v51
+          fi
+          git -C published add -A
+          git -C published -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m 'build-web.yml V52: restore Sanctuary and remove unrelated V51'
+          git -C published push origin HEAD:gh-pages
 
-      - name: "V51 | Save immutable source verification report"
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Sanctuary-game2-V51-V229R41-Exact-Restore
-          path: reports/
-          retention-days: 30
-          if-no-files-found: warn
-
-      - name: "V51 | Deploy restored playable engine to SAME game2 GitHub Pages"
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./site
-          publish_branch: gh-pages
-          keep_files: true
-          force_orphan: false
-          enable_jekyll: false
-
-      - name: "V51 | Final status"
+      - name: "V52 | Final status"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V51 | Restore actual playable V229R41 to game2'
-            echo 'Source: gowellsik-hue/Game run 39377710319 (github-pages).'
-            echo 'All 5472 original engine/game files are copied, without modifying game logic.'
-            echo 'Knight default: https://gowellsik-hue.github.io/game2/'
-            echo 'Original character selection: https://gowellsik-hue.github.io/game2/v51/'
-            echo 'Existing map 45/46 resources are preserved; further native Sanctuary data not yet integrated.'
-            echo 'Build/deploy success does not prove mobile gameplay until live runtime testing.'
+            echo '# build-web.yml | V52 | Sanctuary game2 GitHub Pages'
+            echo 'game2 gh-pages V50 original Windows client is the only V52 runtime source.'
+            echo 'The unrelated V51 Single Lineage directory is removed.'
+            echo 'The game2 homepage redirects to /game2/v52/.'
+            echo 'Original Windows client browser compatibility is not yet proof of gameplay.'
           } >> "$GITHUB_STEP_SUMMARY"
