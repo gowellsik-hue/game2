@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V73 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V73 | Sanctuary game2 GitHub Pages"
+name: "build-web.yml | V74 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V74 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
@@ -13,29 +13,29 @@ permissions:
   contents: write
 
 concurrency:
-  group: game2-v73-original-map-render
+  group: game2-v74-original-map
   cancel-in-progress: false
 
 jobs:
-  original_client_v73:
-    name: "build-web.yml | V73 | Repair map tiles and viewport rendering"
+  original_client_v74:
+    name: "build-web.yml | V74 | Fix map script quoting and verify real screen"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
 
     steps:
-      - name: "V73 | Checkout game2 history"
+      - name: "V74 | Checkout full game2 history"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: "V73 | Preserve successful V70 deployment"
+      - name: "V74 | Checkout successful V70 deployed resources"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
 
-      - name: "V73 | Checkout original Sanctuary C++"
+      - name: "V74 | Checkout original Sanctuary client"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -43,615 +43,187 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V73 | Set up verified Emscripten"
+      - name: "V74 | Set up successful V70 Emscripten toolchain"
         uses: emscripten-core/setup-emsdk@v15
         with:
-          version: "3.1.74"
+          version: '3.1.74'
 
-      - name: "V73 | Extract all referenced tiles and repair original renderer"
+      - name: "V74 | Check nested source syntax before downloading original maps"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'PyYAML==6.0.2'
+          mkdir -p reports
+          cat > /tmp/v74-prepare.py <<'PY'
+          import ast
+          import json
+          import subprocess
+          from pathlib import Path
+          import yaml
+
+          # Reuse the V73 workflow that repaired tile references and viewport
+          # rendering. V73 never reached its work: the embedded optimizer's
+          # Python triple-single-quoted string ended at an inner visible='''.
+          commit='0a272763fdb97e560b43cde1f0524975b04b95a2'
+          raw=subprocess.check_output(
+              ['git','show',commit+':.github/workflows/build-web.yml'],
+              text=True
+          )
+          workflow=yaml.safe_load(raw)
+          steps=workflow['jobs']['original_client_v73']['steps']
+          source_step=next(
+              step['run'] for step in steps
+              if step['name']=='V73 | Extract all referenced tiles and repair original renderer'
+          )
+
+          opening="cat > /tmp/v73-orchestrate.py <<'PY'\n"
+          ending='\nPY\npython3 -m py_compile /tmp/v73-orchestrate.py'
+          assert source_step.count(opening)==1
+          assert source_step.count(ending)==1
+          program=source_step.split(opening,1)[1].split(ending,1)[0]
+
+          # Use double-quote delimiters for the outer optimizer template.
+          # All of its inner triple-single-quoted C++ fragments then remain
+          # intact. Do not edit the actual original-game code here.
+          outer="optimizer = r'''"
+          closing="\n'''\n\n# Insert the optimizer as a distinct script."
+          assert program.count(outer)==1
+          assert program.count(closing)==1
+          program=program.replace(outer,'optimizer = r"""',1)
+          program=program.replace(
+              closing,
+              '\n"""\n\n# Insert the optimizer as a distinct script.',
+              1
+          )
+          program=program.replace('V73','V74').replace('v73','v74')
+
+          # Compile the COMPLETE outer orchestrator and its two nested source
+          # templates. This is the specific validation missing from V73.
+          tree=ast.parse(program,filename='/tmp/v74-orchestrate.py')
+          values={}
+          for node in tree.body:
+              if isinstance(node,ast.Assign):
+                  for target in node.targets:
+                      if isinstance(target,ast.Name) and target.id in (
+                          'optimizer','reference_patch'
+                      ):
+                          values[target.id]=ast.literal_eval(node.value)
+          assert set(values)=={'optimizer','reference_patch'}
+          for key,code in values.items():
+              ast.parse(code,filename='V74-'+key+'.py')
+              assert 'V74' in code
+
+          assert 'cat > /tmp/v74-map-opt.py' in program
+          assert "'/tmp/v74-map-opt.py'" in program
+          assert 'V74 additional original tile banks:' in program
+          assert 'V74 native map pixel sample:' in program
+          assert 'V74-map-canvas.png' in program
+          assert 'V74 original native map visible:' in program
+
+          Path('/tmp/v74-orchestrate.py').write_text(program+'\n')
+          Path('reports/V74-preflight.json').write_text(
+              json.dumps({
+                  'version':'V74',
+                  'previous_failure':'V73 optimizer nested triple quote',
+                  'outer_python':'syntax_pass',
+                  'embedded_optimizer':'syntax_pass',
+                  'embedded_original_map_references':'syntax_pass',
+                  'reference_commit':commit
+              },indent=2)
+          )
+          print('V74: outer and embedded Python syntax checks passed.',flush=True)
+          PY
+          python3 -m py_compile /tmp/v74-prepare.py
+          python3 -u /tmp/v74-prepare.py | tee reports/V74-preflight.log
+          python3 -m py_compile /tmp/v74-orchestrate.py
+
+      - name: "V74 | Run original map extraction, compile and mobile screen test"
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-
-          python3 -m pip install --quiet 'PyYAML==6.0.2'
-          mkdir -p reports
-
-          cat > /tmp/v73-orchestrate.py <<'PY'
-          import json
-          import os
-          import subprocess
-          from pathlib import Path
-
-          import yaml
-
-          V71 = 'dc173f5af493f37360b6ae997f2fce43a8ab28b1'
-
-          def original_step(name):
-              raw = subprocess.check_output(
-                  [
-                      'git', 'show',
-                      V71 + ':.github/workflows/build-web.yml'
-                  ],
-                  text=True
-              )
-              workflow = yaml.safe_load(raw)
-              steps = workflow['jobs']['original_client_v71']['steps']
-              return next(
-                  item['run'] for item in steps
-                  if item['name'] == name
-              )
-
-          def version(text):
-              return text.replace('V71', 'V73').replace('v71', 'v73')
-
-          def replace_one(text, old, new):
-              count = text.count(old)
-              assert count == 1, (old, count)
-              return text.replace(old, new, 1)
-
-          def execute(label, script):
-              print('\nV73 STAGE:', label, flush=True)
-              subprocess.run(
-                  ['bash', '-e', '-o', 'pipefail', '-c', script],
-                  check=True,
-                  env=os.environ.copy()
-              )
-
-          extract = version(original_step(
-              'V71 | Extract original start-map tiles and sections from split ZIP'
-          ))
-
-          # V72 only included tile banks referenced by floor polygons.
-          # Original object records and tileset lists can reference other banks.
-          reference_patch = r'''
-          def v73_add_object_tile_banks():
-              before = set(selected)
-              missing = set()
-
-              for filename, entry in wanted:
-                  if not filename.endswith('.s32'):
-                      continue
-
-                  content = (
-                      OUT_DIR / 'map' / '4' / filename
-                  ).read_bytes()
-
-                  if len(content) < 32768 + 2 + 16384 + 4:
-                      continue
-
-                  def add_bank(bank):
-                      bank = int(bank)
-                      if bank in indices:
-                          selected.add(bank)
-                      else:
-                          missing.add(bank)
-
-                  try:
-                      pos = 32768
-                      unknown = struct.unpack_from(
-                          '<H', content, pos
-                      )[0]
-                      pos += 2 + unknown * 6
-
-                      # Two 16-bit attributes for every tile.
-                      pos += 64 * 64 * 2 * 2
-                      objects = struct.unpack_from(
-                          '<i', content, pos
-                      )[0]
-                      pos += 4
-
-                      if objects < 0 or objects > 20000:
-                          continue
-
-                      for _ in range(objects):
-                          if pos + 4 > len(content):
-                              break
-
-                          number = struct.unpack_from(
-                              '<H', content, pos + 2
-                          )[0]
-                          pos += 4
-
-                          if number > 4096:
-                              break
-
-                          i = 0
-                          while i < number:
-                              if pos + 2 > len(content):
-                                  break
-
-                              a, b = struct.unpack_from(
-                                  'BB', content, pos
-                              )
-                              pos += 2
-
-                              if a == 0xCD and b == 0xCD:
-                                  pos += 5
-                                  number -= 1
-                                  continue
-
-                              if pos + 5 > len(content):
-                                  break
-
-                              pos += 1
-                              tile_code = struct.unpack_from(
-                                  '<I', content, pos
-                              )[0]
-                              pos += 4
-
-                              add_bank(tile_code >> 8)
-                              i += 1
-
-                      if pos + 4 <= len(content):
-                          hidden = struct.unpack_from(
-                              '<i', content, pos
-                          )[0]
-                          pos += 4
-
-                          if 0 <= hidden <= 100000:
-                              pos += hidden * 5
-
-                              if pos + 4 <= len(content):
-                                  tile_count = struct.unpack_from(
-                                      '<i', content, pos
-                                  )[0]
-                                  pos += 4
-
-                                  if 0 <= tile_count <= 4096:
-                                      for _ in range(tile_count):
-                                          if pos + 4 > len(content):
-                                              break
-                                          bank = struct.unpack_from(
-                                              '<I', content, pos
-                                          )[0]
-                                          pos += 4
-                                          add_bank(bank)
-
-                  except (ValueError, struct.error):
-                      print(
-                          'V73: incomplete optional map metadata:',
-                          filename,
-                          flush=True
-                      )
-
-              # Known missing bank from the V72 runtime log.
-              if 42 in indices:
-                  selected.add(42)
-
-              additional = sorted(selected - before)
-              print(
-                  'V73 additional original tile banks:',
-                  additional,
-                  flush=True
-              )
-              print(
-                  'V73 references not in Tile.idx:',
-                  sorted(missing)[:30],
-                  flush=True
-              )
-
-          v73_add_object_tile_banks()
-          '''
-
-          marker = "print('V73 original map referenced tile banks:'"
-          extract = replace_one(
-              extract, marker, reference_patch + '\n' + marker
-          )
-
-          execute(
-              'Recover original map sections and object tile banks',
-              extract
-          )
-
-          manifest = json.loads(
-              Path(
-                  'assets/v73/v73-map-manifest.json'
-              ).read_text()
-          )
-
-          assert len(manifest['segments']) >= 4
-          assert 2 in manifest['selected_tile_ids']
-          assert 42 in manifest['selected_tile_ids']
-          assert len(manifest['selected_tile_ids']) >= 43
-          assert Path(
-              'assets/v73/lineage/Tile.pak'
-          ).stat().st_size > 0
-
-          print(
-              'V73 original map files:',
-              len(manifest['segments']),
-              flush=True
-          )
-          print(
-              'V73 required tile banks:',
-              len(manifest['selected_tile_ids']),
-              flush=True
-          )
-
-          build = version(original_step(
-              'V71 | Build and test the original native map renderer'
-          ))
-
-          # Fix the V71 character/map patch filename collision.
-          build = replace_one(
-              build,
-              "cat > /tmp/v73-native.py <<'PY'",
-              "cat > /tmp/v73-map-patch.py <<'PY'"
-          )
-          build = replace_one(
-              build,
-              "subprocess.run(['python3','/tmp/v73-native.py'],check=True)",
-              "subprocess.run(['python3','/tmp/v73-map-patch.py'],check=True)"
-          )
-
-          compile_line = (
-              'python3 -m py_compile '
-              '/tmp/v73-native.py '
-              '/tmp/v73-tile-graphics.py '
-              '/tmp/v73-driver.py'
-          )
-          fixed_compile = compile_line.replace(
-              '/tmp/v73-native.py',
-              '/tmp/v73-map-patch.py'
-          )
-          build = replace_one(
-              build, compile_line, fixed_compile
-          )
-
-          # Keep enough native tile slots for the original IDs.
-          build = replace_one(
-              build,
-              '{max_bank+1}',
-              '{max(max_bank + 1, 4145)}'
-          )
-
-          # Keep the corrected RGB555 channel scaling from V72.
-          for channel, bits in [
-              (0, 'color>>10'),
-              (1, 'color>>5'),
-              (2, 'color')
-          ]:
-              old = (
-                  f'dst[{channel}]=(unsigned char)'
-                  f'(((({bits})&31)*255+15)/31);'
-              )
-              new = (
-                  f'dst[{channel}]=(unsigned char)'
-                  f'((((({bits})&31)*255+15)/31));'
-              )
-              build = replace_one(build, old, new)
-
-          optimizer = r'''
-          from pathlib import Path
-
-          root = Path('upstream-l1j/src')
-          p = root / 'widgets/sdl_lin_map.cpp'
-          source = p.read_text()
-
-          # V72 drew every one of the 4096 floor cells
-          # into a very large cached surface for each segment.
-          # V73 initially renders only the visible camera area.
-          old = (
-              'ret->graphic = new sdl_graphic('
-              '0, 0, 3072, 1535, 0);'
-          )
-          assert source.count(old) == 1
-          source = source.replace(
-              old,
-              'ret->graphic = new sdl_graphic('
-              '0, 0, one->getw(), one->geth(), 73);'
-          )
-
-          tile = 'map_coord tempmap(x + tx, y + ty);'
-          assert source.count(tile) == 2
-
-          visible = '''
-              const screen_coord v73Screen = tempmap.get_screen();
-              const int v73x =
-                  v73Screen.get_x() + master_offsetx;
-              const int v73y =
-                  v73Screen.get_y() + master_offsety;
-
-              if (v73x < -72 ||
-                  v73y < -72 ||
-                  v73x > one->getw() + 72 ||
-                  v73y > one->geth() + 72)
-                  continue;
-          '''
-
-          source = source.replace(
-              tile, tile + '\n' + visible
-          )
-
-          old_x = (
-              'dx = tempmap.get_screen().get_x() + offsetx;'
-          )
-          old_y = (
-              'dy = tempmap.get_screen().get_y() + offsety;'
-          )
-
-          assert source.count(old_x) == 2
-          assert source.count(old_y) == 2
-
-          source = source.replace(old_x, 'dx = v73x;')
-          source = source.replace(old_y, 'dy = v73y;')
-
-          assert source.count(
-              'ret->offsetx = offsetx;'
-          ) == 1
-          assert source.count(
-              'ret->offsety = offsety;'
-          ) == 1
-
-          source = source.replace(
-              'ret->offsetx = offsetx;',
-              'ret->offsetx = master_offsetx;'
-          )
-          source = source.replace(
-              'ret->offsety = offsety;',
-              'ret->offsety = master_offsety;'
-          )
-
-          # Protect the tile array from invalid bank indices.
-          floor_marker = (
-              'selbr = ret->mapdata->floor'
-              '[tx][ty*2+1] & 0xFF;'
-          )
-          assert source.count(floor_marker) == 1
-          source = source.replace(
-              floor_marker,
-              floor_marker + '''
-              if (selal < 0 || selal >= 4145 ||
-                  selar < 0 || selar >= 4145)
-                  continue;
-              '''
-          )
-
-          object_marker = 'selbl = floor & 0xFF;'
-          assert source.count(object_marker) == 1
-          source = source.replace(
-              object_marker,
-              object_marker + '''
-              if (selal < 0 || selal >= 4145)
-                  continue;
-              '''
-          )
-
-          p.write_text(source)
-
-          # The SDL1 color-key call is a no-op in Emscripten.
-          # Preserve transparent pixels on map cache surfaces
-          # instead of filling the entire viewport white.
-          p = root / 'resources/sdl_graphic.cpp'
-          source = p.read_text()
-          constructor_end = source.index(
-              'void sdl_graphic::erase()'
-          )
-
-          head = source[:constructor_end]
-          tail = source[constructor_end:]
-
-          fill = (
-              'SDL_FillRect(img, NULL, '
-              'SDL_MapRGB(img->format, 255,255,255));'
-          )
-          assert head.count(fill) == 1
-
-          head = head.replace(
-              fill,
-              'if (dummy != 73) ' + fill,
-              1
-          )
-          p.write_text(head + tail)
-
-          print(
-              'V73: native viewport-sized transparent map caches',
-              flush=True
-          )
-          '''
-
-          # Insert the optimizer as a distinct script.
-          compile_line = fixed_compile
-          optimized_compile = compile_line.replace(
-              '/tmp/v73-driver.py',
-              '/tmp/v73-map-opt.py /tmp/v73-driver.py'
-          )
-
-          build = replace_one(
-              build,
-              compile_line,
-              (
-                  "cat > /tmp/v73-map-opt.py <<'PY'\n"
-                  + optimizer
-                  + "\nPY\n"
-                  + optimized_compile
-              )
-          )
-
-          # Run the optimizer after the original map and tile patches,
-          # before the verified V70 compiler recompiles the C++ sources.
-          graphics_hook = (
-              "subprocess.run("
-              "['python3','/tmp/v73-tile-graphics.py'],"
-              "check=True)"
-          )
-
-          build = replace_one(
-              build,
-              graphics_hook,
-              graphics_hook +
-              "\n                  subprocess.run("
-              "['python3','/tmp/v73-map-opt.py'],"
-              "check=True)"
-          )
-
-          # Sample the entire genuine SDL canvas.
-          build = replace_one(
-              build,
-              'rows=Math.min(380,c.height)',
-              'rows=c.height'
-          )
-
-          build = replace_one(
-              build,
-              'await page.wait_for_timeout(4000)',
-              'await page.wait_for_timeout(10000)'
-          )
-
-          color_assert = (
-              'assert map_sample["colors"]>=8, '
-              '"V73 map image lacks original tile colors"'
-          )
-
-          build = replace_one(
-              build,
-              color_assert,
-              (
-                  'print("V73 native map pixel sample:",'
-                  'map_sample,flush=True)\n'
-                  '                      '
-                  'await page.locator("#canvas").screenshot('
-                  'path="reports/V73-map-canvas.png")\n'
-                  '                      '
-                  + color_assert
-              )
-          )
-
-          assert (
-              "cat > /tmp/v73-map-patch.py <<'PY'"
-          ) in build
-          assert (
-              "cat > /tmp/v73-map-opt.py <<'PY'"
-          ) in build
-          assert (
-              "'/tmp/v73-map-opt.py'"
-          ) in build
-
-          execute(
-              'Build and inspect original native viewport map',
-              build
-          )
-
-          result = json.loads(
-              Path('reports/V73-browser.json').read_text()
-          )
-
-          assert result['character_saved']
-          assert result['character_restored']
-          assert result['native_game_ready']
-          assert result['passed']
-          assert result['native_map_unique_colors'] >= 8
-          assert result['native_map_nonblack_fraction'] > 0.02
-
-          print(
-              'V73 original native map visible:',
-              result['native_map_nonblack_fraction'],
-              'colors:',
-              result['native_map_unique_colors'],
-              flush=True
-          )
-          PY
-
-          python3 -m py_compile /tmp/v73-orchestrate.py
-          python3 -u /tmp/v73-orchestrate.py \
-            2>&1 | tee reports/V73-execution.log
-
-      - name: "V73 | Save map diagnostics and mobile screenshots"
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Sanctuary-game2-V73-Original-Map
-          path: |
-            reports/V73-execution.log
-            reports/V73-extract.log
-            reports/V73-build-test.log
-            reports/V73-build.txt
-            reports/V73-browser.json
-            reports/V73-map-canvas.png
-            reports/V73-mobile.png
-            reports/V73-http.txt
-            assets/v73/v73-map-manifest.json
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: "V73 | Deploy only if original native map is visible"
-        shell: bash
-        run: |
-          set -euo pipefail
-
+          python3 -u /tmp/v74-orchestrate.py \
+            2>&1 | tee reports/V74-execution.log
           python3 - <<'PY'
           import json
           from pathlib import Path
-
-          result = json.loads(
-              Path('reports/V73-browser.json').read_text()
-          )
-
-          assert result['passed']
-          assert result['character_saved']
-          assert result['character_restored']
-          assert result['native_game_ready']
-          assert result['native_map_unique_colors'] >= 8
-          assert result['native_map_nonblack_fraction'] > 0.02
-
-          previous = Path(
-              'published/lineage-v70.data'
-          ).stat().st_size
-          current = Path(
-              'published/lineage-v73.data'
-          ).stat().st_size
-
-          map_bytes = sum(
-              f.stat().st_size
-              for f in Path('assets/v73/lineage').rglob('*')
-              if f.is_file()
-          )
-
-          assert previous < current
-          assert current <= previous + map_bytes + 2000000
-
-          print(
-              'V73 authentic original-map package verified:',
-              current,
-              'pixels:',
-              result['native_map_nonblack_fraction']
-          )
+          report=json.loads(Path('reports/V74-browser.json').read_text())
+          assert report['passed']
+          assert report['character_saved']
+          assert report['character_restored']
+          assert report['native_game_ready']
+          assert report['native_map_unique_colors']>=8
+          assert report['native_map_nonblack_fraction']>0.02
+          assert Path('reports/V74-map-canvas.png').is_file()
+          print('V74 ORIGINAL SDL MAP VISIBLE:',report['native_map_nonblack_fraction'])
           PY
 
-          git -C published add -- \
-            index.html \
-            v73.html \
-            lineage-v73.js \
-            lineage-v73.wasm \
-            lineage-v73.data
+      - name: "V74 | Upload failed-run logs and actual rendered canvas"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sanctuary-game2-V74-Original-Map-Diagnostics
+          path: |
+            reports/V74-preflight.json
+            reports/V74-preflight.log
+            reports/V74-execution.log
+            reports/V74-extract.log
+            reports/V74-build-test.log
+            reports/V74-browser.json
+            reports/V74-build.txt
+            reports/V74-mobile.png
+            reports/V74-map-canvas.png
+            reports/V74-http.txt
+            assets/v74/v74-map-manifest.json
+          if-no-files-found: warn
+          retention-days: 30
 
-          git -C published config user.name \
-            'github-actions[bot]'
+      - name: "V74 | Publish only after real original map pixels pass"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('reports/V74-browser.json').read_text())
+          assert r['passed'] and r['character_saved'] and r['character_restored']
+          assert r['native_game_ready']
+          assert r['native_map_unique_colors']>=8
+          assert r['native_map_nonblack_fraction']>0.02
+          original=Path('published/lineage-v70.data').stat().st_size
+          current=Path('published/lineage-v74.data').stat().st_size
+          map_bytes=sum(
+              x.stat().st_size for x in Path('assets/v74/lineage').rglob('*')
+              if x.is_file()
+          )
+          assert original<current<=original+map_bytes+2000000
+          assert Path('reports/V74-map-canvas.png').stat().st_size>500
+          print('V74 real original native map verified; data bytes:',current)
+          PY
+          git -C published add -- index.html v74.html \
+            lineage-v74.js lineage-v74.wasm lineage-v74.data
+          git -C published config user.name 'github-actions[bot]'
           git -C published config user.email \
             '41898282+github-actions[bot]@users.noreply.github.com'
-
           if ! git -C published diff --cached --quiet; then
             git -C published commit -m \
-              'build-web.yml V73: restore original map object tiles and transparent viewport rendering'
+              'build-web.yml V74: repair original map optimizer quoting and verify native canvas'
             git -C published push origin HEAD:gh-pages
           fi
 
-      - name: "V73 | Record verified scope"
+      - name: "V74 | Record exact outcome"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V73 | Sanctuary game2 GitHub Pages'
-            echo
-            echo 'Keeps V70 character creation, persistence and native entry.'
-            echo 'Includes tile banks referenced by .s32 floor and object data.'
-            echo 'Repairs the V72 missing 42.til resource.'
-            echo 'Uses genuine Sanctuary native tile and map decoding.'
-            echo 'Caches only the initial viewport instead of full segments.'
-            echo 'Preserves alpha on map cache surfaces.'
-            echo 'Retains original audio and existing SDL proxy repairs.'
-            echo 'Requires genuine native map pixels before GitHub Pages deployment.'
-            echo 'Map movement, further regions and combat are not yet verified.'
+            echo '# build-web.yml | V74 | Sanctuary game2 GitHub Pages'
+            echo 'V73 failed before map extraction due to an embedded Python quoting error.'
+            echo 'V74 precompiles the outer Python and both nested map templates.'
+            echo 'Reuses V73 authentic Tile.pak and .s32 extraction logic with bank 42.'
+            echo 'Reuses original V70 character creation, selection and SDL engine.'
+            echo 'The music file is not replaced or transcoded.'
+            echo 'No fake image can pass the native canvas pixel check.'
+            echo 'A failed build never overwrites the successful V70 Pages deployment.'
+            echo 'Gameplay movement and combat are not yet claimed complete.'
           } >> "$GITHUB_STEP_SUMMARY"
