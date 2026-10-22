@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V68 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V68 | Sanctuary game2 GitHub Pages"
+name: "build-web.yml | V69 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V69 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
@@ -13,28 +13,28 @@ permissions:
   contents: write
 
 concurrency:
-  group: game2-v68-offline-character
+  group: game2-v69-offline-character
   cancel-in-progress: false
 
 jobs:
-  original_client_v68:
-    name: "build-web.yml | V68 | Repair WebAssembly character bridge"
+  original_client_v69:
+    name: "build-web.yml | V69 | Repair WebAssembly character bridge"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - name: "V68 | Checkout game2 history"
+      - name: "V69 | Checkout game2 history"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: "V68 | Checkout unchanged V66 public resources"
+      - name: "V69 | Checkout unchanged V66 public resources"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
 
-      - name: "V68 | Checkout exact original C++ client"
+      - name: "V69 | Checkout exact original C++ client"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -42,17 +42,17 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V68 | Set up working V65 Emscripten compiler"
+      - name: "V69 | Set up working V65 Emscripten compiler"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V68 | Reuse V67 successful build, repair only WASM file bridge, run browser tests"
+      - name: "V69 | Reuse V67 successful build, repair only WASM file bridge, run browser tests"
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install --quiet 'PyYAML==6.0.2'
-          cat > /tmp/v68-run.py <<'PY'
+          cat > /tmp/v69-run.py <<'PY'
           import json
           import os
           import re
@@ -89,8 +89,15 @@ jobs:
           assert len(stages) == len(set(stages))
           assert all(stage in available for stage in stages)
 
+          # Confirm the exact V67 workflow yields the patch anchors BEFORE
+          # starting the costly native compilation.
+          parsed_page = available['V67 | Build offline character creation and selection']
+          assert parsed_page.count('preRun:[function(){') == 1
+          assert parsed_page.count('FS.writeFile(') == 1
+          assert parsed_page.count("const v67Key='sanctuary-game2-v67-characters';") == 1
+
           for step_number, title in enumerate(stages, 1):
-              script = available[title].replace('V67', 'V68').replace('v67', 'v68')
+              script = available[title].replace('V67', 'V69').replace('v67', 'v69')
               if title == 'V67 | Build offline character creation and selection':
                   # Emscripten MODULARIZE hides FS inside the instance.
                   # preRun receives Module as its first argument; FS is exported
@@ -100,29 +107,23 @@ jobs:
                   script = script.replace(
                       'preRun:[function(){', 'preRun:[function(module){', 1
                   ).replace('FS.writeFile(', 'module.FS.writeFile(', 1)
-                  assert script.count('                  );\n                }],""",') == 1
-                  script = script.replace(
-                      '                  );\n                }],""",',
-                      '                  );\n'
-                      '                  log("V68: character copied to WASM FS");\n'
-                      '                }],""",',
-                      1,
-                  )
+                  # No whitespace-sensitive checks or diagnostic additions here.
+                  # The already patched module.FS.writeFile is sufficient.
                   # Keep the browser save key stable across future versions.
-                  prior_key = "const v68Key='sanctuary-game2-v68-characters';"
+                  prior_key = "const v69Key='sanctuary-game2-v69-characters';"
                   assert script.count(prior_key) == 1
                   script = script.replace(
-                      prior_key, "const v68Key='sanctuary-game2-characters-v1';", 1
+                      prior_key, "const v69Key='sanctuary-game2-characters-v1';", 1
                   )
               if title == 'V67 | Test character creation, persistence and native entry':
                   # Preserve V67's actual test gate: character data must reach
                   # the real C++ game drawmode, not merely the HTML fallback.
                   assert 'result["native_game_ready"]' in script
                   assert 'timeout=100000' in script
-                  assert 'V68: offline native game ready:' in script
+                  assert 'V69: offline native game ready:' in script
 
               print('\n' + '=' * 72, flush=True)
-              print(f'V68 [{step_number}/{len(stages)}] {title}', flush=True)
+              print(f'V69 [{step_number}/{len(stages)}] {title}', flush=True)
               print('=' * 72, flush=True)
               subprocess.run(
                   ['bash', '-e', '-o', 'pipefail', '-c', script],
@@ -130,69 +131,68 @@ jobs:
                   env=os.environ.copy(),
               )
               if title == 'V67 | Build offline character creation and selection':
-                  html = Path('published/v68.html').read_text(encoding='utf-8')
+                  html = Path('published/v69.html').read_text(encoding='utf-8')
                   assert html.count('preRun:[function(module){') == 1
                   assert html.count('module.FS.writeFile(') == 1
-                  assert 'V68: character copied to WASM FS' in html
                   assert 'sanctuary-game2-characters-v1' in html
                   native = Path('upstream-l1j/src/sdl_user.cpp').read_text()
-                  assert 'fopen("/v68-character.txt","rb")' in native
-                  assert '"/v68-character.txt"' in html
-                  assert 'lineage-v68.wasm' in html
+                  assert 'fopen("/v69-character.txt","rb")' in native
+                  assert '"/v69-character.txt"' in html
+                  assert 'lineage-v69.wasm' in html
 
-          report = json.loads(Path('reports/V68-browser.json').read_text())
+          report = json.loads(Path('reports/V69-browser.json').read_text())
           assert report['character_saved']
           assert report['character_restored']
           assert report['native_game_ready']
           assert report['passed']
-          print('V68: character creation, persistent storage and native game entry verified.', flush=True)
+          print('V69: character creation, persistent storage and native game entry verified.', flush=True)
           PY
-          python3 -m py_compile /tmp/v68-run.py
-          python3 -u /tmp/v68-run.py 2>&1 | tee V68-execution.log
+          python3 -m py_compile /tmp/v69-run.py
+          python3 -u /tmp/v69-run.py 2>&1 | tee V69-execution.log
 
-      - name: "V68 | Upload native game diagnostics"
+      - name: "V69 | Upload native game diagnostics"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V68-Offline-Character
+          name: Sanctuary-game2-V69-Offline-Character
           path: |
-            V68-execution.log
-            reports/V68-browser.json
-            reports/V68-mobile.png
-            reports/V68-build.txt
-            reports/V68-http.txt
-            reports/V68-original-music.sha256
+            V69-execution.log
+            reports/V69-browser.json
+            reports/V69-mobile.png
+            reports/V69-build.txt
+            reports/V69-http.txt
+            reports/V69-original-music.sha256
           if-no-files-found: warn
           retention-days: 30
 
-      - name: "V68 | Publish only when actual C++ character entry succeeds"
+      - name: "V69 | Publish only when actual C++ character entry succeeds"
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json
           from pathlib import Path
-          result = json.loads(Path('reports/V68-browser.json').read_text())
+          result = json.loads(Path('reports/V69-browser.json').read_text())
           assert result['passed'] and result['character_saved']
           assert result['character_restored'] and result['native_game_ready']
-          page = Path('published/v68.html').read_text()
+          page = Path('published/v69.html').read_text()
           assert 'module.FS.writeFile(' in page
           PY
-          git -C published add -- index.html v68.html \
-            lineage-v68.js lineage-v68.wasm lineage-v68.data
+          git -C published add -- index.html v69.html \
+            lineage-v69.js lineage-v69.wasm lineage-v69.data
           git -C published config user.name 'github-actions[bot]'
           git -C published config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           if ! git -C published diff --cached --quiet; then
-            git -C published commit -m 'build-web.yml V68: fix browser to WASM character file transfer'
+            git -C published commit -m 'build-web.yml V69: fix browser to WASM character file transfer'
             git -C published push origin HEAD:gh-pages
           fi
 
-      - name: "V68 | Record real result"
+      - name: "V69 | Record real result"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V68 | Sanctuary game2 GitHub Pages'
+            echo '# build-web.yml | V69 | Sanctuary game2 GitHub Pages'
             echo 'V67 character save and reload had passed; FS was undefined in preRun.'
             echo 'Uses Module.FS passed to the Emscripten preRun callback.'
             echo 'Reuses V67 C++ and V65 SDL build scripts from the exact Git commit.'
