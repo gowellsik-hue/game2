@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V69 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V69 | Sanctuary game2 GitHub Pages"
+name: "build-web.yml | V70 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V70 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
@@ -13,28 +13,28 @@ permissions:
   contents: write
 
 concurrency:
-  group: game2-v69-offline-character
+  group: game2-v70-offline-character
   cancel-in-progress: false
 
 jobs:
-  original_client_v69:
-    name: "build-web.yml | V69 | Repair WebAssembly character bridge"
+  original_client_v70:
+    name: "build-web.yml | V70 | Repair generated SDL proxy index mismatch"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - name: "V69 | Checkout game2 history"
+      - name: "V70 | Checkout game2 history"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: "V69 | Checkout unchanged V66 public resources"
+      - name: "V70 | Checkout unchanged V66 public resources"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
 
-      - name: "V69 | Checkout exact original C++ client"
+      - name: "V70 | Checkout exact original C++ client"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -42,17 +42,17 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V69 | Set up working V65 Emscripten compiler"
+      - name: "V70 | Set up working V65 Emscripten compiler"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V69 | Reuse V67 successful build, repair only WASM file bridge, run browser tests"
+      - name: "V70 | Reuse V67 successful build, repair only WASM file bridge, run browser tests"
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install --quiet 'PyYAML==6.0.2'
-          cat > /tmp/v69-run.py <<'PY'
+          cat > /tmp/v70-run.py <<'PY'
           import json
           import os
           import re
@@ -66,9 +66,9 @@ jobs:
           assert "callbacks.shift()(Module);" in compiled
           assert 'Module["FS"] = FS;' in compiled
 
-          # V67 compiled successfully and passed character creation and
-          # persistence tests. It failed only when the browser's preRun tried
-          # to use a nonexistent global FS. Reuse those exact working steps.
+          # V67 built and saved characters, V69 fixed FS but failed when
+          # stale V65 SDL proxy indices were used by the recompiled client.
+          # Reuse the compiled sources, and repair only the proxy mapping.
           baseline = 'e7d56cbe5e5986328a38de6e02686b492e681d40'
           old = subprocess.check_output(
               ['git', 'show', baseline + ':.github/workflows/build-web.yml'],
@@ -89,6 +89,75 @@ jobs:
           assert len(stages) == len(set(stages))
           assert all(stage in available for stage in stages)
 
+          def align_sdl_proxy_indices(js_path):
+              """Reconcile V65-transplanted SDL functions with THIS build's proxy table.
+
+              C++ changes can alter the imports that Emscripten keeps, changing
+              proxiedFunctionTable order. Reusing hardcoded V65 indices calls an
+              unrelated function with a different number of arguments.
+              """
+              js_file = Path(js_path)
+              code = js_file.read_text(encoding='utf-8')
+              table_match = re.search(
+                  r'var proxiedFunctionTable\s*=\s*\[([^\]]+)\];', code
+              )
+              assert table_match, 'V70: generated JS has no Emscripten proxy table'
+              entries = [item.strip() for item in table_match.group(1).split(',')]
+              assert len(entries) == len(set(entries)), 'V70: duplicate proxy entries'
+              targets = [
+                  ('_SDL_AddTimer',
+                   'var _SDL_AddTimer = function(',
+                   'function _SDL_CreateRGBSurface(', 3),
+                  ('_SDL_CreateRGBSurfaceFrom',
+                   'function _SDL_CreateRGBSurfaceFrom(',
+                   'var _SDL_Delay =', 9),
+                  ('_SDL_RemoveTimer',
+                   'function _SDL_RemoveTimer(',
+                   'var _SDL_SaveBMP_RW', 1),
+              ]
+              for symbol, begin, end, expected_argc in targets:
+                  assert symbol in entries, 'V70: missing proxy '+symbol
+                  assert code.count(begin) == 1, 'V70: missing body '+symbol
+                  begin_at = code.index(begin)
+                  end_at = code.index(end, begin_at)
+                  block = code[begin_at:end_at]
+                  pattern = r'proxyToMainThread\(\s*(\d+)\s*(,\s*0\s*,\s*1\s*,)'
+                  found = list(re.finditer(pattern, block))
+                  assert len(found) == 1, 'V70: unexpected proxy calls '+symbol
+                  old_index = int(found[0].group(1))
+                  new_index = entries.index(symbol)
+                  header = block.split('{', 1)[0]
+                  args = header[header.index('(')+1:header.rindex(')')]
+                  assert len(args.split(',')) == expected_argc, (
+                      symbol, args, expected_argc
+                  )
+                  block = re.sub(
+                      pattern,
+                      lambda m: 'proxyToMainThread('+str(new_index)+m.group(2),
+                      block, count=1
+                  )
+                  code = code[:begin_at]+block+code[end_at:]
+                  print('V70 proxy', symbol, 'V65 index', old_index,
+                        '=> actual index', new_index,
+                        'arity', expected_argc, flush=True)
+              # If the new toolchain has another proxy mismatch, report the
+              # actual function rather than losing the error in a generic abort.
+              diagnostic='assert(func.length == numCallArgs, "Call args mismatch in _emscripten_receive_on_main_thread_js");'
+              assert code.count(diagnostic)==1, 'V70: unknown proxy assertion'
+              verbose=('if (!func || func.length !== numCallArgs) {\n'
+                       '    var info = "V70 proxy mismatch: index=" + funcIndex +\n'
+                       '      " name=" + (func ? func.name : "missing") +\n'
+                       '      " expected=" + (func ? func.length : "missing") +\n'
+                       '      " received=" + numCallArgs;\n'
+                       '    err(info);\n'
+                       '    throw new Error(info);\n'
+                       '  }')
+              code=code.replace(diagnostic, verbose, 1)
+              assert 'lineage-v70.wasm' in code
+              assert 'lineage-v70.data' in code
+              js_file.write_text(code, encoding='utf-8')
+              subprocess.run(['node','--check',str(js_file)],check=True)
+
           # Confirm the exact V67 workflow yields the patch anchors BEFORE
           # starting the costly native compilation.
           parsed_page = available['V67 | Build offline character creation and selection']
@@ -97,7 +166,7 @@ jobs:
           assert parsed_page.count("const v67Key='sanctuary-game2-v67-characters';") == 1
 
           for step_number, title in enumerate(stages, 1):
-              script = available[title].replace('V67', 'V69').replace('v67', 'v69')
+              script = available[title].replace('V67', 'V70').replace('v67', 'v70')
               if title == 'V67 | Build offline character creation and selection':
                   # Emscripten MODULARIZE hides FS inside the instance.
                   # preRun receives Module as its first argument; FS is exported
@@ -110,94 +179,98 @@ jobs:
                   # No whitespace-sensitive checks or diagnostic additions here.
                   # The already patched module.FS.writeFile is sufficient.
                   # Keep the browser save key stable across future versions.
-                  prior_key = "const v69Key='sanctuary-game2-v69-characters';"
+                  prior_key = "const v70Key='sanctuary-game2-v70-characters';"
                   assert script.count(prior_key) == 1
                   script = script.replace(
-                      prior_key, "const v69Key='sanctuary-game2-characters-v1';", 1
+                      prior_key, "const v70Key='sanctuary-game2-characters-v1';", 1
                   )
               if title == 'V67 | Test character creation, persistence and native entry':
                   # Preserve V67's actual test gate: character data must reach
                   # the real C++ game drawmode, not merely the HTML fallback.
                   assert 'result["native_game_ready"]' in script
                   assert 'timeout=100000' in script
-                  assert 'V69: offline native game ready:' in script
+                  assert 'V70: offline native game ready:' in script
 
               print('\n' + '=' * 72, flush=True)
-              print(f'V69 [{step_number}/{len(stages)}] {title}', flush=True)
+              print(f'V70 [{step_number}/{len(stages)}] {title}', flush=True)
               print('=' * 72, flush=True)
               subprocess.run(
                   ['bash', '-e', '-o', 'pipefail', '-c', script],
                   check=True,
                   env=os.environ.copy(),
               )
+              if title == 'V67 | Preserve V65 image decoder and repair invalid SDL blits':
+                  # V65 hardcoded proxy IDs are not valid after recompiling C++.
+                  # Fix the JS worker/main-thread bridge before packaging the page.
+                  align_sdl_proxy_indices('dist/lineage-v70.js')
               if title == 'V67 | Build offline character creation and selection':
-                  html = Path('published/v69.html').read_text(encoding='utf-8')
+                  html = Path('published/v70.html').read_text(encoding='utf-8')
                   assert html.count('preRun:[function(module){') == 1
                   assert html.count('module.FS.writeFile(') == 1
                   assert 'sanctuary-game2-characters-v1' in html
                   native = Path('upstream-l1j/src/sdl_user.cpp').read_text()
-                  assert 'fopen("/v69-character.txt","rb")' in native
-                  assert '"/v69-character.txt"' in html
-                  assert 'lineage-v69.wasm' in html
+                  assert 'fopen("/v70-character.txt","rb")' in native
+                  assert '"/v70-character.txt"' in html
+                  assert 'lineage-v70.wasm' in html
 
-          report = json.loads(Path('reports/V69-browser.json').read_text())
+          report = json.loads(Path('reports/V70-browser.json').read_text())
           assert report['character_saved']
           assert report['character_restored']
           assert report['native_game_ready']
           assert report['passed']
-          print('V69: character creation, persistent storage and native game entry verified.', flush=True)
+          print('V70: character creation, persistent storage and native game entry verified.', flush=True)
           PY
-          python3 -m py_compile /tmp/v69-run.py
-          python3 -u /tmp/v69-run.py 2>&1 | tee V69-execution.log
+          python3 -m py_compile /tmp/v70-run.py
+          python3 -u /tmp/v70-run.py 2>&1 | tee V70-execution.log
 
-      - name: "V69 | Upload native game diagnostics"
+      - name: "V70 | Upload native game diagnostics"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V69-Offline-Character
+          name: Sanctuary-game2-V70-Offline-Character
           path: |
-            V69-execution.log
-            reports/V69-browser.json
-            reports/V69-mobile.png
-            reports/V69-build.txt
-            reports/V69-http.txt
-            reports/V69-original-music.sha256
+            V70-execution.log
+            reports/V70-browser.json
+            reports/V70-mobile.png
+            reports/V70-build.txt
+            reports/V70-http.txt
+            reports/V70-original-music.sha256
           if-no-files-found: warn
           retention-days: 30
 
-      - name: "V69 | Publish only when actual C++ character entry succeeds"
+      - name: "V70 | Publish only when actual C++ character entry succeeds"
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json
           from pathlib import Path
-          result = json.loads(Path('reports/V69-browser.json').read_text())
+          result = json.loads(Path('reports/V70-browser.json').read_text())
           assert result['passed'] and result['character_saved']
           assert result['character_restored'] and result['native_game_ready']
-          page = Path('published/v69.html').read_text()
+          page = Path('published/v70.html').read_text()
           assert 'module.FS.writeFile(' in page
           PY
-          git -C published add -- index.html v69.html \
-            lineage-v69.js lineage-v69.wasm lineage-v69.data
+          git -C published add -- index.html v70.html \
+            lineage-v70.js lineage-v70.wasm lineage-v70.data
           git -C published config user.name 'github-actions[bot]'
           git -C published config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           if ! git -C published diff --cached --quiet; then
-            git -C published commit -m 'build-web.yml V69: fix browser to WASM character file transfer'
+            git -C published commit -m 'build-web.yml V70: fix browser to WASM character file transfer'
             git -C published push origin HEAD:gh-pages
           fi
 
-      - name: "V69 | Record real result"
+      - name: "V70 | Record real result"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V69 | Sanctuary game2 GitHub Pages'
-            echo 'V67 character save and reload had passed; FS was undefined in preRun.'
-            echo 'Uses Module.FS passed to the Emscripten preRun callback.'
-            echo 'Reuses V67 C++ and V65 SDL build scripts from the exact Git commit.'
+            echo '# build-web.yml | V70 | Sanctuary game2 GitHub Pages'
+            echo 'V69 character save and reload passed, but SDL worker proxy arities mismatched.'
+            echo 'Retains the fixed Module.FS character transfer introduced in V69.'
+            echo 'Maps transplanted SDL timer/pixel-loader proxies to the current generated table.'
             echo 'Uses the stable browser character key sanctuary-game2-characters-v1.'
             echo 'Original music data is retained and verified by the V67 build stages.'
             echo 'Deployment requires creation, browser persistence and real C++ entry.'
-            echo 'Map, movement and combat remain outside this version.'
+            echo 'Detailed mismatch diagnostics include function index, name and arity; gameplay is not yet verified.'
           } >> "$GITHUB_STEP_SUMMARY"
