@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V62 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V62 | Sanctuary game2 GitHub Pages"
+name: "build-web.yml | V63 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V63 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
@@ -13,28 +13,28 @@ permissions:
   contents: write
 
 concurrency:
-  group: game2-v62-v45-graphics-rwops
+  group: game2-v63-v45-graphics-rwops
   cancel-in-progress: false
 
 jobs:
-  original_client_v62:
-    name: "build-web.yml | V62 | Repair original PNG and IMG reading"
+  original_client_v63:
+    name: "build-web.yml | V63 | Repair original PNG and IMG reading"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - name: "V62 | Checkout game2 history including V45 success"
+      - name: "V63 | Checkout game2 history including V45 success"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: "V62 | Checkout deployed original music and V59 graphics"
+      - name: "V63 | Checkout deployed original music and V59 graphics"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           persist-credentials: true
 
-      - name: "V62 | Checkout exact C++ source used by successful V45"
+      - name: "V63 | Checkout exact C++ source used by successful V45"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -42,12 +42,12 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V62 | Set up original V45 Emscripten"
+      - name: "V63 | Set up original V45 Emscripten"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V62 | Reuse V59 resource bytes and original V45 audio without conversion"
+      - name: "V63 | Reuse V59 resource bytes and original V45 audio without conversion"
         shell: bash
         run: |
           set -euo pipefail
@@ -86,9 +86,9 @@ jobs:
                     'Text.idx','Text.pak','Font/eng.fnt','Font/SMALL.FNT']
           assert all((Path('runtime/lineage')/f).is_file() for f in required)
           assert music
-          (Path('reports')/'V62-original-audio.sha256').write_text(music+'  music0.mp3\n')
-          print('V62 original sound untouched:',music)
-          print('V62 original V59 package members:',len(seen))
+          (Path('reports')/'V63-original-audio.sha256').write_text(music+'  music0.mp3\n')
+          print('V63 original sound unchanged:',music)
+          print('V63 original V59 package members:',len(seen))
           PY
           cat > runtime/Lineage.ini <<'INI'
           Path = /lineage/
@@ -100,57 +100,88 @@ jobs:
           INI
           test -s upstream-l1j/src/sprite_table.txt
 
-      - name: "V62 | Compile exact V45 source with only PNG and IMG I/O corrected"
+      - name: "V63 | Compile original client with synchronous startup graphics"
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/v62-compile.py <<'PY'
+          cat > /tmp/v63-compile.py <<'PY'
           from pathlib import Path
           import re,subprocess
+
           source_root=Path('upstream-l1j')
           text=(source_root/'Makefile.am').read_text()
           match=re.search(r'^Lineage_SOURCES\s*=\s*\\\s*\n(.*?)\nif MAC',text,re.M|re.S)
           assert match,'Original source list changed'
           sources=re.findall(r'src/[\w./-]+\.(?:cpp|c)\b',match.group(1))
           assert len(sources)==60,len(sources)
-          flags=['-O1','-g0','-pthread','-fexceptions','-sUSE_SDL=1',
-                 '-sUSE_SDL_IMAGE=1','-sUSE_SDL_MIXER=1',
+
+          flags=['-O1','-g0','-pthread','-fexceptions',
+                 '-sUSE_SDL=1','-sUSE_SDL_IMAGE=1','-sUSE_SDL_MIXER=1',
                  '-Iupstream-l1j/src','-Iupstream-l1j/src/resources',
                  '-Iupstream-l1j/include']
+
           objects=[]
           for i,rel in enumerate(sources):
               src=source_root/rel
               assert src.is_file(),rel
               path=src
               code=None
+
               if rel=='src/sdl_master.cpp':
-                  # Allow the client thread's ready flag to be re-read.
                   code=src.read_text()
                   waiting='\t\twhile (!clients[0]->are_you_ready()) {};'
                   assert code.count(waiting)==1
                   code=code.replace(waiting,
                       '\t\twhile (!clients[0]->are_you_ready()) { SDL_Delay(5); }',1)
+
                   timer='\tadd_draw_timer(50);\t//20 fps'
                   assert code.count(timer)==1
-                  code=code.replace(timer,timer+'\n\tprintf("V62: SDL event loop started\\n");',1)
+                  code=code.replace(timer,
+                      timer+'\n\tprintf("V63: SDL event loop started\\n");',1)
+
                   drawing='\t\tclients[0]->draw(cdisplay[0]);'
                   assert code.count(drawing)==1
                   code=code.replace(drawing,
-                      drawing+'\n\t\tstatic bool first_draw = false;'
-                      +'\n\t\tif (!first_draw) {'
-                      +'\n\t\t\tprintf("V62: first SDL draw call finished\\n");'
-                      +'\n\t\t\tfirst_draw = true;'
-                      +'\n\t\t}',1)
+                      drawing+
+                      '\n\t\tstatic bool first_draw = false;'
+                      '\n\t\tif (!first_draw) {'
+                      '\n\t\t\tprintf("V63: first SDL draw call finished\\n");'
+                      '\n\t\t\tfirst_draw = true;'
+                      '\n\t\t}',1)
+
+              elif rel=='src/drawmode/draw_loading.cpp':
+                  # Use the genuine original assets before the first frame.
+                  # No replacement images or simulated loading screen.
+                  code=src.read_text()
+
+                  original_png='\tgfx[0] = new sdl_graphic();\n\tgfx[0]->delay_load(811, 0, 0, GRAPH_PNG, owner);'
+                  original_img='\tgfx[1] = new sdl_graphic();\n\tgfx[1]->delay_load(330, 241, 385, GRAPH_IMG, owner);'
+
+                  assert code.count(original_png)==1
+                  assert code.count(original_img)==1
+
+                  code=code.replace(original_png,
+                      '\tgfx[0] = new sdl_graphic(811, 0, 0, GRAPH_PNG, owner);',1)
+
+                  code=code.replace(original_img,
+                      '\tgfx[1] = new sdl_graphic(330, 241, 385, GRAPH_IMG, owner);'
+                      '\n\tprintf("V63: loading PNG 811=%s IMG 330=%s\\n",'
+                      'gfx[0]->valid() ? "ok" : "missing",'
+                      'gfx[1]->valid() ? "ok" : "missing");',1)
+
               elif rel=='src/resources/pack.cpp':
                   code=src.read_text()
                   old='\topen_data();\t//open the data file it is not already\n\tint num_invalid = 0;'
                   assert code.count(old)==1
-                  code=code.replace(old,'\topen_data();\t//open the data file it is not already\n\tif (!data_buf) return 1;\n\tint num_invalid = 0;',1)
+                  code=code.replace(old,
+                      '\topen_data();\t//open the data file it is not already\n\tif (!data_buf) return 1;\n\tint num_invalid = 0;',1)
+
                   old='unsigned char* pack::load_file(int which, int decrypting)\n{\n\tunsigned char *buf;\n\topen_data();\n'
                   assert code.count(old)==1
                   code=code.replace(old,old+'\tif (!data_buf) return 0;\n',1)
+
               elif rel=='src/resources/music.cpp':
-                  # The NULL guard is identical to successful V45. Do not redesign audio.
+                  # Keep the V45 nonfatal music guard.
                   code=src.read_text()
                   old='\t\t\tMix_PlayMusic(cur_music, -1);'
                   assert code.count(old)==1
@@ -161,13 +192,15 @@ jobs:
                        '\t\t\t\tprintf("V45: Music load unavailable; continuing game.\\n");\n'
                        '\t\t\t}')
                   code=code.replace(old,new,1)
+
               elif rel=='src/resources/sdl_graphic.cpp':
-                  # Emscripten SDL_RWFromConstMem returns an ID, not a C SDL_RWops*.
-                  # Native SDL_RWread/RWtell/RWclose would call garbage table pointers.
+                  # Preserve the V61 PNG/IMG reading fix.
                   code=src.read_text()
                   code='#include <SDL/SDL_image.h>\n'+code
+
                   start=code.index('SDL_Surface *sdl_graphic::get_img(int num, sdl_user *who)')
                   end=code.index('SDL_Surface *sdl_graphic::get_image(SDL_RWops *buf)',start)
+
                   raw_img='''SDL_Surface *sdl_graphic::get_img(int num, sdl_user *who)
           {
               if (!who) return 0;
@@ -205,33 +238,42 @@ jobs:
 
           '''
                   code=code[:start]+raw_img+code[end:]
+
                   old='\t\t\tsdl_buf = SDL_RWFromConstMem(buffer, size);\n\t\t\tret = get_image(sdl_buf);\n\t\t\tSDL_RWclose(sdl_buf);'
-                  assert code.count(old)==1,'Original PNG decode path changed'
-                  code=code.replace(old,'\t\t\tsdl_buf = SDL_RWFromConstMem(buffer, size);\n\t\t\tret = IMG_Load_RW(sdl_buf, 1);',1)
+                  assert code.count(old)==1
+                  code=code.replace(old,
+                      '\t\t\tsdl_buf = SDL_RWFromConstMem(buffer, size);\n\t\t\tret = IMG_Load_RW(sdl_buf, 1);',1)
                   assert 'SDL_RWclose(sdl_buf)' not in code
+
               if code is not None:
-                  path=Path('build')/('v62-'+src.name)
+                  path=Path('build')/('v63-'+src.name)
                   path.write_text(code)
+
               obj=Path('build/objects')/f'{i:03d}.o'
-              subprocess.run(['emcc' if rel.endswith('.c') else 'em++',
-                              *flags,'-I'+str(src.parent),'-c',str(path),'-o',str(obj)],check=True)
+              subprocess.run(
+                  ['emcc' if rel.endswith('.c') else 'em++',
+                   *flags,'-I'+str(src.parent),
+                   '-c',str(path),'-o',str(obj)],
+                  check=True
+              )
               objects.append(str(obj))
-              print('V62 compiled',rel,flush=True)
+              print('V63 compiled',rel,flush=True)
+
           Path('build/objects-list.txt').write_text('\n'.join(objects)+'\n')
           assert len(objects)==60
           PY
-          python3 /tmp/v62-compile.py 2>&1 | tee reports/V62-compile.txt
+          python3 /tmp/v63-compile.py 2>&1 | tee reports/V63-compile.txt
           test -z "$(git -C upstream-l1j status --porcelain)"
 
-      - name: "V62 | Link with the EXACT V45 SDL compatibility source"
+      - name: "V63 | Link with the exact successful V45 SDL compatibility source"
         shell: bash
         run: |
           set -euo pipefail
-          # Reuse the actual successful SDL shim, rather than rewriting it.
           python3 - <<'PY'
           import subprocess,pathlib,textwrap
           commit='9dfbf5df2a8476397303237098e18301685bfe3b'
-          original=subprocess.check_output(['git','show',commit+':.github/workflows/build-web.yml'],text=True)
+          original=subprocess.check_output(
+              ['git','show',commit+':.github/workflows/build-web.yml'],text=True)
           opening="          cat > build/v45-sdl12-compat.cpp <<'CPP_COMPAT'\n"
           assert original.count(opening)==1
           begin=original.index(opening)+len(opening)
@@ -239,15 +281,21 @@ jobs:
           source=textwrap.dedent(original[begin:end])+'\n'
           assert 'v45_register_original_paks' in source
           assert 'SDL_WaitEvent' in source
-          pathlib.Path('build/v62-sdl12-compat.cpp').write_text(source)
+          pathlib.Path('build/v63-sdl12-compat.cpp').write_text(source)
           PY
+
           em++ -O1 -pthread -fexceptions \
-            -Iupstream-l1j/src -Iupstream-l1j/src/resources -Iupstream-l1j/include \
+            -Iupstream-l1j/src \
+            -Iupstream-l1j/src/resources \
+            -Iupstream-l1j/include \
             -sUSE_SDL=1 -sUSE_SDL_IMAGE=1 -sUSE_SDL_MIXER=1 \
-            -c build/v62-sdl12-compat.cpp -o build/v62-sdl12-compat.o
+            -c build/v63-sdl12-compat.cpp -o build/v63-sdl12-compat.o
+
           mapfile -t objects < build/objects-list.txt
           test "${#objects[@]}" -eq 60
-          em++ "${objects[@]}" build/v62-sdl12-compat.o -o dist/lineage-v62.js \
+
+          em++ "${objects[@]}" build/v63-sdl12-compat.o \
+            -o dist/lineage-v63.js \
             -O1 -pthread -fexceptions \
             -sUSE_SDL=1 -sUSE_SDL_IMAGE=1 -sUSE_SDL_MIXER=1 \
             -sSTB_IMAGE=1 \
@@ -260,66 +308,93 @@ jobs:
             --embed-file runtime/Lineage.ini@/Lineage.ini \
             --embed-file upstream-l1j/src/sprite_table.txt@/sprite_table.txt \
             --preload-file runtime/lineage@/lineage \
-            2>&1 | tee reports/V62-link.txt
-          test -s dist/lineage-v62.wasm
-          test -s dist/lineage-v62.js
-          test -s dist/lineage-v62.data
+            2>&1 | tee reports/V63-link.txt
 
-      - name: "V62 | Retain V59 repeat-frame timer and RGB555 converter"
+          test -s dist/lineage-v63.wasm
+          test -s dist/lineage-v63.js
+          test -s dist/lineage-v63.data
+
+      - name: "V63 | Keep V59 timer and RGB555 conversion"
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/v62-js.py <<'PY'
+          cat > /tmp/v63-js.py <<'PY'
           from pathlib import Path
           import json,hashlib
+
           base=Path('published')
           original=(base/'lineage-v59.js').read_text()
-          target=Path('dist/lineage-v62.js')
+          target=Path('dist/lineage-v63.js')
           js=target.read_text()
+
           def transplant(current,ref,start,end):
               assert current.count(start)==1 and ref.count(start)==1,start
-              i=current.index(start);j=current.index(end,i)
-              a=ref.index(start);b=ref.index(end,a)
+              i=current.index(start)
+              j=current.index(end,i)
+              a=ref.index(start)
+              b=ref.index(end,a)
               return current[:i]+ref[a:b]+current[j:]
+
           v59_start='var v59Timers = new Map();'
           anchor='function _SDL_CreateRGBSurface('
           assert original.count(v59_start)==1
+
           begin=original.index(v59_start)
           end=original.index(anchor,begin)
-          timer=original[begin:end].replace('v59Timers','v62Timers').replace('v59TimerID','v62TimerID')
+          timer=original[begin:end].replace('v59Timers','v63Timers').replace(
+              'v59TimerID','v63TimerID')
+
           old_start='var _SDL_AddTimer = function('
           assert js.count(old_start)==1
-          at=js.index(old_start);end_at=js.index(anchor,at)
+          at=js.index(old_start)
+          end_at=js.index(anchor,at)
           js=js[:at]+timer+js[end_at:]
-          js=transplant(js,original,'function _SDL_CreateRGBSurfaceFrom(', 'var _SDL_Delay =')
+
+          js=transplant(
+              js,original,
+              'function _SDL_CreateRGBSurfaceFrom(',
+              'var _SDL_Delay ='
+          )
+
           i=js.index('function _SDL_RemoveTimer(')
           j=js.index('var _SDL_SaveBMP_RW',i)
           a=original.index('function _SDL_RemoveTimer(')
           b=original.index('var _SDL_SaveBMP_RW',a)
-          js=js[:i]+original[a:b].replace('v59Timers','v62Timers')+js[j:]
-          assert 'lineage-v62.data' in js and 'lineage-v62.wasm' in js
+          js=js[:i]+original[a:b].replace('v59Timers','v63Timers')+js[j:]
+
+          assert 'lineage-v63.data' in js
+          assert 'lineage-v63.wasm' in js
           target.write_text(js)
-          def digest(jsfile,datafile):
-              txt=Path(jsfile).read_text(); anchor='  loadPackage({'
+
+          def music_digest(jsfile,datafile):
+              txt=Path(jsfile).read_text()
+              anchor='  loadPackage({'
               assert txt.count(anchor)==1
               start=txt.index(anchor)+len('  loadPackage(')
               metadata,_=json.JSONDecoder().raw_decode(txt[start:])
               data=Path(datafile).read_bytes()
               assert len(data)==metadata['remote_package_size']
-              item=next(f for f in metadata['files'] if f['filename']=='/lineage/sound/music0.mp3')
+              item=next(
+                  f for f in metadata['files']
+                  if f['filename']=='/lineage/sound/music0.mp3'
+              )
               sound=data[item['start']:item['end']]
               assert len(sound)==1632319
               return hashlib.sha256(sound).hexdigest()
-          before=digest(base/'lineage-v59.js',base/'lineage-v59.data')
-          after=digest(target,Path('dist/lineage-v62.data'))
-          assert before==after,'Original V45 music changed!'
-          print('V62 original music SHA256 unchanged:',after)
-          PY
-          python3 /tmp/v62-js.py
-          node --check dist/lineage-v62.js
-          sha256sum dist/lineage-v62.* > reports/V62-build-sha256.txt
 
-      - name: "V62 | Build page from V60 mobile log and original audio layout"
+          before=music_digest(
+              base/'lineage-v59.js',base/'lineage-v59.data')
+          after=music_digest(
+              target,Path('dist/lineage-v63.data'))
+          assert before==after,'Original music data changed'
+          print('V63 original music SHA256 unchanged:',after)
+          PY
+
+          python3 /tmp/v63-js.py
+          node --check dist/lineage-v63.js
+          sha256sum dist/lineage-v63.* > reports/V63-build-sha256.txt
+
+      - name: "V63 | Build page using existing mobile controls and log"
         shell: bash
         run: |
           set -euo pipefail
@@ -328,141 +403,230 @@ jobs:
           p=Path('published')
           page=(p/'v60.html').read_text()
           assert page.count('lineage-v60.js')>=2
-          page=page.replace('lineage-v60.js','lineage-v62.js')
-          page=page.replace('lineage-v45.wasm','lineage-v62.wasm')
-          page=page.replace('V60 Original Client Web Runtime','V62 Original Client Web Runtime')
-          page=page.replace('V60 (V45 original audio preserved)','V62 (V45 original audio preserved)')
+
+          page=page.replace('lineage-v60.js','lineage-v63.js')
+          page=page.replace('lineage-v45.wasm','lineage-v63.wasm')
+          page=page.replace(
+              'V60 Original Client Web Runtime',
+              'V63 Original Client Web Runtime')
+          page=page.replace(
+              'V60 (V45 original audio preserved)',
+              'V63 (V45 original audio preserved)')
+
           assert 'coi-serviceworker-v45.js' in page
           assert 'v45-paks.json' in page
           assert 'pointer-events:auto;touch-action:pan-y' in page
           assert 'boxedwine' not in page.lower()
-          (p/'v62.html').write_text(page)
+
+          (p/'v63.html').write_text(page)
           (p/'index.html').write_text(page)
           PY
-          cp dist/lineage-v62.js dist/lineage-v62.wasm dist/lineage-v62.data published/
-          node --check published/lineage-v62.js
-          cmp published/index.html published/v62.html
 
-      - name: "V62 | Install Chromium for actual render test"
+          cp dist/lineage-v63.js dist/lineage-v63.wasm dist/lineage-v63.data published/
+          node --check published/lineage-v63.js
+          cmp published/index.html published/v63.html
+
+      - name: "V63 | Install Chromium for actual screen test"
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install --quiet 'playwright==1.56.0' 'pillow>=10,<13'
           python3 -m playwright install --with-deps chromium
 
-      - name: "V62 | Verify real SDL canvas before public deployment"
+      - name: "V63 | Verify original images and canvas before deployment"
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p reports/site-root
           ln -s "$GITHUB_WORKSPACE/published" reports/site-root/game2
-          cat > /tmp/v62-server.py <<'PY'
+
+          cat > /tmp/v63-server.py <<'PY'
           from functools import partial
           from http.server import SimpleHTTPRequestHandler,ThreadingHTTPServer
           from pathlib import Path
+
           class H(SimpleHTTPRequestHandler):
               def end_headers(self):
-                  for key,value in [('Cross-Origin-Opener-Policy','same-origin'),
-                                    ('Cross-Origin-Embedder-Policy','require-corp'),
-                                    ('Cross-Origin-Resource-Policy','same-origin')]:
+                  for key,value in [
+                      ('Cross-Origin-Opener-Policy','same-origin'),
+                      ('Cross-Origin-Embedder-Policy','require-corp'),
+                      ('Cross-Origin-Resource-Policy','same-origin')
+                  ]:
                       self.send_header(key,value)
                   super().end_headers()
-          ThreadingHTTPServer(('127.0.0.1',8765),partial(H,directory=str(Path('reports/site-root').resolve()))).serve_forever()
+
+          root=Path('reports/site-root').resolve()
+          ThreadingHTTPServer(
+              ('127.0.0.1',8765),
+              partial(H,directory=str(root))
+          ).serve_forever()
           PY
-          cat > /tmp/v62-browser.py <<'PY'
+
+          cat > /tmp/v63-browser.py <<'PY'
           import asyncio,io,json
           from pathlib import Path
           from PIL import Image
           from playwright.async_api import async_playwright
-          report={'version':'V62','messages':[],'errors':[],'failed_requests':[]}
+
+          report={
+              'version':'V63',
+              'messages':[],
+              'errors':[],
+              'failed_requests':[]
+          }
+
           async def check():
               async with async_playwright() as p:
-                  browser=await p.chromium.launch(headless=True,args=['--no-sandbox','--disable-dev-shm-usage'])
-                  page=await browser.new_page(viewport={'width':1024,'height':768})
-                  page.on('console',lambda x:report['messages'].append(x.text[-1000:]) if len(report['messages'])<500 else None)
-                  page.on('pageerror',lambda x:report['errors'].append(str(x)))
-                  page.on('requestfailed',lambda x:report['failed_requests'].append(x.url))
+                  browser=await p.chromium.launch(
+                      headless=True,
+                      args=['--no-sandbox','--disable-dev-shm-usage'])
+                  page=await browser.new_page(
+                      viewport={'width':1024,'height':768})
+
+                  page.on('console',lambda x:
+                      report['messages'].append(x.text[-1000:])
+                      if len(report['messages'])<500 else None)
+                  page.on('pageerror',lambda x:
+                      report['errors'].append(str(x)))
+                  page.on('requestfailed',lambda x:
+                      report['failed_requests'].append(x.url))
+
                   try:
-                      await page.goto('http://127.0.0.1:8765/game2/v62.html',wait_until='domcontentloaded')
-                      await page.wait_for_function('crossOriginIsolated && typeof SharedArrayBuffer==="function"',timeout=25000)
+                      await page.goto(
+                          'http://127.0.0.1:8765/game2/v63.html',
+                          wait_until='domcontentloaded')
+                      await page.wait_for_function(
+                          'crossOriginIsolated && typeof SharedArrayBuffer==="function"',
+                          timeout=25000)
                       await page.wait_for_timeout(70000)
+
                       report['state']=await page.locator('#state').inner_text()
                       report['log']=(await page.locator('#logbox').inner_text())[-14000:]
-                      await page.screenshot(path='reports/V62-screen.png')
-                      await page.add_style_tag(content='#overlay,#logbox,#tools,#controls{display:none!important}')
-                      raw=await page.locator('#canvas').screenshot(path='reports/V62-canvas.png')
+                      await page.screenshot(path='reports/V63-screen.png')
+
+                      log=report['log']
+                      report['event_loop_started']='V63: SDL event loop started' in log
+                      report['draw_called']='V63: first SDL draw call finished' in log
+                      report['original_background_loaded']='V63: loading PNG 811=ok' in log
+                      report['original_progress_loaded']='IMG 330=ok' in log
+
+                      await page.add_style_tag(
+                          content='#overlay,#logbox,#tools,#controls{display:none!important}')
+
+                      raw=await page.locator('#canvas').screenshot(
+                          path='reports/V63-canvas.png')
                       img=Image.open(io.BytesIO(raw)).convert('RGB').resize((128,96))
                       pixels=list(img.getdata())
-                      report['nonblack_fraction']=round(sum(max(x)>30 for x in pixels)/len(pixels),4)
-                      report['graphics_rendered']=report['nonblack_fraction']>0.005
-                      assert report['graphics_rendered'],'Original SDL canvas remained black'
-                      assert not any('function signature mismatch' in x for x in report['errors']),report['errors']
+
+                      report['nonblack_fraction']=round(
+                          sum(max(x)>30 for x in pixels)/len(pixels),4)
+
+                      report['graphics_rendered']=(
+                          report['original_background_loaded']
+                          and report['nonblack_fraction']>0.02
+                      )
+
+                      assert report['original_background_loaded'], \
+                          'Original 811.png was not successfully decoded'
+                      assert report['graphics_rendered'], \
+                          'Original SDL canvas remained blank'
+                      assert not any(
+                          'function signature mismatch' in x
+                          for x in report['errors']
+                      ),report['errors']
+
                   except Exception as exc:
                       report['test_exception']=str(exc)
                       report['graphics_rendered']=False
                   finally:
                       await browser.close()
-              Path('reports/V62-browser.json').write_text(json.dumps(report,indent=2,ensure_ascii=False))
-              print('Original SDL graphics visible:',report.get('graphics_rendered'),flush=True)
-              print('Canvas fraction:',report.get('nonblack_fraction'),flush=True)
-              print('SDL event loop started:', 'V62: SDL event loop started' in report.get('log',''),flush=True)
-              print('SDL draw called:', 'V62: first SDL draw call finished' in report.get('log',''),flush=True)
-              print('Recent game log:',report.get('log','')[-3500:],flush=True)
-              for x in report['errors'][-5:]:print('ERROR',x,flush=True)
-              if not report.get('graphics_rendered'):raise SystemExit('V62 browser did not render original graphics; leaving deployed version unchanged')
+
+              Path('reports/V63-browser.json').write_text(
+                  json.dumps(report,indent=2,ensure_ascii=False))
+
+              print('Original PNG 811 loaded:',
+                    report.get('original_background_loaded'),flush=True)
+              print('Original IMG 330 loaded:',
+                    report.get('original_progress_loaded'),flush=True)
+              print('SDL event loop:',
+                    report.get('event_loop_started'),flush=True)
+              print('SDL draw:',
+                    report.get('draw_called'),flush=True)
+              print('Canvas nonblack fraction:',
+                    report.get('nonblack_fraction'),flush=True)
+              print('Game log:',
+                    report.get('log','')[-3500:],flush=True)
+
+              for error in report['errors'][-5:]:
+                  print('ERROR:',error,flush=True)
+
+              if not report.get('graphics_rendered'):
+                  raise SystemExit(
+                      'V63 original graphics not rendered; deployment blocked')
+
           asyncio.run(check())
           PY
-          python3 /tmp/v62-server.py > reports/V62-http.txt 2>&1 &
+
+          python3 /tmp/v63-server.py > reports/V63-http.txt 2>&1 &
           server=$!
           trap 'kill "$server" 2>/dev/null || true' EXIT
+
           for i in $(seq 1 30); do
-            if curl -fsS -o /dev/null http://127.0.0.1:8765/game2/v62.html; then break; fi
+            if curl -fsS -o /dev/null \
+              http://127.0.0.1:8765/game2/v63.html; then break; fi
             sleep 1
           done
-          python3 /tmp/v62-browser.py
 
-      - name: "V62 | Save diagnostics including real screenshot"
+          python3 /tmp/v63-browser.py
+
+      - name: "V63 | Save diagnostics and actual screenshot"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V62-Original-RWops-Render
+          name: Sanctuary-game2-V63-Original-Startup-Graphics
           path: |
-            reports/V62-browser.json
-            reports/V62-screen.png
-            reports/V62-canvas.png
-            reports/V62-compile.txt
-            reports/V62-link.txt
-            reports/V62-original-audio.sha256
-            reports/V62-http.txt
+            reports/V63-browser.json
+            reports/V63-screen.png
+            reports/V63-canvas.png
+            reports/V63-compile.txt
+            reports/V63-link.txt
+            reports/V63-original-audio.sha256
+            reports/V63-http.txt
           retention-days: 30
           if-no-files-found: warn
 
-      - name: "V62 | Publish only after actual SDL graphics appear"
+      - name: "V63 | Publish only after original graphics are visible"
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json
-          assert json.load(open('reports/V62-browser.json'))['graphics_rendered']
+          with open('reports/V63-browser.json') as f:
+              report=json.load(f)
+          assert report['graphics_rendered']
+          assert report['original_background_loaded']
           PY
-          git -C published add -- index.html v62.html \
-            lineage-v62.js lineage-v62.wasm lineage-v62.data
+
+          git -C published add -- index.html v63.html \
+            lineage-v63.js lineage-v63.wasm lineage-v63.data
           git -C published config user.name 'github-actions[bot]'
           git -C published config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
           if ! git -C published diff --cached --quiet; then
-            git -C published commit -m 'build-web.yml V62: repair original SDL PNG and IMG loading'
+            git -C published commit -m \
+              'build-web.yml V63: load genuine startup graphics synchronously'
             git -C published push origin HEAD:gh-pages
           fi
 
-      - name: "V62 | Record verified outcome"
+      - name: "V63 | Record actual result"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V62 | Original SDL graphics repair'
-            echo 'Original V45 music function and original V59 music bytes are retained.'
-            echo 'Keeps the V62 PNG and IMG fix, while removing unnecessary PAK remounting.'
-            echo 'Uses original V45 SDL shim and repairs the main-thread ready wait.'
-            echo 'Refuses deployment unless Chromium displays nonblack original SDL canvas pixels.'
-            echo 'A visible loading screen does not prove server login or gameplay.'
+            echo '# build-web.yml | V63 | Sanctuary game2 GitHub Pages'
+            echo 'Keeps original V45 music handling and V59 resource data.'
+            echo 'Loads genuine 811.png and 330.img directly during loading screen construction.'
+            echo 'Records SDL event loop, first drawing call and asset load results.'
+            echo 'Does not deploy unless the original PNG and visible canvas pixels are verified.'
+            echo 'A successful loading screen does not demonstrate completed gameplay.'
           } >> "$GITHUB_STEP_SUMMARY"
