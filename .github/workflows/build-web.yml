@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V66 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V66 | Sanctuary game2 GitHub Pages"
+name: "build-web.yml | V67 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V67 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
@@ -13,549 +13,1134 @@ permissions:
   contents: write
 
 concurrency:
-  group: game2-v66-sdl-surface-repair
+  group: game2-v67-offline-character
   cancel-in-progress: false
 
 jobs:
-  original_client_v66:
-    name: "build-web.yml | V66 | Repair SDL surface crash"
+  original_client_v67:
+    name: "build-web.yml | V67 | Offline character creation and game entry"
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 120
 
     steps:
-      - name: "V66 | Checkout successful deployed V65"
+      - name: "V67 | Checkout game2 history"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "V67 | Checkout successful original resources"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
-          persist-credentials: true
 
-      - name: "V66 | Protect original V65 graphics and music"
+      - name: "V67 | Checkout original client C++"
+        uses: actions/checkout@v4
+        with:
+          repository: uglyoldbob/l1j-client
+          ref: 83052f6b1c5bda59d4c4cbaf01aa2e72ea409853
+          path: upstream-l1j
+          persist-credentials: false
+
+      - name: "V67 | Set up original Emscripten"
+        uses: emscripten-core/setup-emsdk@v15
+        with:
+          version: "3.1.74"
+
+      - name: "V67 | Restore unchanged V59 game resources"
         shell: bash
         run: |
           set -euo pipefail
-          test "$GITHUB_REPOSITORY" = "gowellsik-hue/game2"
-          mkdir -p reports
+          mkdir -p runtime build/objects dist reports
 
-          for file in \
-            index.html \
-            v65.html \
-            lineage-v65.js \
-            lineage-v65.wasm \
-            lineage-v65.data \
-            v65-811.png \
-            v65-music0.mp3 \
-            v45-paks.json \
-            coi-serviceworker-v45.js; do
-            test -s "published/$file" || {
-              echo "Missing V65 file: $file"
-              exit 1
-            }
-          done
-
-          sha256sum \
-            published/lineage-v65.js \
-            published/lineage-v65.wasm \
-            published/lineage-v65.data \
-            published/v65-811.png \
-            published/v65-music0.mp3 \
-            published/coi-serviceworker-v45.js \
-            > reports/V66-preserved-assets.sha256
-
-          test "$(stat -c %s published/v65-music0.mp3)" -eq 1632319
-
-          echo "V65 original WASM, data and music locked."
-
-      - name: "V66 | Repair undefined SDL destination surfaces"
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cat > /tmp/v66-patch.py <<'PY'
+          python3 - <<'PY'
+          import json
+          import hashlib
           from pathlib import Path
 
-          root=Path('published')
-          source=(root/'lineage-v65.js').read_text(
-              encoding='utf-8'
+          root=Path("published")
+          source=(root/"lineage-v59.js").read_text()
+          anchor="  loadPackage({"
+          assert source.count(anchor)==1
+          start=source.index(anchor)+len("  loadPackage(")
+          package,_=json.JSONDecoder().raw_decode(source[start:])
+          binary=(root/"lineage-v59.data").read_bytes()
+
+          assert len(binary)==package["remote_package_size"]
+
+          for item in package["files"]:
+              name=item["filename"]
+              assert name.startswith("/lineage/")
+              target=Path("runtime")/name.lstrip("/")
+              target.parent.mkdir(parents=True,exist_ok=True)
+              target.write_bytes(binary[item["start"]:item["end"]])
+
+          music=Path("runtime/lineage/sound/music0.mp3")
+          assert music.stat().st_size==1632319
+
+          digest=hashlib.sha256(music.read_bytes()).hexdigest()
+          (Path("reports")/"V67-original-music.sha256").write_text(
+              digest+"  music0.mp3\n"
+          )
+          print("Original music preserved:",digest)
+          PY
+
+          cat > runtime/Lineage.ini <<'INI'
+          Path = /lineage/
+          NumServers = 1
+          Offline Client
+              Port = 2001
+              GamePort = 2000
+              Names = 127.0.0.1
+          INI
+
+      - name: "V67 | Bypass server and prepare native character entry"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > /tmp/v67-native.py <<'PY'
+          from pathlib import Path
+          import subprocess
+          import textwrap
+
+          root=Path("upstream-l1j/src")
+
+          source=root/"sdl_user.cpp"
+          code=source.read_text()
+
+          begin=code.index(
+              "\tchange_drawmode(DRAWMODE_LOADING);",
+              code.index("void sdl_user::init()")
+          )
+          end=code.index("\n}",begin)
+
+          offline=r'''
+              // V67: server selection and login are not used.
+              // Character data is supplied through the browser filesystem.
+              FILE *local_file=fopen("/v67-character.txt","rb");
+
+              if (!local_file)
+                  throw "V67: no locally selected character";
+
+              char local_name[96]={0};
+              int cls=0,gender=0;
+              int attrs[6]={0};
+
+              if (!fgets(local_name,sizeof(local_name),local_file)) {
+                  fclose(local_file);
+                  throw "V67: local character name missing";
+              }
+
+              char *newline=strchr(local_name,'\n');
+              if (newline) *newline=0;
+
+              int fields=fscanf(
+                  local_file,"%d %d %d %d %d %d %d %d",
+                  &cls,&gender,
+                  &attrs[0],&attrs[1],&attrs[2],
+                  &attrs[3],&attrs[4],&attrs[5]
+              );
+              fclose(local_file);
+
+              if (fields!=8 || strlen(local_name)<2 ||
+                  cls<0 || cls>6 || gender<0 || gender>1)
+                  throw "V67: invalid local character";
+
+              int total=0;
+              for (int i=0;i<6;i++) total+=attrs[i];
+
+              if (total!=75)
+                  throw "V67: character stat total must be 75";
+
+              lin_char_info *local=make_lin_char_info(cls,gender);
+
+              if (local->name) delete [] local->name;
+              local->name=new char[strlen(local_name)+1];
+              strcpy(local->name,local_name);
+
+              local->str=attrs[0];
+              local->dex=attrs[1];
+              local->con=attrs[2];
+              local->wis=attrs[3];
+              local->cha=attrs[4];
+              local->intl=attrs[5];
+
+              local->level=1;
+              local->hp=10;
+              local->mp=10;
+              local->ac=10;
+              local->alignment=0;
+
+              init_codepage(0);
+              init_math_tables();
+
+              // Enter the original game drawmode without a server.
+              change_drawmode(DRAWMODE_GAME);
+
+              draw_game *game=static_cast<draw_game*>(
+                  get_drawmode(false)
+              );
+
+              if (!game)
+                  throw "V67: native game scene could not initialize";
+
+              game->set_selected_char(local);
+
+              printf(
+                  "V67: offline native game ready: %s class=%d gender=%d\n",
+                  local_name,cls,gender
+              );
+
+              delete [] local->name;
+              delete [] local->pledge;
+              delete local;
+          '''
+
+          code=code[:begin]+textwrap.dedent(offline)+code[end:]
+
+          old='''\t\twhile (process_packet() == 0)
+          		{
+          			check_requests();
+          		}'''
+
+          assert code.count(old)==1
+          code=code.replace(
+              old,
+              "\t\twhile (!stop_thread) {\n"
+              "\t\t\tcheck_requests();\n"
+              "\t\t\tSDL_Delay(16);\n"
+              "\t\t}",
+              1
           )
 
-          original="""    var srcData = SDL.surfaces[src];
+          source.write_text(code)
+
+          # Defer incomplete map segment loading.
+          game=root/"drawmode/draw_game.cpp"
+          g=game.read_text()
+
+          hotspot="\tthemap->set_hotspot(mapnum, x, y);"
+          assert g.count(hotspot)>=1
+          g=g.replace(
+              hotspot,
+              '\tprintf("V67: original map loading deferred\\n");',
+              1
+          )
+
+          anchor="\tlineage_font.draw(display, 35, 426, mp_str, 0xFFFE);"
+          assert g.count(anchor)==1
+          g=g.replace(
+              anchor,
+              anchor+
+              "\n\tif (character && character->name)"
+              "\n\t\tlineage_font.draw(display, 124, 390,"
+              " character->name, 0xFFFE);",
+              1
+          )
+
+          game.write_text(g)
+
+          # Restore only the successful V65 compiler script.
+          history=subprocess.check_output(
+              [
+                  "git","show",
+                  "f367cd96be48a8ac240ab1ad04f7e6fb4a60770f:"
+                  ".github/workflows/build-web.yml"
+              ],
+              text=True
+          )
+
+          marker="          cat > /tmp/v65-build.py <<'PY'\n"
+          assert history.count(marker)==1
+
+          at=history.index(marker)+len(marker)
+          stop=history.index("\n          PY",at)
+
+          build=textwrap.dedent(history[at:stop])+"\n"
+          target=Path("/tmp/v65-build.py")
+          target.write_text(build)
+
+          print("V67 native offline entry applied.")
+          print("Original V65 build recipe recovered.")
+          PY
+
+          python3 /tmp/v67-native.py
+          python3 -m py_compile /tmp/v65-build.py
+
+      - name: "V67 | Compile original engine with offline entry"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 /tmp/v65-build.py 2>&1 | tee reports/V67-build.txt
+
+          for ext in js wasm data; do
+            test -s "dist/lineage-v65.$ext"
+          done
+
+      - name: "V67 | Preserve V65 image decoder and repair invalid SDL blits"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > /tmp/v67-js.py <<'PY'
+          from pathlib import Path
+          import subprocess
+          import textwrap
+          import json
+          import hashlib
+
+          workflow=subprocess.check_output(
+              [
+                  "git","show",
+                  "f367cd96be48a8ac240ab1ad04f7e6fb4a60770f:"
+                  ".github/workflows/build-web.yml"
+              ],
+              text=True
+          )
+
+          marker="          cat > /tmp/v65-js.py <<'PY'\n"
+          assert workflow.count(marker)==1
+          start=workflow.index(marker)+len(marker)
+          end=workflow.index("\n          PY",start)
+
+          Path("/tmp/v65-js.py").write_text(
+              textwrap.dedent(workflow[start:end])+"\n"
+          )
+
+          subprocess.run(["python3","/tmp/v65-js.py"],check=True)
+
+          root=Path("dist")
+          for ext in ("js","wasm","data"):
+              (root/("lineage-v65."+ext)).rename(
+                  root/("lineage-v67."+ext)
+              )
+
+          target=root/"lineage-v67.js"
+          code=target.read_text()
+
+          for ext in ("js","wasm","data"):
+              code=code.replace(
+                  "lineage-v65."+ext,
+                  "lineage-v67."+ext
+              )
+
+          old="""    var srcData = SDL.surfaces[src];
               var dstData = SDL.surfaces[dst];
               var sr, dr;"""
 
-          replacement=r"""    var srcData = SDL.surfaces[src];
+          new="""    var srcData = SDL.surfaces[src];
               var dstData = SDL.surfaces[dst];
 
-              // V66: validate both surfaces before accessing clipRect.
-              // The native client can pass a surface that has already
-              // disappeared from Emscripten's JavaScript SDL registry.
-              if (!srcData || !dstData) {
-                var requestedSrc = src;
-                var requestedDst = dst;
-                var originalWidth = -1;
-                var originalHeight = -1;
-                var recovered = false;
+              if (!srcData) {
+                SDL.v67MissingSource=(SDL.v67MissingSource||0)+1;
+                return -1;
+              }
 
-                var addr = dst >>> 0;
-                var memory = GROWABLE_HEAP_U8();
-
-                // Read dimensions only when the native surface
-                // pointer is within WebAssembly linear memory.
-                if (dst && Number.isInteger(dst) &&
-                    addr > 0 && addr + 24 <= memory.length) {
-                  var heap32 = GROWABLE_HEAP_I32();
-                  originalWidth = heap32[(addr + 8) >> 2];
-                  originalHeight = heap32[(addr + 12) >> 2];
-                }
-
-                var screenData = SDL.screen ?
+              if (!dstData) {
+                var screen=SDL.screen ?
                     SDL.surfaces[SDL.screen] : null;
 
-                // When the lost destination is a full-sized
-                // backbuffer, draw into the currently active
-                // original SDL screen instead.
-                if (srcData && !dstData && screenData &&
-                    originalWidth === screenData.width &&
-                    originalHeight === screenData.height) {
-                  dst = SDL.screen;
-                  dstData = screenData;
-                  recovered = true;
-                }
-
-                SDL.v66SurfaceMismatchCount =
-                    (SDL.v66SurfaceMismatchCount || 0) + 1;
-
-                var count = SDL.v66SurfaceMismatchCount;
-
-                // Report early occurrences and exponential
-                // checkpoints without flooding mobile logs.
-                if (count <= 8 ||
-                    (count & (count - 1)) === 0) {
-                  err(
-                    "V66 SDL surface mismatch #" + count +
-                    " src=" + requestedSrc +
-                    " dst=" + requestedDst +
-                    " screen=" + SDL.screen +
-                    " srcValid=" + !!srcData +
-                    " dstValid=" + !!dstData +
-                    " nativeSize=" +
-                    originalWidth + "x" + originalHeight +
-                    " recovered=" + recovered
-                  );
-                }
-
-                // Never pass an undefined surface into
-                // clipRect, drawImage or SDL_LockSurface.
-                // SDL's native convention is -1 on blit failure.
-                if (!srcData || !dstData) {
+                // Bypass invalid destination pointers, but only
+                // for a full-size original SDL backbuffer.
+                if (screen &&
+                    srcData.width===screen.width &&
+                    srcData.height===screen.height) {
+                  dst=SDL.screen;
+                  dstData=screen;
+                  if (!SDL.v67RecoveredScreen) {
+                    SDL.v67RecoveredScreen=true;
+                    out("V67: recovered SDL game screen target");
+                  }
+                } else {
+                  SDL.v67SkippedBlits=(SDL.v67SkippedBlits||0)+1;
+                  if (SDL.v67SkippedBlits<=5)
+                    err("V67: skipped invalid offscreen destination");
                   return -1;
                 }
               }
 
               var sr, dr;"""
 
-          assert source.count(original)==1, \
-              'Unexpected SDL.blitSurface implementation'
+          assert code.count(old)==1
+          code=code.replace(old,new,1)
 
-          patched=source.replace(
-              original,replacement,1
+          assert "lineage-v67.wasm" in code
+          assert "lineage-v67.data" in code
+
+          target.write_text(code)
+
+          # Confirm the original music data remains byte-identical.
+          def music_hash(js_path,data_path):
+              js=Path(js_path).read_text()
+              mark="  loadPackage({"
+              assert js.count(mark)==1
+              pos=js.index(mark)+len("  loadPackage(")
+              meta,_=json.JSONDecoder().raw_decode(js[pos:])
+              data=Path(data_path).read_bytes()
+              assert len(data)==meta["remote_package_size"]
+              entry=next(
+                  x for x in meta["files"]
+                  if x["filename"]=="/lineage/sound/music0.mp3"
+              )
+              return hashlib.sha256(
+                  data[entry["start"]:entry["end"]]
+              ).hexdigest()
+
+          assert music_hash(
+              "published/lineage-v59.js",
+              "published/lineage-v59.data"
+          )==music_hash(
+              "dist/lineage-v67.js",
+              "dist/lineage-v67.data"
           )
 
-          # Deliberately preserve V65 binary references.
-          # V66 is a JavaScript-only runtime repair.
-          assert 'lineage-v65.wasm' in patched
-          assert 'lineage-v65.data' in patched
-          assert 'SDL.v66SurfaceMismatchCount' in patched
-
-          (root/'lineage-v66.js').write_text(
-              patched,encoding='utf-8'
-          )
-
-          page=(root/'v65.html').read_text(
-              encoding='utf-8'
-          )
-
-          assert page.count('lineage-v65.js')>=2
-          assert 'V65 Original Client Web Runtime' in page
-          assert 'V65 (original music and graphics)' in page
-
-          page=page.replace(
-              'lineage-v65.js','lineage-v66.js'
-          )
-          page=page.replace(
-              'V65 Original Client Web Runtime',
-              'V66 Original Client Web Runtime'
-          )
-          page=page.replace(
-              'V65 (original music and graphics)',
-              'V66 (SDL surface repair)'
-          )
-
-          # Retain the original V65 loading image,
-          # original MP3, controls and error logs.
-          for name in [
-              'v65-811.png',
-              'v65-music0.mp3',
-              'coi-serviceworker-v45.js',
-              'v45-paks.json',
-              'lineage-v66.js'
-          ]:
-              assert name in page,name
-
-          (root/'v66.html').write_text(
-              page,encoding='utf-8'
-          )
-          (root/'index.html').write_text(
-              page,encoding='utf-8'
-          )
-
-          print('V66 SDL guard added.')
-          print('V65 original graphics and music preserved.')
-          print('V65 WASM and DATA are reused unchanged.')
+          print("V67 original audio bytes unchanged.")
           PY
 
-          python3 /tmp/v66-patch.py
-          node --check published/lineage-v66.js
-          cmp published/index.html published/v66.html
+          python3 /tmp/v67-js.py
+          node --check dist/lineage-v67.js
 
-          sha256sum -c reports/V66-preserved-assets.sha256
-
-      - name: "V66 | Install real desktop and mobile browser tests"
+      - name: "V67 | Build offline character creation and selection"
         shell: bash
         run: |
           set -euo pipefail
 
-          python3 -m pip install --quiet \
-            "playwright==1.56.0" \
-            "pillow>=10,<13"
+          cat > /tmp/v67-page.py <<'PY'
+          from pathlib import Path
+          import re
 
+          root=Path("published")
+          page=(root/"v65.html").read_text()
+
+          page=page.replace("lineage-v65.js","lineage-v67.js")
+          page=page.replace("lineage-v65.wasm","lineage-v67.wasm")
+          page=page.replace(
+              "V65 Original Client Web Runtime",
+              "V67 Original Client Web Runtime"
+          )
+          page=page.replace(
+              "V65 (original music and graphics)",
+              "V67 (offline characters)"
+          )
+
+          style="""
+          #v67Menu {
+            position:absolute;
+            inset:0;
+            z-index:7;
+            overflow:auto;
+            padding:20px 12px 35px;
+            background:
+              linear-gradient(rgba(6,8,12,.62),rgba(6,8,12,.83)),
+              url('./v65-811.png') center/cover no-repeat;
+            -webkit-overflow-scrolling:touch;
+          }
+          #v67Panel {
+            width:min(100%,580px);
+            margin:0 auto;
+            padding:18px;
+            background:rgba(9,14,22,.91);
+            border:1px solid #6a5841;
+            border-radius:13px;
+            box-shadow:0 8px 35px #0009;
+          }
+          #v67Panel h2 {margin:0 0 12px;font-size:19px}
+          #v67Panel h3 {font-size:15px;margin:12px 0 5px}
+          #v67Panel button,#v67Panel input,#v67Panel select {
+            font:inherit;
+            min-height:37px;
+            border:1px solid #61758a;
+            border-radius:6px;
+            color:#f1f1f1;
+            background:#263445;
+            padding:6px 9px;
+          }
+          #v67Panel button {cursor:pointer}
+          #v67Panel input,#v67Panel select {width:100%}
+          #v67Panel .slot {
+            padding:11px 0;
+            border-bottom:1px solid #45515d;
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:8px;
+          }
+          #v67Panel .slot-info {flex:1;min-width:0}
+          #v67Panel .slot-actions {display:flex;gap:6px}
+          #v67Panel .v67-fields {
+            display:grid;
+            grid-template-columns:1fr 1fr;
+            gap:8px;
+          }
+          #v67Panel .stat {
+            display:grid;
+            grid-template-columns:45px 1fr 37px 37px;
+            align-items:center;
+            gap:5px;
+            padding:3px 0;
+          }
+          #v67Panel .stat button {padding:3px}
+          #v67Panel .actions {
+            display:flex;
+            justify-content:flex-end;
+            gap:8px;
+            margin-top:16px;
+          }
+          #v67Message {min-height:22px;color:#efcc81}
+          @media(max-width:450px) {
+            #v67Menu {padding:9px 8px 25px}
+            #v67Panel {padding:11px}
+            #v67Panel .slot-actions {flex-direction:column}
+          }
+          """
+
+          page=page.replace("</style>",style+"</style>",1)
+
+          menu="""
+          <section id="v67Menu" aria-label="캐릭터 선택 및 생성">
+            <div id="v67Panel">
+              <h2>캐릭터 선택</h2>
+              <div id="v67Content"></div>
+              <p id="v67Message" role="status"></p>
+            </div>
+          </section>
+          """
+
+          page=page.replace("</main>",menu+"</main>",1)
+
+          # Remove V65 automatic engine startup.
+          startup=(
+              "window.addEventListener('load',()=>{startEngine();},"
+              "{once:true});"
+          )
+          assert page.count(startup)==1
+          page=page.replace(
+              startup,
+              "window.addEventListener('load',()=>{"
+              "v67OpenMenu();"
+              "checkCrossOriginIsolation().catch(e=>log(String(e)));"
+              "},{once:true});"
+          )
+
+          # Remove V65's old image visibility monitor.
+          monitor_start=page.index("window.setInterval(()=>{")
+          monitor_end=page.index("\n},1000);",monitor_start)+len(
+              "\n},1000);"
+          )
+          page=page[:monitor_start]+page[monitor_end:]
+
+          assert "await window.createLineage({" in page
+          page=page.replace(
+              "await window.createLineage({",
+              """await window.createLineage({
+                preRun:[function(){
+                  if(!v67SelectedText)
+                    throw Error("No selected character");
+                  FS.writeFile(
+                    "/v67-character.txt",
+                    new TextEncoder().encode(v67SelectedText)
+                  );
+                }],""",
+              1
+          )
+
+          original="""function enginePrint(message){
+            const line=String(message??'');"""
+
+          changed="""function enginePrint(message){
+            const line=String(message??'');
+            if(line.includes('V67: offline native game ready:')){
+              status('캐릭터 게임 화면 진입 · 맵 이식 진행 중');
+              document.getElementById('v65Original').style.display='none';
+              log('V67: native game state entered');
+            }"""
+
+          assert page.count(original)==1
+          page=page.replace(original,changed,1)
+
+          ui=r'''
+          const v67Key='sanctuary-game2-v67-characters';
+          const v67Names=[
+            '군주','기사','요정','마법사',
+            '다크엘프','용기사','환술사'
+          ];
+          const v67StatNames=['STR','DEX','CON','WIS','CHA','INT'];
+
+          // Directly transcribed from the original global.cpp.
+          const v67Base=[
+            [13,10,10,11,13,10],
+            [16,12,14,9,12,8],
+            [11,12,12,12,9,12],
+            [8,7,12,12,8,12],
+            [12,15,8,10,9,11],
+            [13,11,14,12,8,11],
+            [11,10,12,12,8,12]
+          ];
+
+          const v67Caps=v67Base.map((a,i)=>
+            a.map((_,j)=>i===1&&j===0?20:18)
+          );
+
+          let v67Characters=Array(4).fill(null);
+          let v67Draft=null;
+          let v67Slot=-1;
+          let v67SelectedText='';
+
+          const v67Content=document.getElementById('v67Content');
+          const v67Message=document.getElementById('v67Message');
+
+          function v67MessageSet(text){
+            v67Message.textContent=text||'';
+          }
+
+          function v67Escape(text){
+            return String(text).replace(/[&<>"']/g,c=>({
+              '&':'&amp;','<':'&lt;','>':'&gt;',
+              '"':'&quot;',"'":'&#39;'
+            }[c]));
+          }
+
+          function v67Load(){
+            try{
+              const saved=JSON.parse(localStorage.getItem(v67Key));
+              if(Array.isArray(saved)){
+                v67Characters=Array.from({length:4},(_,i)=>{
+                  const x=saved[i];
+                  if(!x || typeof x.name!=='string' ||
+                     !Array.isArray(x.stats) ||
+                     x.stats.length!==6)return null;
+                  const cls=Number(x.cls),gender=Number(x.gender);
+                  if(!Number.isInteger(cls)||cls<0||cls>6 ||
+                     ![0,1].includes(gender))return null;
+                  const stats=x.stats.map(Number);
+                  if(stats.some((n,j)=>!Number.isInteger(n) ||
+                     n<v67Base[cls][j] ||
+                     n>v67Caps[cls][j]) ||
+                     stats.reduce((a,b)=>a+b,0)!==75)return null;
+                  return {
+                    name:x.name,cls,gender,stats
+                  };
+                });
+              }
+            }catch(e){
+              v67MessageSet('저장 데이터를 읽지 못했습니다.');
+            }
+          }
+
+          function v67Store(){
+            try{
+              localStorage.setItem(
+                v67Key,JSON.stringify(v67Characters)
+              );
+              return true;
+            }catch(e){
+              v67MessageSet('브라우저 저장소에 기록할 수 없습니다.');
+              return false;
+            }
+          }
+
+          function v67OpenMenu(){
+            v67Load();
+            overlay.classList.add('hidden');
+            document.getElementById('v67Menu').hidden=false;
+            document.getElementById('v65Original').style.display='';
+            status('캐릭터 선택 · 서버 로그인 생략');
+            v67List();
+          }
+
+          function v67List(){
+            v67Draft=null;
+            document.querySelector('#v67Panel h2').textContent=
+              '캐릭터 선택';
+            v67Content.replaceChildren();
+
+            v67Characters.forEach((character,i)=>{
+              const row=document.createElement('div');
+              row.className='slot';
+
+              const info=document.createElement('div');
+              info.className='slot-info';
+
+              if(character){
+                const name=document.createElement('strong');
+                name.textContent=character.name;
+                const details=document.createElement('div');
+                details.textContent=
+                  v67Names[character.cls]+' · '+
+                  (character.gender?'여':'남')+' · Lv.1';
+                info.append(name,details);
+              }else{
+                info.textContent='빈 캐릭터 슬롯 '+(i+1);
+              }
+
+              const actions=document.createElement('div');
+              actions.className='slot-actions';
+
+              const button=document.createElement('button');
+              button.textContent=character?'선택·입장':'새 캐릭터';
+              button.onclick=()=>character?
+                v67Play(i):v67Create(i);
+              actions.append(button);
+
+              if(character){
+                const remove=document.createElement('button');
+                remove.textContent='삭제';
+                remove.onclick=()=>{
+                  if(confirm(character.name+' 캐릭터를 삭제할까요?')){
+                    v67Characters[i]=null;
+                    if(v67Store())v67List();
+                  }
+                };
+                actions.append(remove);
+              }
+              row.append(info,actions);
+              v67Content.append(row);
+            });
+
+            v67MessageSet('저장 위치: 현재 브라우저 · 최대 4명');
+          }
+
+          function v67Create(slot){
+            v67Slot=slot;
+            v67Draft={
+              name:'',cls:1,gender:0,
+              stats:[...v67Base[1]]
+            };
+            v67DrawForm();
+          }
+
+          function v67Remaining(){
+            return 75-v67Draft.stats.reduce((a,b)=>a+b,0);
+          }
+
+          function v67DrawForm(){
+            document.querySelector('#v67Panel h2').textContent=
+              '캐릭터 생성';
+
+            const form=document.createElement('div');
+
+            form.innerHTML=`
+              <label>캐릭터 이름
+                <input id="v67Name" maxlength="20"
+                  placeholder="캐릭터 이름" autocomplete="off">
+              </label>
+              <div class="v67-fields">
+                <label>클래스
+                  <select id="v67Class">${v67Names.map((n,i)=>
+                    `<option value="${i}">${n}</option>`
+                  ).join('')}</select>
+                </label>
+                <label>성별
+                  <select id="v67Gender">
+                    <option value="0">남성</option>
+                    <option value="1">여성</option>
+                  </select>
+                </label>
+              </div>
+              <h3>능력치 배분</h3>
+              <div id="v67Stats"></div>
+              <div class="actions">
+                <button id="v67Auto" type="button">남은 포인트 배분</button>
+                <button id="v67Cancel" type="button">취소</button>
+                <button id="v67Save" type="button">생성·저장</button>
+              </div>
+            `;
+
+            v67Content.replaceChildren(form);
+
+            const name=form.querySelector('#v67Name');
+            const cls=form.querySelector('#v67Class');
+            const gender=form.querySelector('#v67Gender');
+
+            name.value=v67Draft.name;
+            cls.value=String(v67Draft.cls);
+            gender.value=String(v67Draft.gender);
+
+            name.oninput=()=>v67Draft.name=name.value;
+            gender.onchange=()=>v67Draft.gender=Number(gender.value);
+            cls.onchange=()=>{
+              v67Draft.cls=Number(cls.value);
+              v67Draft.stats=[...v67Base[v67Draft.cls]];
+              v67DrawStats();
+            };
+
+            form.querySelector('#v67Cancel').onclick=v67List;
+            form.querySelector('#v67Auto').onclick=()=>{
+              let remaining=v67Remaining();
+              while(remaining>0){
+                let changed=false;
+                for(let i=0;i<6 && remaining>0;i++){
+                  if(v67Draft.stats[i]<v67Caps[v67Draft.cls][i]){
+                    v67Draft.stats[i]++;
+                    remaining--;
+                    changed=true;
+                  }
+                }
+                if(!changed)break;
+              }
+              v67DrawStats();
+            };
+
+            form.querySelector('#v67Save').onclick=()=>{
+              const draft=v67Draft;
+              const text=draft.name.trim();
+
+              if([...text].length<2 || [...text].length>20){
+                v67MessageSet('캐릭터 이름은 2~20자로 입력하세요.');
+                return;
+              }
+              if(v67Remaining()!==0){
+                v67MessageSet('75포인트를 전부 배분해야 합니다.');
+                return;
+              }
+              if(v67Characters.some(c=>c && c.name===text)){
+                v67MessageSet('이미 존재하는 캐릭터 이름입니다.');
+                return;
+              }
+
+              v67Characters[v67Slot]={
+                name:text,
+                cls:draft.cls,
+                gender:draft.gender,
+                stats:[...draft.stats]
+              };
+
+              if(v67Store())v67List();
+            };
+
+            v67DrawStats();
+          }
+
+          function v67DrawStats(){
+            const box=document.getElementById('v67Stats');
+            if(!box)return;
+            box.replaceChildren();
+
+            v67StatNames.forEach((label,i)=>{
+              const row=document.createElement('div');
+              row.className='stat';
+
+              const name=document.createElement('span');
+              name.textContent=label;
+
+              const value=document.createElement('strong');
+              value.textContent=String(v67Draft.stats[i]);
+
+              const minus=document.createElement('button');
+              minus.textContent='−';
+              minus.disabled=(
+                v67Draft.stats[i]===v67Base[v67Draft.cls][i]
+              );
+              minus.onclick=()=>{
+                v67Draft.stats[i]--;
+                v67DrawStats();
+              };
+
+              const plus=document.createElement('button');
+              plus.textContent='+';
+              plus.disabled=(
+                v67Remaining()<=0 ||
+                v67Draft.stats[i]===v67Caps[v67Draft.cls][i]
+              );
+              plus.onclick=()=>{
+                v67Draft.stats[i]++;
+                v67DrawStats();
+              };
+
+              row.append(name,value,minus,plus);
+              box.append(row);
+            });
+
+            v67MessageSet(
+              '남은 배분 포인트: '+v67Remaining()
+            );
+          }
+
+          function v67Play(index){
+            const character=v67Characters[index];
+            if(!character)return;
+
+            v67SelectedText=
+              character.name+'\n'+
+              character.cls+' '+character.gender+' '+
+              character.stats.join(' ')+'\n';
+
+            document.getElementById('v67Menu').hidden=true;
+            document.getElementById('v65Original').style.display='none';
+
+            status(
+              character.name+' · 원본 오프라인 게임 화면 초기화'
+            );
+
+            startEngine();
+          }
+          '''
+
+          assert "</script>" in page
+          page=page.replace(
+              "</script>",
+              ui+"\n</script>",
+              1
+          )
+
+          # Hidden must work even with explicit menu styling.
+          page=page.replace(
+              "#v67Menu {",
+              "#v67Menu[hidden]{display:none!important}\n#v67Menu {",
+              1
+          )
+
+          (root/"v67.html").write_text(page)
+          (root/"index.html").write_text(page)
+          PY
+
+          python3 /tmp/v67-page.py
+
+          cp dist/lineage-v67.js \
+             dist/lineage-v67.wasm \
+             dist/lineage-v67.data published/
+
+          node --check published/lineage-v67.js
+          cmp published/index.html published/v67.html
+
+      - name: "V67 | Install real browser test"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet "playwright==1.56.0"
           python3 -m playwright install --with-deps chromium
 
-      - name: "V66 | Test original SDL engine without fatal errors"
+      - name: "V67 | Test character creation, persistence and native entry"
         shell: bash
         run: |
           set -euo pipefail
-
           mkdir -p reports/site-root
-          ln -s "$GITHUB_WORKSPACE/published" \
-            reports/site-root/game2
+          ln -s "$GITHUB_WORKSPACE/published" reports/site-root/game2
 
-          cat > /tmp/v66-server.py <<'PY'
+          cat > /tmp/v67-server.py <<'PY'
           from functools import partial
-          from http.server import (
-              SimpleHTTPRequestHandler,
-              ThreadingHTTPServer
-          )
+          from http.server import SimpleHTTPRequestHandler,ThreadingHTTPServer
           from pathlib import Path
 
           class Handler(SimpleHTTPRequestHandler):
               def end_headers(self):
-                  for key,value in [
-                      ('Cross-Origin-Opener-Policy','same-origin'),
-                      ('Cross-Origin-Embedder-Policy','require-corp'),
-                      ('Cross-Origin-Resource-Policy','same-origin')
+                  for k,v in [
+                      ("Cross-Origin-Opener-Policy","same-origin"),
+                      ("Cross-Origin-Embedder-Policy","require-corp"),
+                      ("Cross-Origin-Resource-Policy","same-origin")
                   ]:
-                      self.send_header(key,value)
+                      self.send_header(k,v)
                   super().end_headers()
 
-          root=Path('reports/site-root').resolve()
-
+          root=Path("reports/site-root").resolve()
           ThreadingHTTPServer(
-              ('127.0.0.1',8765),
+              ("127.0.0.1",8765),
               partial(Handler,directory=str(root))
           ).serve_forever()
           PY
 
-          cat > /tmp/v66-test.py <<'PY'
-          import asyncio
-          import io
-          import json
+          cat > /tmp/v67-test.py <<'PY'
+          import asyncio,json
           from pathlib import Path
-
-          from PIL import Image
           from playwright.async_api import async_playwright
 
-          URL='http://127.0.0.1:8765/game2/v66.html'
+          result={
+              "version":"V67",
+              "errors":[],
+              "character_saved":False,
+              "character_restored":False,
+              "native_game_ready":False
+          }
 
-          async def probe(browser,label,mobile):
-              errors=[]
-              result={'environment':label}
-
-              options={
-                  'viewport':(
-                      {'width':393,'height':852}
-                      if mobile
-                      else {'width':1024,'height':768}
-                  ),
-                  'device_scale_factor':2 if mobile else 1,
-                  'is_mobile':mobile,
-                  'has_touch':mobile
-              }
-
-              context=await browser.new_context(**options)
-              page=await context.new_page()
-
-              page.on(
-                  'pageerror',
-                  lambda e:errors.append(str(e))
-              )
-
-              try:
-                  await page.goto(
-                      URL,wait_until='domcontentloaded'
-                  )
-
-                  await page.wait_for_function(
-                      'crossOriginIsolated && '
-                      'typeof SharedArrayBuffer==="function"',
-                      timeout=30000
-                  )
-
-                  # Keep the client running long enough to
-                  # detect delayed SDL surface failures.
-                  await page.wait_for_timeout(85000)
-
-                  result['state']=await page.locator(
-                      '#state'
-                  ).inner_text()
-
-                  result['heading']=await page.locator(
-                      '#head'
-                  ).inner_text()
-
-                  game_log=await page.locator(
-                      '#logbox'
-                  ).inner_text()
-
-                  result['recent_log']=game_log[-12000:]
-                  result['page_errors']=errors
-
-                  screenshot=await page.locator(
-                      '#canvas'
-                  ).screenshot(
-                      path='reports/V66-'+label+'-canvas.png'
-                  )
-
-                  image=Image.open(
-                      io.BytesIO(screenshot)
-                  ).convert('RGB').resize((128,96))
-
-                  pixels=list(image.getdata())
-
-                  ratio=sum(
-                      max(pixel)>30 for pixel in pixels
-                  )/len(pixels)
-
-                  result['native_canvas_nonblack']=round(
-                      ratio,4
-                  )
-
-                  result['engine_started']=(
-                      'V65: event loop started' in game_log
-                  )
-
-                  result['original_png_loaded']=(
-                      'V65: PNG 811=ok' in game_log
-                  )
-
-                  result['original_img_loaded']=(
-                      'IMG 330=ok' in game_log
-                  )
-
-                  result['surface_diagnostics']=[
-                      line
-                      for line in game_log.splitlines()
-                      if 'V66 SDL surface mismatch' in line
-                  ][-20:]
-
-                  result['fatal']=(
-                      '클라이언트 실행 실패'
-                      in result['heading']
-                      or '실행 장애'
-                      in result['state']
-                      or any(
-                          'Cannot read properties of undefined'
-                          in error
-                          for error in errors
-                      )
-                  )
-
-                  # A fallback HTML image does NOT pass
-                  # the native SDL canvas test.
-                  result['passed']=(
-                      result['engine_started']
-                      and result['original_png_loaded']
-                      and result['original_img_loaded']
-                      and ratio>0.02
-                      and not result['fatal']
-                      and not errors
-                  )
-
-                  await page.screenshot(
-                      path='reports/V66-'+label+'-page.png'
-                  )
-
-              except Exception as error:
-                  result['test_exception']=str(error)
-                  result['passed']=False
-
-              finally:
-                  await context.close()
-
-              return result
-
-          async def main():
-              async with async_playwright() as playwright:
-                  browser=await playwright.chromium.launch(
+          async def test():
+              async with async_playwright() as p:
+                  browser=await p.chromium.launch(
                       headless=True,
-                      args=[
-                          '--no-sandbox',
-                          '--disable-dev-shm-usage'
-                      ]
+                      args=["--no-sandbox","--disable-dev-shm-usage"]
+                  )
+                  context=await browser.new_context(
+                      viewport={"width":393,"height":852},
+                      is_mobile=True,
+                      has_touch=True
+                  )
+                  page=await context.new_page()
+                  page.on(
+                      "pageerror",
+                      lambda e:result["errors"].append(str(e))
                   )
 
                   try:
-                      desktop,mobile=await asyncio.gather(
-                          probe(browser,'desktop',False),
-                          probe(browser,'mobile',True)
+                      await page.goto(
+                          "http://127.0.0.1:8765/game2/v67.html",
+                          wait_until="domcontentloaded"
                       )
+
+                      await page.get_by_role(
+                          "button",name="새 캐릭터"
+                      ).first.click()
+
+                      await page.locator("#v67Name").fill(
+                          "OfflineKnight"
+                      )
+                      await page.locator("#v67Auto").click()
+                      await page.locator("#v67Save").click()
+
+                      await page.get_by_text(
+                          "OfflineKnight",exact=True
+                      ).wait_for(timeout=10000)
+
+                      result["character_saved"]=True
+
+                      await page.reload(
+                          wait_until="domcontentloaded"
+                      )
+
+                      await page.get_by_text(
+                          "OfflineKnight",exact=True
+                      ).wait_for(timeout=10000)
+
+                      result["character_restored"]=True
+
+                      await page.wait_for_function(
+                          "crossOriginIsolated && "
+                          "typeof SharedArrayBuffer==='function'",
+                          timeout=30000
+                      )
+
+                      await page.get_by_role(
+                          "button",name="선택·입장"
+                      ).first.click()
+
+                      await page.wait_for_function(
+                          "() => document.querySelector('#logbox')"
+                          ".textContent.includes("
+                          "'V67: offline native game ready:')",
+                          timeout=100000
+                      )
+
+                      result["native_game_ready"]=True
+                      result["recent_log"]=(
+                          await page.locator("#logbox").inner_text()
+                      )[-7000:]
+
+                      await page.screenshot(
+                          path="reports/V67-mobile.png"
+                      )
+
+                  except Exception as error:
+                      result["test_exception"]=str(error)
+                      try:
+                          result["recent_log"]=(
+                              await page.locator("#logbox").inner_text()
+                          )[-7000:]
+                      except Exception:
+                          pass
+
                   finally:
                       await browser.close()
 
-              results={
-                  'version':'V66',
-                  'desktop':desktop,
-                  'mobile':mobile,
-                  'passed':(
-                      desktop.get('passed',False)
-                      and mobile.get('passed',False)
-                  )
-              }
-
-              Path('reports/V66-browser.json').write_text(
-                  json.dumps(
-                      results,
-                      indent=2,
-                      ensure_ascii=False
-                  )
+              result["passed"]=(
+                  result["character_saved"]
+                  and result["character_restored"]
+                  and result["native_game_ready"]
+                  and not result["errors"]
               )
 
-              for entry in [desktop,mobile]:
-                  print('Environment:',
-                        entry['environment'],flush=True)
-                  print('Native canvas:',
-                        entry.get(
-                            'native_canvas_nonblack'
-                        ),flush=True)
-                  print('SDL surface diagnostics:',
-                        entry.get(
-                            'surface_diagnostics'
-                        ),flush=True)
-                  print('Fatal:',entry.get('fatal'),flush=True)
-                  print('Passed:',entry.get('passed'),flush=True)
-                  print('Browser errors:',
-                        entry.get('page_errors'),flush=True)
-                  print('Exception:',
-                        entry.get('test_exception'),flush=True)
-                  print('Recent log:',
-                        entry.get('recent_log','')[-2500:],
-                        flush=True)
+              Path("reports/V67-browser.json").write_text(
+                  json.dumps(result,indent=2,ensure_ascii=False)
+              )
 
-              if not results['passed']:
+              print("Character saved:",result["character_saved"])
+              print("Character restored:",result["character_restored"])
+              print("Native game ready:",result["native_game_ready"])
+              print("Browser errors:",result["errors"])
+              print("Test exception:",result.get("test_exception"))
+              print("Log:",result.get("recent_log","")[-3500:])
+
+              if not result["passed"]:
                   raise SystemExit(
-                      'V66 SDL test failed; public deployment blocked'
+                      "V67 offline character path failed"
                   )
 
-          asyncio.run(main())
+          asyncio.run(test())
           PY
 
-          python3 -m py_compile /tmp/v66-test.py
-
-          python3 /tmp/v66-server.py \
-            > reports/V66-http.txt 2>&1 &
-
+          python3 /tmp/v67-server.py \
+            > reports/V67-http.txt 2>&1 &
           server=$!
           trap 'kill "$server" 2>/dev/null || true' EXIT
 
           for i in $(seq 1 30); do
             if curl -fsS -o /dev/null \
-              http://127.0.0.1:8765/game2/v66.html; then
+              http://127.0.0.1:8765/game2/v67.html; then
               break
             fi
             sleep 1
           done
 
-          python3 /tmp/v66-test.py
+          python3 /tmp/v67-test.py
 
-      - name: "V66 | Upload actual mobile and desktop diagnostics"
+      - name: "V67 | Upload test results"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V66-SDL-Surface-Repair
+          name: Sanctuary-game2-V67-Offline-Characters
           path: |
-            reports/V66-browser.json
-            reports/V66-desktop-canvas.png
-            reports/V66-desktop-page.png
-            reports/V66-mobile-canvas.png
-            reports/V66-mobile-page.png
-            reports/V66-http.txt
-            reports/V66-preserved-assets.sha256
+            reports/V67-browser.json
+            reports/V67-mobile.png
+            reports/V67-build.txt
+            reports/V67-http.txt
+            reports/V67-original-music.sha256
           if-no-files-found: warn
           retention-days: 30
 
-      - name: "V66 | Deploy only after real SDL rendering survives"
+      - name: "V67 | Publish verified offline character entry"
         shell: bash
         run: |
           set -euo pipefail
 
           python3 - <<'PY'
           import json
-
-          with open('reports/V66-browser.json') as f:
-              report=json.load(f)
-
-          assert report['passed']
-          assert report['desktop']['passed']
-          assert report['mobile']['passed']
-          assert report['desktop']['native_canvas_nonblack']>0.02
-          assert report['mobile']['native_canvas_nonblack']>0.02
-
-          print('V66 native SDL desktop and mobile checks passed.')
+          result=json.load(open("reports/V67-browser.json"))
+          assert result["passed"]
+          assert result["character_saved"]
+          assert result["character_restored"]
+          assert result["native_game_ready"]
           PY
-
-          sha256sum -c reports/V66-preserved-assets.sha256
 
           git -C published add -- \
             index.html \
-            v66.html \
-            lineage-v66.js
+            v67.html \
+            lineage-v67.js \
+            lineage-v67.wasm \
+            lineage-v67.data
 
           git -C published config user.name \
-            'github-actions[bot]'
-
+            "github-actions[bot]"
           git -C published config user.email \
-            '41898282+github-actions[bot]@users.noreply.github.com'
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
           if ! git -C published diff --cached --quiet; then
             git -C published commit -m \
-              'build-web.yml V66: repair SDL invalid surface crash'
-
+              "build-web.yml V67: offline character creation and native game entry"
             git -C published push origin HEAD:gh-pages
           fi
 
-      - name: "V66 | Report exact verification status"
+      - name: "V67 | Report actual implementation scope"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V66 | Sanctuary game2 GitHub Pages'
+            echo "# build-web.yml | V67 | Sanctuary game2 GitHub Pages"
             echo
-            echo 'V65 WebAssembly and game resource data remain unchanged.'
-            echo 'Original music0.mp3 remains unchanged.'
-            echo 'Repairs undefined SDL source and destination surface references.'
-            echo 'Attempts screen-surface recovery only when original dimensions match.'
-            echo 'Otherwise returns an SDL blit error without crashing JavaScript.'
-            echo 'Desktop and mobile must both show genuine SDL canvas pixels.'
-            echo 'The original HTML image fallback is not counted as engine success.'
+            echo "Login and server selection are bypassed."
+            echo "Seven classes use their original C++ base stats and limits."
+            echo "Character slots are saved in browser localStorage."
+            echo "The selected character is passed to the native C++ client."
+            echo "Original V65 graphics and music are retained."
+            echo "Unavailable map segment loading is deferred."
+            echo "Native game scene entry is tested."
+            echo "Movement, world rendering and gameplay are not claimed complete."
           } >> "$GITHUB_STEP_SUMMARY"
