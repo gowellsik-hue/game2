@@ -1,40 +1,39 @@
 
-name: "build-web.yml | V70 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V70 | Sanctuary game2 GitHub Pages"
+name: "build-web.yml | V71 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V71 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - .github/workflows/build-web.yml
+    paths: [.github/workflows/build-web.yml]
 
 permissions:
   contents: write
 
 concurrency:
-  group: game2-v70-offline-character
+  group: game2-v71-native-map-assets
   cancel-in-progress: false
 
 jobs:
-  original_client_v70:
-    name: "build-web.yml | V70 | Repair generated SDL proxy index mismatch"
+  original_client_v71:
+    name: "build-web.yml | V71 | Restore authentic native starting map"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - name: "V70 | Checkout game2 history"
+      - name: "V71 | Checkout game2 Git history"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: "V70 | Checkout unchanged V66 public resources"
+      - name: "V71 | Checkout verified V70 original assets"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
 
-      - name: "V70 | Checkout exact original C++ client"
+      - name: "V71 | Checkout original Sanctuary C++ source"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -42,235 +41,581 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V70 | Set up working V65 Emscripten compiler"
+      - name: "V71 | Set up unchanged original Emscripten toolchain"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V70 | Reuse V67 successful build, repair only WASM file bridge, run browser tests"
+      - name: "V71 | Extract original start-map tiles and sections from split ZIP"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          cat > /tmp/v71-extract.py <<'PY'
+          from pathlib import Path
+          import os, re, struct, subprocess, zlib, json, sys
+
+          ARCH = os.environ.get('V71_ARCH', 'Sanctuary.of.Aden.-.Copy')
+          REPO = 'gowellsik-hue/Game'
+          PART_DIR = Path(os.environ.get('V71_PART_DIR', 'archive-parts'))
+          OUT_DIR = Path(os.environ.get('V71_OUTPUT_DIR', 'assets/v71/lineage'))
+          PART_DIR.mkdir(parents=True, exist_ok=True)
+          OUT_DIR.mkdir(parents=True, exist_ok=True)
+          VOL_SIZE = int(os.environ.get('V71_PART_SIZE', '100000000'))
+          LAST_DISK = None
+
+
+          def volume_name(d):
+              return f'{ARCH}.z{d+1:02d}' if d < LAST_DISK else f'{ARCH}.zip'
+
+
+          def volume_length(d):
+              if 0 <= d < LAST_DISK:
+                  return VOL_SIZE
+              if d == LAST_DISK:
+                  return (PART_DIR / volume_name(45)).stat().st_size
+              raise RuntimeError('Invalid ZIP volume disk '+str(d))
+
+
+          def ensure_volume(d):
+              name = volume_name(d)
+              dest = PART_DIR / name
+              if not dest.is_file():
+                  print('V71 fetching original ZIP volume', name, flush=True)
+                  subprocess.run(['gh','release','download','v1.0.0','-R',REPO,'-p',name,'-D',str(PART_DIR),'--clobber'],check=True)
+              assert dest.stat().st_size == volume_length(d), (name, dest.stat().st_size, volume_length(d))
+              return dest
+
+
+          def step(d, o, n):
+              while n:
+                  l=volume_length(d)
+                  if o > l: raise RuntimeError('ZIP offset outside volume')
+                  take=min(n,l-o)
+                  if take:
+                      o+=take
+                      n-=take
+                  if n:
+                      d+=1
+                      o=0
+              if o == volume_length(d) and d < LAST_DISK:
+                  return d+1, 0
+              return d,o
+
+
+          def fetch_bytes(d, offset, total):
+              blocks=[]
+              while total>0:
+                  path=ensure_volume(d)
+                  avail=volume_length(d)-offset
+                  if avail<=0:
+                      d+=1;offset=0;continue
+                  n=min(total,avail)
+                  with path.open('rb') as fh:
+                      fh.seek(offset)
+                      block=fh.read(n)
+                  assert len(block)==n
+                  blocks.append(block)
+                  total-=n
+                  d+=1;offset=0
+              return b''.join(blocks)
+
+
+          last_file=PART_DIR / (ARCH+'.zip')
+          if not last_file.is_file():
+              subprocess.run(['gh','release','download','v1.0.0','-R',REPO,'-p',last_file.name,'-D',str(PART_DIR),'--clobber'],check=True)
+          last=last_file.read_bytes()
+          ix=last.rfind(b'PK\x05\x06')
+          assert ix>=0, 'The original ZIP central directory footer is missing'
+          (_sig,disk,central_disk,_here,nitems,cdsize,cdoffset,commentlen)=struct.unpack_from('<IHHHHIIH',last,ix)
+          LAST_DISK=disk
+          assert LAST_DISK>=0, ('Unsupported ZIP disk count',disk)
+          assert nitems>0 and cdsize>0 and cdoffset>=0
+          print('V71 original ZIP: entries',nitems,'central disk',central_disk,'central size',cdsize,flush=True)
+          central=fetch_bytes(central_disk,cdoffset,cdsize)
+          records=[]
+          pos=0
+          while pos<len(central):
+              if central[pos:pos+4]!=b'PK\x01\x02':
+                  raise RuntimeError('Unexpected central file signature at '+str(pos))
+              h=struct.unpack_from('<IHHHHHHIIIHHHHHII',central,pos)
+              (_sig,_made,_need,flags,method,_time,_date,crc,compressed,uncompressed,
+                 namelen,extralen,commentlen,diskstart,_internal,_external,local_offset)=h
+              namebytes=central[pos+46:pos+46+namelen]
+              name=namebytes.decode('utf-8' if flags & (1<<11) else 'cp437','replace')
+              records.append(dict(name=name,method=method,flags=flags,crc=crc,compressed=compressed,uncompressed=uncompressed,disk=diskstart,offset=local_offset))
+              pos+=46+namelen+extralen+commentlen
+          assert len(records)==nitems,(len(records),nitems)
+          print('V71 central entries parsed:',len(records),flush=True)
+
+          tile_candidates=[r for r in records if re.search(r'(^|/)tile\.pak$',r['name'],re.I)]
+          assert len(tile_candidates)==1, 'Expected original Tile.pak; found '+str([r['name'] for r in tile_candidates])
+          map_candidates={}
+          for r in records:
+              m=re.search(r'(^|/)map/4/([0-9a-f]{8})\.(s32|seg)$',r['name'],re.I)
+              if m:
+                  key=m.group(2).lower()+'.'+m.group(3).lower()
+                  map_candidates[key]=r
+          print('V71 original map 4 segment entries:',len(map_candidates),'sample:',list(map_candidates)[:8],flush=True)
+          assert map_candidates, 'Original archive has no Map 4 s32 entries; inspect archive filename layout'
+
+          # Original C++ draw_game.cpp starts at map 4, (32549,32925).
+          x0=(32549>>6)<<6
+          y0=(32925>>6)<<6
+          wanted=[]
+          for dx in range(-2,3):
+              for dy in range(-2,3):
+                  x=x0+dx*64
+                  y=y0+dy*64
+                  stem=f'{(x>>6)+0x7e00:04x}{(y>>6)+0x7e00:04x}'
+                  for ext in ('s32','seg'):
+                      if stem+'.'+ext in map_candidates:
+                          wanted.append((stem+'.'+ext,map_candidates[stem+'.'+ext]))
+                          break
+          assert wanted, 'No original start-location map sections in archive'
+          print('V71 start-location map sections to restore:',len(wanted),flush=True)
+
+
+          def extract_record(record):
+              d,o=record['disk'],record['offset']
+              header=fetch_bytes(d,o,30)
+              if header[:4]!=b'PK\x03\x04' and d==0 and o==0:
+                  o+=4
+                  header=fetch_bytes(d,o,30)
+              assert header[:4]==b'PK\x03\x04', ('Original ZIP local header missing',record['name'],d,o,header[:12])
+              namelen,extralen=struct.unpack_from('<HH',header,26)
+              sd,so=step(d,o,30+namelen+extralen)
+              zipped=fetch_bytes(sd,so,record['compressed'])
+              if record['method']==0:
+                  out=zipped
+              elif record['method']==8:
+                  out=zlib.decompress(zipped,-15)
+              else:
+                  raise RuntimeError('Unsupported ZIP compression: '+str(record['method']))
+              assert len(out)==record['uncompressed'],('ZIP size mismatch',record['name'])
+              assert zlib.crc32(out)&0xffffffff == record['crc'],('ZIP checksum mismatch',record['name'])
+              return out
+
+          for name,r in wanted:
+              data=extract_record(r)
+              f=OUT_DIR/'map'/'4'/name
+              f.parent.mkdir(parents=True,exist_ok=True)
+              f.write_bytes(data)
+              print('V71 map:',name,len(data),flush=True)
+
+          whole_tile=extract_record(tile_candidates[0])
+          print('V71 original Tile.pak bytes:',len(whole_tile),flush=True)
+
+          # Keep only genuine tile banks actually referenced by the selected original
+          # .s32 map sections. A full Tile.pak preload would waste mobile RAM.
+          published=Path('published')
+          js=(published/'lineage-v59.js').read_text()
+          anchor='  loadPackage({'
+          assert js.count(anchor)==1
+          meta,_=json.JSONDecoder().raw_decode(js[js.index(anchor)+len('  loadPackage('):])
+          item=next(x for x in meta['files'] if x['filename']=='/lineage/Tile.idx')
+          with (published/'lineage-v59.data').open('rb') as fh:
+              fh.seek(item['start'])
+              idx=fh.read(item['end']-item['start'])
+          count=struct.unpack_from('<I',idx,0)[0]
+          assert len(idx)==4+28*count, ('Original Tile.idx invalid',count,len(idx))
+          indices={}
+          for i in range(count):
+              off,raw,size=struct.unpack_from('<i20si',idx,4+i*28)
+              name=raw.split(b'\0',1)[0].decode('latin1').lower()
+              if not name.endswith('.til') or not name[:-4].isdigit():
+                  continue
+              tile_id=int(name[:-4])
+              if off>=0 and size>0 and off+size<=len(whole_tile):
+                  indices[tile_id]=(off,size)
+          assert 2 in indices, 'Original 2.til not in Tile.pak index'
+          selected={2}
+          for name,entry in wanted:
+              if not name.endswith('.s32'): continue
+              content=(OUT_DIR/'map'/'4'/name).read_bytes()
+              if len(content)<32768: continue
+              for (value,) in struct.iter_unpack('<I',content[:32768]):
+                  tile_id=value >> 8
+                  if tile_id in indices:
+                      selected.add(tile_id)
+          print('V71 original map referenced tile banks:',len(selected), 'min/max:',min(selected),max(selected), flush=True)
+          assert len(selected)>=1,'No original tileset available'
+          compact=bytearray()
+          records=[]
+          for tile_id in sorted(selected):
+              off,size=indices[tile_id]
+              data=whole_tile[off:off+size]
+              assert data and len(data)==size
+              name=(str(tile_id)+'.til').encode('ascii')
+              records.append(struct.pack('<i20si',len(compact),name.ljust(20,b'\0'),size))
+              compact.extend(data)
+          (OUT_DIR/'Tile.pak').write_bytes(compact)
+          (OUT_DIR/'Tile.idx').write_bytes(struct.pack('<I',len(records))+b''.join(records))
+          manifest={
+              'region':'Original map 4 around coordinates 32549,32925',
+              'segments':[name for name,_ in wanted],
+              'selected_tile_ids':sorted(selected),
+              'max_tile_id':max(selected),
+              'original_tile_pack_bytes':len(whole_tile),
+              'compact_tile_pack_bytes':len(compact),
+              'archive_volumes_downloaded':sorted(p.name for p in PART_DIR.iterdir() if p.is_file()),
+          }
+          Path('assets/v71/v71-map-manifest.json').write_text(json.dumps(manifest,indent=2))
+          print('V71 compact native map resources extracted successfully',flush=True)
+          PY
+          python3 -u /tmp/v71-extract.py 2>&1 | tee reports/V71-extract.log
+
+      - name: "V71 | Build and test the original native map renderer"
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install --quiet 'PyYAML==6.0.2'
-          cat > /tmp/v70-run.py <<'PY'
+          cat > /tmp/v71-native.py <<'PY'
+          from pathlib import Path
           import json
-          import os
           import re
+
+          manifest=json.loads(Path('assets/v71/v71-map-manifest.json').read_text())
+          max_bank=int(manifest['max_tile_id'])
+          assert 2 <= max_bank <= 4500
+          root=Path('upstream-l1j/src')
+
+          u=root/'sdl_user.cpp'
+          s=u.read_text()
+          assert s.count('int last_good = 100;')==1
+          st=s.index('\tint last_good = 100;')
+          en=s.index('\tprintf("There are %d map tiles\\n", last_good);',st)
+          s=s[:st]+f'\tint last_good = {max_bank+1};\n'+s[en:]
+          u.write_text(s)
+
+          game=root/'drawmode/draw_game.cpp'
+          s=game.read_text()
+          old='printf("V71: original map loading deferred\\n");'
+          assert s.count(old)==1, ('Original deferred map marker missing',s.count(old))
+          s=s.replace(old,'themap->set_hotspot(mapnum, x, y);\n\tprintf("V71: requested original map 4 at %d,%d\\n",x,y);',1)
+          game.write_text(s)
+
+          header=root/'widgets/sdl_lin_map.h'
+          s=header.read_text()
+          assert s.count('class tile;')==1
+          s=s.replace('class tile;','class tile;\nstruct V71MapReader;',1)
+          assert s.count('SDL_RWops *sdl_buf')==2
+          s=s.replace('SDL_RWops *sdl_buf','V71MapReader *sdl_buf')
+          header.write_text(s)
+
+          mp=root/'widgets/sdl_lin_map.cpp'
+          s=mp.read_text()
+          assert s.count('SDL_RWFromConstMem(buffer, size)')==2
+          assert s.count('SDL_RWclose(sdl_buf)')==2
+          assert s.count('SDL_RWread(sdl_buf,')>10
+          assert s.count('SDL_RWops *sdl_buf')==3
+          s=s.replace('SDL_RWops *sdl_buf','V71MapReader *sdl_buf')
+          s=s.replace('SDL_RWFromConstMem(buffer, size)','new V71MapReader(buffer,size)')
+          s=s.replace('SDL_RWclose(sdl_buf)','delete sdl_buf')
+          s=s.replace('SDL_RWread(sdl_buf,','v71_map_read(sdl_buf,')
+          # Prevent unbounded allocations if an original .s32 file is malformed.
+          old='ret->mapdata->num_objects = bla;'
+          assert s.count(old)==1
+          s=s.replace(old,'if (bla < 0 || bla > 15000) { printf("V71: invalid map object count %d\\n",bla); bla=0; }\n\t'+old,1)
+          marker='void sdl_lin_map::handle_s32('
+          assert s.count(marker)==1
+          reader='''
+          #include <cstring>
+          #include <cstddef>
+
+          // V71: Original .s32 buffers need a real native reader. Emscripten's
+          // SDL_RWFromConstMem returns a JS handle, not a native SDL_RWops struct.
+          struct V71MapReader {
+              const unsigned char* p;
+              size_t len, pos;
+              V71MapReader(const char* source, int n)
+                : p((const unsigned char*)source), len(n>0?(size_t)n:0), pos(0) {}
+          };
+          static int v71_map_read(V71MapReader* r, void* dst, int size, int count) {
+              if (!r || !dst || size<=0 || count<=0 || r->pos>r->len) return 0;
+              const size_t cap=(r->len-r->pos)/(size_t)size;
+              const size_t n=cap<(size_t)count?cap:(size_t)count;
+              if (n) { memcpy(dst, r->p+r->pos, n*(size_t)size); r->pos+=n*(size_t)size; }
+              return (int)n;
+          }
+
+          '''
+          s=s.replace(marker,reader+marker,1)
+          # Log actual bytes and successful native map parsing, not a fake HTML image.
+          line='ret->map = mapnum;'
+          assert s.count(line)==1
+          s=s.replace(line,'printf("V71: native map segment parsed map=%d x=%d y=%d\\n",mapnum,x,y);\n\t'+line,1)
+          line='buffer = (char*)from->getfiles->load_file(name, &size, FILE_REGULAR1, 0);'
+          assert s.count(line)==2, s.count(line)
+          # The first lookup is .s32. Include the exact filename/size after success.
+          first=s.index(line)
+          s=s[:first]+s[first:first+len(line)]+ '\n\tif (buffer) printf("V71: loaded original map file %s bytes=%d\\n",name,size);'+s[first+len(line):]
+          mp.write_text(s)
+
+          # Avoid a transparent tile deadlock: get_tile_left/right currently calls
+          # get_special while holding the same non-recursive SDL mutex.
+          p=root/'resources/tile.cpp'
+          s=p.read_text()
+          old='''			if ((tdata->data[tdata->offset[which]] & 2) != 0)
+          			{
+          				ret = get_special(which);
+          			}'''
+          assert s.count(old)==2,s.count(old)
+          new='''			if ((tdata->data[tdata->offset[which]] & 2) != 0)
+          			{
+          				SDL_mutexV(delay_mtx);
+          				return get_special(which);
+          			}'''
+          s=s.replace(old,new)
+          for name,next_name in [('get_tile_right','get_tile_left'),('get_tile_left','get_special'),('get_special','delay_load')]:
+              st=s.index('sdl_graphic *tile::'+name+'(')
+              en=s.index('sdl_graphic *tile::'+next_name+'(') if next_name!='delay_load' else s.index('void tile::delay_load(')
+              section=s[st:en]
+              old='''	if (tdata != 0)
+          	{
+          '''
+              assert section.count(old)==1,name
+              new='''	if (tdata != 0)
+          	{
+          		if (which < 0 || which >= tdata->num_tiles ||
+          		    tdata->offset[which] == tdata->offset[which+1]) {
+          			SDL_mutexV(delay_mtx);
+          			return 0;
+          		}
+          '''
+              section=section.replace(old,new,1)
+              s=s[:st]+section+s[en:]
+          # Validate tile bank index before indexing into the offsets table.
+          old='''		tdata->num_tiles = SWAP16(tdata->num_tiles);
+          '''
+          assert s.count(old)==1
+          s=s.replace(old, old+'''		if (tdata->num_tiles <= 0 || tdata->num_tiles > 4096 ||
+          		    (size_t)(tdata->num_tiles + 2)*4 > (size_t)size) {
+          			printf("V71: rejected invalid tileset %d count=%d bytes=%d\\n", which,tdata->num_tiles,size);
+          			delete tdata;
+          			tdata=0;
+          			SDL_mutexV(delay_mtx);
+          			return;
+          		}
+          		if (which==2) printf("V71: original tileset 2 loaded count=%d bytes=%d\\n",tdata->num_tiles,size);
+          ''',1)
+          p.write_text(s)
+          print('V71 original .s32 direct reader patched; tile bank max:',max_bank)
+          PY
+          cat > /tmp/v71-tile-graphics.py <<'PY'
+          from pathlib import Path
+          p=Path('upstream-l1j/src/resources/sdl_graphic.cpp')
+          s=p.read_text()
+          start=s.index('void sdl_graphic::do_load(int x, int y, short *source, int type)')
+          end=s.index('void sdl_graphic::do_load(char *name,',start)
+          section=s[start:end]
+          a=section.index('\t\tcase GRAPH_STIL:')
+          b=section.index('\t\tdefault:',a)
+          replacement=r'''        case GRAPH_STIL:
+                  case GRAPH_LTIL:
+                  case GRAPH_RTIL:
+                  {
+                      // Original Tile.pak RGB555 pixels. In Emscripten, SDL surface
+                      // memory is not the Canvas's writable pixel memory. Decode into
+                      // genuine RGBA32 then pass it through SDL_CreateRGBSurfaceFrom.
+                      // Alpha=0 outside the original diamond/sparse tile polygon.
+                      const int tile_type=type;
+                      unsigned char *rgba=new unsigned char[24*24*4]();
+                      const int W=24, H=24;
+                      auto put_pixel=[&](int row,int col,unsigned short color) {
+                          if (row<0 || row>=H || col<0 || col>=W) return;
+                          unsigned char *dst=rgba+(row*W+col)*4;
+                          dst[0]=(unsigned char)((((color>>10)&31)*255+15)/31);
+                          dst[1]=(unsigned char)((((color>>5)&31)*255+15)/31);
+                          dst[2]=(unsigned char)((((color)&31)*255+15)/31);
+                          dst[3]=255;
+                      };
+                      int ox=0,oy=0,width=24,height=24;
+                      if (tile_type==GRAPH_STIL) {
+                          const unsigned char *data=(const unsigned char*)source;
+                          size_t at=0;
+                          ox=data[at++]; oy=data[at++];
+                          width=data[at++]; height=data[at++];
+                          if (width<0 || width>24) width=24;
+                          if (height<0 || height>24) height=24;
+                          for (int row=0;row<height;row++) {
+                              const unsigned segments=data[at++];
+                              int col=0;
+                              for (unsigned seg=0;seg<segments && seg<24;seg++) {
+                                  col+=data[at++]/2;
+                                  const unsigned run=data[at++];
+                                  for (unsigned j=0;j<run && j<24;j++) {
+                                      const unsigned short color=(unsigned short)data[at] |
+                                          ((unsigned short)data[at+1]<<8);
+                                      at+=2;
+                                      put_pixel(row,col+(int)j,color);
+                                  }
+                                  if (run>24) at+=(run-24)*2;
+                                  col+=(int)run;
+                              }
+                          }
+                      } else {
+                          for (int row=0;row<24;row++) {
+                              int span=2*(row+1);
+                              if (row>11) span-=4*(row-11);
+                              const int left=tile_type==GRAPH_LTIL?24-span:0;
+                              for (int col=0;col<span;col++)
+                                  put_pixel(row,left+col,(unsigned short)(*source++));
+                          }
+                      }
+                      img=SDL_CreateRGBSurfaceFrom(rgba,24,24,32,24*4,
+                          0x000000FF,0x0000FF00,0x00FF0000,0xFF000000);
+                      delete [] rgba;
+                      cleanup=false;
+                      pos=make_sdl_rect(ox,oy,width,height);
+                      mask=make_sdl_rect(0,0,width,height);
+                      break;
+                  }
+          '''
+          section=section[:a]+replacement+section[b:]
+          s=s[:start]+section+s[end:]
+          p.write_text(s)
+          print('V71: real RGB555 map colors decoded into RGBA32, preserving tile transparency.')
+          PY
+          cat > /tmp/v71-driver.py <<'PY'
+          import json
           import subprocess
           from pathlib import Path
           import yaml
 
-          # The V65 Emscripten runtime explicitly passes Module into preRun.
-          # Verify the export and callback contract before running anything.
-          compiled = Path("published/lineage-v65.js").read_text()
-          assert "callbacks.shift()(Module);" in compiled
-          assert 'Module["FS"] = FS;' in compiled
+          # Reuse V70's exact successful compiler, music, JS proxy and character flow.
+          commit='fd502caae120b8b30bd5b79c224c421c8cb38610'
+          raw=subprocess.check_output(['git','show',commit+':.github/workflows/build-web.yml'],text=True)
+          yml=yaml.safe_load(raw)
+          steps=yml['jobs']['original_client_v70']['steps']
+          main=next(s['run'] for s in steps if s['name'].startswith('V70 | Reuse V67 successful build'))
+          a="cat > /tmp/v70-run.py <<'PY'\n"
+          b='\nPY\npython3 -m py_compile /tmp/v70-run.py'
+          assert main.count(a)==1 and main.count(b)==1
+          code=main.split(a,1)[1].split(b,1)[0]
+          code=code.replace('V70','V71').replace('v70','v71')
 
-          # V67 built and saved characters, V69 fixed FS but failed when
-          # stale V65 SDL proxy indices were used by the recompiled client.
-          # Reuse the compiled sources, and repair only the proxy mapping.
-          baseline = 'e7d56cbe5e5986328a38de6e02686b492e681d40'
-          old = subprocess.check_output(
-              ['git', 'show', baseline + ':.github/workflows/build-web.yml'],
-              text=True
+          # Insert hooks after the successful V67 source preparation and resource stage.
+          needle="    if title == 'V67 | Preserve V65 image decoder and repair invalid SDL blits':"
+          assert code.count(needle)==1
+          hooks="""    if title == 'V67 | Restore unchanged V59 game resources':
+                  import shutil
+                  shutil.copytree('assets/v71/lineage','runtime/lineage',dirs_exist_ok=True)
+                  print('V71 native Tile.pak and original map sections mounted',flush=True)
+              if title == 'V67 | Bypass server and prepare native character entry':
+                  subprocess.run(['python3','/tmp/v71-native.py'],check=True)
+                  subprocess.run(['python3','/tmp/v71-tile-graphics.py'],check=True)
+          """
+          code=code.replace(needle,hooks+needle,1)
+
+          # Extend V70's already successful native game entry test to require authentic
+          # native map decoding and actual canvas pixels (HTML picture does not count).
+          marker="        assert 'V71: offline native game ready:' in script"
+          assert code.count(marker)==1
+          extra_test='''            await page.wait_for_function(
+                          "() => { const s=document.querySelector('#logbox').textContent; "
+                          "return s.includes('V71: native map segment parsed') && "
+                          "s.includes('V71: original tileset 2 loaded'); }",
+                          timeout=90000
+                      )
+                      await page.wait_for_timeout(4000)
+                      map_sample=await page.evaluate("""() => {
+                        const c=document.querySelector('#canvas');
+                        const rows=Math.min(380,c.height);
+                        const d=c.getContext('2d',{willReadFrequently:true})
+                                 .getImageData(0,0,c.width,rows).data;
+                        let good=0,total=0;
+                        const unique=new Set();
+                        for(let i=0;i<d.length;i+=128){
+                          const r=d[i],g=d[i+1],b=d[i+2];
+                          if(r>35 || g>35 || b>35){
+                            good++;
+                            unique.add(((r>>4)<<8)|((g>>4)<<4)|(b>>4));
+                          }
+                          total++;
+                        }
+                        return {ratio:good/Math.max(1,total),colors:unique.size};
+                      }""")
+                      ratio=map_sample["ratio"]
+                      result["native_map_unique_colors"]=map_sample["colors"]
+                      assert map_sample["colors"]>=8, "V71 map image lacks original tile colors"
+                      result["native_map_nonblack_fraction"]=ratio
+                      assert ratio>0.02,"V71 native original map canvas blank: "+str(ratio)
+          '''
+          assert 'result["native_game_ready"]=True' not in code
+          extra_lines=(
+              "        needle='            result[\"native_game_ready\"]=True'\n"
+              "        assert script.count(needle)==1\n"
+              "        extra="+repr(extra_test)+"\n"
+              "        script=script.replace(needle,extra+needle,1)\n"
           )
-          workflow = yaml.safe_load(old)
-          original_steps = workflow['jobs']['original_client_v67']['steps']
-          available = {item['name']: item['run'] for item in original_steps if 'run' in item}
-          stages = [
-              'V67 | Restore unchanged V59 game resources',
-              'V67 | Bypass server and prepare native character entry',
-              'V67 | Compile original engine with offline entry',
-              'V67 | Preserve V65 image decoder and repair invalid SDL blits',
-              'V67 | Build offline character creation and selection',
-              'V67 | Install real browser test',
-              'V67 | Test character creation, persistence and native entry',
-          ]
-          assert len(stages) == len(set(stages))
-          assert all(stage in available for stage in stages)
+          code=code.replace(marker,marker+'\n'+extra_lines.rstrip('\n'),1)
 
-          def align_sdl_proxy_indices(js_path):
-              """Reconcile V65-transplanted SDL functions with THIS build's proxy table.
-
-              C++ changes can alter the imports that Emscripten keeps, changing
-              proxiedFunctionTable order. Reusing hardcoded V65 indices calls an
-              unrelated function with a different number of arguments.
-              """
-              js_file = Path(js_path)
-              code = js_file.read_text(encoding='utf-8')
-              table_match = re.search(
-                  r'var proxiedFunctionTable\s*=\s*\[([^\]]+)\];', code
-              )
-              assert table_match, 'V70: generated JS has no Emscripten proxy table'
-              entries = [item.strip() for item in table_match.group(1).split(',')]
-              assert len(entries) == len(set(entries)), 'V70: duplicate proxy entries'
-              targets = [
-                  ('_SDL_AddTimer',
-                   'var _SDL_AddTimer = function(',
-                   'function _SDL_CreateRGBSurface(', 3),
-                  ('_SDL_CreateRGBSurfaceFrom',
-                   'function _SDL_CreateRGBSurfaceFrom(',
-                   'var _SDL_Delay =', 9),
-                  ('_SDL_RemoveTimer',
-                   'function _SDL_RemoveTimer(',
-                   'var _SDL_SaveBMP_RW', 1),
-              ]
-              for symbol, begin, end, expected_argc in targets:
-                  assert symbol in entries, 'V70: missing proxy '+symbol
-                  assert code.count(begin) == 1, 'V70: missing body '+symbol
-                  begin_at = code.index(begin)
-                  end_at = code.index(end, begin_at)
-                  block = code[begin_at:end_at]
-                  pattern = r'proxyToMainThread\(\s*(\d+)\s*(,\s*0\s*,\s*1\s*,)'
-                  found = list(re.finditer(pattern, block))
-                  assert len(found) == 1, 'V70: unexpected proxy calls '+symbol
-                  old_index = int(found[0].group(1))
-                  new_index = entries.index(symbol)
-                  header = block.split('{', 1)[0]
-                  args = header[header.index('(')+1:header.rindex(')')]
-                  assert len(args.split(',')) == expected_argc, (
-                      symbol, args, expected_argc
-                  )
-                  block = re.sub(
-                      pattern,
-                      lambda m: 'proxyToMainThread('+str(new_index)+m.group(2),
-                      block, count=1
-                  )
-                  code = code[:begin_at]+block+code[end_at:]
-                  print('V70 proxy', symbol, 'V65 index', old_index,
-                        '=> actual index', new_index,
-                        'arity', expected_argc, flush=True)
-              # If the new toolchain has another proxy mismatch, report the
-              # actual function rather than losing the error in a generic abort.
-              diagnostic='assert(func.length == numCallArgs, "Call args mismatch in _emscripten_receive_on_main_thread_js");'
-              assert code.count(diagnostic)==1, 'V70: unknown proxy assertion'
-              verbose=('if (!func || func.length !== numCallArgs) {\n'
-                       '    var info = "V70 proxy mismatch: index=" + funcIndex +\n'
-                       '      " name=" + (func ? func.name : "missing") +\n'
-                       '      " expected=" + (func ? func.length : "missing") +\n'
-                       '      " received=" + numCallArgs;\n'
-                       '    err(info);\n'
-                       '    throw new Error(info);\n'
-                       '  }')
-              code=code.replace(diagnostic, verbose, 1)
-              assert 'lineage-v70.wasm' in code
-              assert 'lineage-v70.data' in code
-              js_file.write_text(code, encoding='utf-8')
-              subprocess.run(['node','--check',str(js_file)],check=True)
-
-          # Confirm the exact V67 workflow yields the patch anchors BEFORE
-          # starting the costly native compilation.
-          parsed_page = available['V67 | Build offline character creation and selection']
-          assert parsed_page.count('preRun:[function(){') == 1
-          assert parsed_page.count('FS.writeFile(') == 1
-          assert parsed_page.count("const v67Key='sanctuary-game2-v67-characters';") == 1
-
-          for step_number, title in enumerate(stages, 1):
-              script = available[title].replace('V67', 'V70').replace('v67', 'v70')
-              if title == 'V67 | Build offline character creation and selection':
-                  # Emscripten MODULARIZE hides FS inside the instance.
-                  # preRun receives Module as its first argument; FS is exported
-                  # as Module.FS before preRun callbacks run.
-                  assert script.count('preRun:[function(){') == 1
-                  assert script.count('FS.writeFile(') == 1
-                  script = script.replace(
-                      'preRun:[function(){', 'preRun:[function(module){', 1
-                  ).replace('FS.writeFile(', 'module.FS.writeFile(', 1)
-                  # No whitespace-sensitive checks or diagnostic additions here.
-                  # The already patched module.FS.writeFile is sufficient.
-                  # Keep the browser save key stable across future versions.
-                  prior_key = "const v70Key='sanctuary-game2-v70-characters';"
-                  assert script.count(prior_key) == 1
-                  script = script.replace(
-                      prior_key, "const v70Key='sanctuary-game2-characters-v1';", 1
-                  )
-              if title == 'V67 | Test character creation, persistence and native entry':
-                  # Preserve V67's actual test gate: character data must reach
-                  # the real C++ game drawmode, not merely the HTML fallback.
-                  assert 'result["native_game_ready"]' in script
-                  assert 'timeout=100000' in script
-                  assert 'V70: offline native game ready:' in script
-
-              print('\n' + '=' * 72, flush=True)
-              print(f'V70 [{step_number}/{len(stages)}] {title}', flush=True)
-              print('=' * 72, flush=True)
-              subprocess.run(
-                  ['bash', '-e', '-o', 'pipefail', '-c', script],
-                  check=True,
-                  env=os.environ.copy(),
-              )
-              if title == 'V67 | Preserve V65 image decoder and repair invalid SDL blits':
-                  # V65 hardcoded proxy IDs are not valid after recompiling C++.
-                  # Fix the JS worker/main-thread bridge before packaging the page.
-                  align_sdl_proxy_indices('dist/lineage-v70.js')
-              if title == 'V67 | Build offline character creation and selection':
-                  html = Path('published/v70.html').read_text(encoding='utf-8')
-                  assert html.count('preRun:[function(module){') == 1
-                  assert html.count('module.FS.writeFile(') == 1
-                  assert 'sanctuary-game2-characters-v1' in html
-                  native = Path('upstream-l1j/src/sdl_user.cpp').read_text()
-                  assert 'fopen("/v70-character.txt","rb")' in native
-                  assert '"/v70-character.txt"' in html
-                  assert 'lineage-v70.wasm' in html
-
-          report = json.loads(Path('reports/V70-browser.json').read_text())
-          assert report['character_saved']
-          assert report['character_restored']
-          assert report['native_game_ready']
-          assert report['passed']
-          print('V70: character creation, persistent storage and native game entry verified.', flush=True)
+          script=Path('/tmp/v71-run.py')
+          script.write_text(code+'\n')
+          subprocess.run(['python3','-m','py_compile',str(script)],check=True)
+          print('V71 authentic native map step injected into verified V70 compiler',flush=True)
+          subprocess.run(['python3','-u',str(script)],check=True)
+          result=json.loads(Path('reports/V71-browser.json').read_text())
+          assert result['passed'] and result['native_game_ready']
+          assert result.get('native_map_nonblack_fraction',0)>0.02
+          print('V71 original map canvas fraction:',result['native_map_nonblack_fraction'])
           PY
-          python3 -m py_compile /tmp/v70-run.py
-          python3 -u /tmp/v70-run.py 2>&1 | tee V70-execution.log
+          python3 -m py_compile /tmp/v71-native.py /tmp/v71-tile-graphics.py /tmp/v71-driver.py
+          python3 -u /tmp/v71-driver.py 2>&1 | tee reports/V71-build-test.log
 
-      - name: "V70 | Upload native game diagnostics"
+      - name: "V71 | Preserve authentic map and mobile-browser diagnostics"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V70-Offline-Character
+          name: Sanctuary-game2-V71-Original-Map-Diagnostics
           path: |
-            V70-execution.log
-            reports/V70-browser.json
-            reports/V70-mobile.png
-            reports/V70-build.txt
-            reports/V70-http.txt
-            reports/V70-original-music.sha256
+            reports/V71-extract.log
+            reports/V71-build-test.log
+            reports/V71-browser.json
+            reports/V71-mobile.png
+            reports/V71-build.txt
+            reports/V71-http.txt
+            assets/v71/v71-map-manifest.json
           if-no-files-found: warn
           retention-days: 30
 
-      - name: "V70 | Publish only when actual C++ character entry succeeds"
+      - name: "V71 | Publish only after authentic native map pixels are visible"
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json
           from pathlib import Path
-          result = json.loads(Path('reports/V70-browser.json').read_text())
-          assert result['passed'] and result['character_saved']
-          assert result['character_restored'] and result['native_game_ready']
-          page = Path('published/v70.html').read_text()
-          assert 'module.FS.writeFile(' in page
+          report=json.loads(Path('reports/V71-browser.json').read_text())
+          assert report['passed'] and report['character_saved']
+          assert report['character_restored'] and report['native_game_ready']
+          assert report['native_map_nonblack_fraction']>0.02
+          assert Path('published/lineage-v71.data').stat().st_size<100000000
+          print('Authentic V71 native map:',report['native_map_nonblack_fraction'])
           PY
-          git -C published add -- index.html v70.html \
-            lineage-v70.js lineage-v70.wasm lineage-v70.data
+          git -C published add -- index.html v71.html \
+            lineage-v71.js lineage-v71.wasm lineage-v71.data
           git -C published config user.name 'github-actions[bot]'
           git -C published config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           if ! git -C published diff --cached --quiet; then
-            git -C published commit -m 'build-web.yml V70: fix browser to WASM character file transfer'
+            git -C published commit -m 'build-web.yml V71: restore original tile and map assets in native client'
             git -C published push origin HEAD:gh-pages
           fi
 
-      - name: "V70 | Record real result"
+      - name: "V71 | Record exact implementation scope"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V70 | Sanctuary game2 GitHub Pages'
-            echo 'V69 character save and reload passed, but SDL worker proxy arities mismatched.'
-            echo 'Retains the fixed Module.FS character transfer introduced in V69.'
-            echo 'Maps transplanted SDL timer/pixel-loader proxies to the current generated table.'
-            echo 'Uses the stable browser character key sanctuary-game2-characters-v1.'
-            echo 'Original music data is retained and verified by the V67 build stages.'
-            echo 'Deployment requires creation, browser persistence and real C++ entry.'
-            echo 'Detailed mismatch diagnostics include function index, name and arity; gameplay is not yet verified.'
+            echo '# build-web.yml | V71 | Sanctuary game2 GitHub Pages'
+            echo 'Original Tile.pak and map/4 .s32 data recovered from the 46-part split archive.'
+            echo 'Only required volumes and compact actual referenced tile banks are kept.'
+            echo 'The native Sanctuary C++ map renderer remains in use; no fake game image.'
+            echo 'Original V70 offline characters, SDL proxy fixes and audio remain unchanged.'
+            echo 'The original map binary parser uses a bounds-checked native reader.'
+            echo 'Deploy requires native map parsing and actual nonblack canvas pixels.'
+            echo 'Movement, combat and additional map regions remain unverified.'
           } >> "$GITHUB_STEP_SUMMARY"
