@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V77 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V77 | Sanctuary game2 GitHub Pages"
+name: "build-web.yml | V78 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V78 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
@@ -13,29 +13,29 @@ permissions:
   contents: write
 
 concurrency:
-  group: game2-v77-original-map
+  group: game2-v78-native-map
   cancel-in-progress: false
 
 jobs:
-  original_client_v77:
-    name: "build-web.yml | V77 | Restore authentic SDL map presentation"
+  original_client_v78:
+    name: "build-web.yml | V78 | Diagnose and repair native SDL tile pixels"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
 
     steps:
-      - name: "V77 | Checkout complete game2 history"
+      - name: "V78 | Checkout complete game2 history"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: "V77 | Preserve successful V70 Pages"
+      - name: "V78 | Preserve successful V70 GitHub Pages"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
 
-      - name: "V77 | Checkout original Sanctuary C++ source"
+      - name: "V78 | Checkout exact original Sanctuary C++ client"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -43,237 +43,387 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V77 | Set up known working Emscripten"
+      - name: "V78 | Set up verified Emscripten compiler"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V77 | Reuse confirmed V76 extraction and original C++ compilation"
+      - name: "V78 | Restore V77 native compiler and original map extraction"
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install --quiet 'PyYAML==6.0.2'
           mkdir -p reports
-          cat > /tmp/v77-prepare.py <<'PY'
-          from pathlib import Path
-          import ast
-          import re
+
+          cat > /tmp/v78-restore.py <<'PY'
           import subprocess
+          from pathlib import Path
           import yaml
 
-          # V76 succeeded in extracting 16 original .s32 sections,
-          # 196 authentic tile banks, and compiling the C++ client.
-          # Do not modify or rebuild those processing scripts from scratch.
-          sha='f57eada1c465eb8efc1370288f0f966b5b360d4d'
-          raw=subprocess.check_output(
-              ['git','show',sha+':.github/workflows/build-web.yml'],text=True)
-          workflow=yaml.safe_load(raw)
-          original=workflow['jobs']['original_client_v76']['steps']
-          prep=next(s['run'] for s in original
-                    if s['name']=='V76 | Prepare and precompile original map patches')
-          prep=prep.replace('V76','V77').replace('v76','v77')
-          match=re.search(r"(?m)^cat > /tmp/v77-prepare.py <<'PY'\n([\s\S]*?)\nPY$",prep)
-          assert match,'V77 original preflight script not found'
-          ast.parse(match.group(1),filename='v77-original-prepare.py')
-          subprocess.run(['bash','-e','-o','pipefail','-c',prep],check=True)
-          for f in ('/tmp/v77-extract.sh','/tmp/v77-build.sh'):
-              assert Path(f).is_file(),f
-              subprocess.run(['bash','-n',f],check=True)
-          print('V77: original V76 extraction and build scripts preserved.',flush=True)
-          PY
-          python3 -m py_compile /tmp/v77-prepare.py
-          python3 -u /tmp/v77-prepare.py | tee reports/V77-preflight.log
+          # V77 successfully compiled the original C++ client,
+          # extracted 16 authentic map sections and loaded 196 tile banks.
+          baseline='138ba6e59e379160273e3e26cb036bd422da1b36'
 
-      - name: "V77 | Correct native map viewport and SDL browser bridge"
+          raw=subprocess.check_output(
+              ['git','show',baseline+':.github/workflows/build-web.yml'],
+              text=True
+          )
+          workflow=yaml.safe_load(raw)
+          steps=workflow['jobs']['original_client_v77']['steps']
+          scripts={s['name']:s['run'] for s in steps if 'run' in s}
+
+          stages=[
+              'V77 | Reuse confirmed V76 extraction and original C++ compilation',
+              'V77 | Correct native map viewport and SDL browser bridge'
+          ]
+          assert all(stage in scripts for stage in stages)
+
+          for index,title in enumerate(stages,1):
+              script=scripts[title]
+              script=script.replace('V77','V78').replace('v77','v78')
+              print('V78 prepare',index,title,flush=True)
+              subprocess.run(
+                  ['bash','-e','-o','pipefail','-c',script],
+                  check=True
+              )
+
+          required=[
+              '/tmp/v78-extract.sh',
+              '/tmp/v78-build.sh',
+              '/tmp/v78-native-viewport.py',
+              '/tmp/v78-sdl-bridge.py',
+              '/tmp/v78-wire.py'
+          ]
+          for filename in required:
+              assert Path(filename).is_file(),filename
+
+          for filename in required[:2]:
+              subprocess.run(['bash','-n',filename],check=True)
+
+          for filename in required[2:]:
+              subprocess.run(
+                  ['python3','-m','py_compile',filename],
+                  check=True
+              )
+
+          print('V78 original C++ build stages restored.',flush=True)
+          PY
+
+          python3 -m py_compile /tmp/v78-restore.py
+          python3 -u /tmp/v78-restore.py \
+            2>&1 | tee reports/V78-restore.log
+
+      - name: "V78 | Inspect original decoded tile pixels before SDL transfer"
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/v77-native-viewport.py <<'PY'
+
+          # Append to V77's proven native-viewport patch. It already runs
+          # after tile graphics source preparation and before compilation.
+          cat >> /tmp/v78-native-viewport.py <<'PY'
           from pathlib import Path
-          p=Path('upstream-l1j/src/widgets/sdl_lin_map.cpp')
-          s=p.read_text()
-          def one(old,new,n=1):
-              global s
-              assert s.count(old)==n,('V77 map anchor',old,s.count(old))
-              s=s.replace(old,new,n)
-          # The original 3072x1535 offscreen section caches were repeatedly
-          # copied through SDL1's browser shim; their pixels never reached
-          # the page canvas in V76. Draw original native cells into a bounded
-          # viewport, not an HTML substitute map.
-          one('ret->graphic = new sdl_graphic(0, 0, 3072, 1535, 75);',
-              'ret->graphic = new sdl_graphic(0, 0, one->getw(), one->geth(), 75);')
-          one('dx = tempmap.get_screen().get_x() + offsetx;',
-              'dx = tempmap.get_screen().get_x() + master_offsetx;',2)
-          one('dy = tempmap.get_screen().get_y() + offsety;',
-              'dy = tempmap.get_screen().get_y() + master_offsety;',2)
-          one('ret->offsetx = offsetx;', 'ret->offsetx = master_offsetx;')
-          one('ret->offsety = offsety;', 'ret->offsety = master_offsety;')
-          one('ret->map = mapnum;',
-              'printf("V77: native map viewport %d x %d\\n",one->getw(),one->geth());\n\tret->map = mapnum;')
-          p.write_text(s)
-          print('V77: original native SDL map now renders into a viewport-sized surface.',flush=True)
+
+          graphic=Path('upstream-l1j/src/resources/sdl_graphic.cpp')
+          code=graphic.read_text()
+
+          marker='img=SDL_CreateRGBSurfaceFrom(rgba,24,24,32,24*4,'
+          assert code.count(marker)==1, (
+              'V78 native tile decoder anchor',code.count(marker)
+          )
+
+          probe=r'''
+          static int v78TileCount=0;
+          ++v78TileCount;
+          if (v78TileCount<=2 ||
+              v78TileCount==32 ||
+              v78TileCount==128 ||
+              v78TileCount==512 ||
+              v78TileCount==1024) {
+              int v78Opaque=0;
+              int v78Colored=0;
+              for (int v78I=0;v78I<24*24;v78I++) {
+                  const unsigned char* px=rgba+v78I*4;
+                  if (px[3]>0) ++v78Opaque;
+                  if (px[0]>35 || px[1]>35 || px[2]>35)
+                      ++v78Colored;
+              }
+              printf("V78: native decoded tile %d type=%d opaque=%d colored=%d\n",
+                  v78TileCount,tile_type,v78Opaque,v78Colored);
+          }
+          '''
+
+          code=code.replace(marker,probe+'\n'+marker,1)
+          graphic.write_text(code)
+
+          print(
+              'V78: original RGB555 decoder pixel verification installed.',
+              flush=True
+          )
           PY
-          cat > /tmp/v77-sdl-bridge.py <<'PY'
+
+          python3 -m py_compile /tmp/v78-native-viewport.py
+
+      - name: "V78 | Repair SDL tile blits and present the real map buffer"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # This extends the V77 SDL bridge. The resulting JS still uses
+          # the original C++ client's tile surfaces and rendering commands.
+          cat >> /tmp/v78-sdl-bridge.py <<'PY'
           from pathlib import Path
           import subprocess
-          p=Path('dist/lineage-v77.js')
-          s=p.read_text(encoding='utf-8')
-          def one(old,new):
-              global s
-              assert s.count(old)==1,('V77 SDL anchor',old,s.count(old))
-              s=s.replace(old,new,1)
-          # Observe real native SDL surfaces when the map blits into its
-          # 640x380 viewport. No invented tiles and no static HTML image.
-          marker='    var oldAlpha = dstData.ctx.globalAlpha;'
-          one(marker, '''    if (dstData.width === 640 && dstData.height === 380) {
-                  SDL.v77NativeMapViewport = dstData.canvas;
-                  SDL.v77MapBlits = (SDL.v77MapBlits || 0) + 1;
-                  if (SDL.v77MapBlits <= 4) {
-                    var v77Bright=0, v77Opaque=0;
-                    try {
-                      var v77Pixels=dstData.ctx.getImageData(0,0,640,380).data;
-                      for (var v77I=0; v77I<v77Pixels.length; v77I+=512) {
-                        if (v77Pixels[v77I+3]>0) v77Opaque++;
-                        if (v77Pixels[v77I]>35 || v77Pixels[v77I+1]>35 ||
-                            v77Pixels[v77I+2]>35) v77Bright++;
+
+          js=Path('dist/lineage-v78.js')
+          source=js.read_text(encoding='utf-8')
+
+          anchor=(
+              '    dstData.ctx.drawImage(srcData.canvas, '
+              'sr.x, sr.y, sr.w, sr.h, '
+              'dr.x, dr.y, blitw, blith);'
+          )
+          assert source.count(anchor)==1, (
+              'V78 SDL blit anchor',source.count(anchor)
+          )
+
+          # This runs AFTER the actual SDL drawImage, unlike V77's
+          # diagnostics, which inspected an empty destination beforehand.
+          patch=r'''
+              if (srcData.width===24 && srcData.height===24 &&
+                  dstData.width===640 && dstData.height===380) {
+                SDL.v78TileBlits=(SDL.v78TileBlits||0)+1;
+                var v78N=SDL.v78TileBlits;
+                var v78Opaque=0, v78Colored=0, v78DestOpaque=0;
+
+                if (v78N<=3072) {
+                  try {
+                    var v78Image=srcData.ctx.getImageData(0,0,24,24);
+                    var v78Bytes=v78Image.data;
+
+                    for (var v78I=0;v78I<v78Bytes.length;v78I+=4) {
+                      if (v78Bytes[v78I+3]>0) v78Opaque++;
+                      if (v78Bytes[v78I]>35 ||
+                          v78Bytes[v78I+1]>35 ||
+                          v78Bytes[v78I+2]>35) v78Colored++;
+                    }
+
+                    if (dr.x>=0 && dr.y>=0 &&
+                        dr.x+24<=dstData.width &&
+                        dr.y+24<=dstData.height &&
+                        sr.x===0 && sr.y===0 &&
+                        sr.w===24 && sr.h===24 &&
+                        blitw===24 && blith===24) {
+                      var v78Dst=dstData.ctx.getImageData(
+                        dr.x,dr.y,24,24
+                      ).data;
+
+                      for (var v78J=3;
+                           v78J<v78Dst.length;
+                           v78J+=4) {
+                        if (v78Dst[v78J]>0) v78DestOpaque++;
                       }
-                    } catch (v77E) { out("V77 SDL viewport sample: " + v77E); }
-                    out("V77: native SDL map viewport blit " + SDL.v77MapBlits +
-                        " source=" + srcData.width + "x" + srcData.height +
-                        " opaque=" + v77Opaque + " bright=" + v77Bright);
-                  }
-                }
-          '''+marker)
-          # The V65 bridge only mirrored the 640x480 backing surface.
-          # Present the real 640x380 native map canvas as well, so a blank
-          # backbuffer cannot hide a correctly decoded native map.
-          marker='        Module.v65Copies=(Module.v65Copies||0)+1;'
-          one(marker, '''        if (SDL.v77NativeMapViewport) {
-                    pageContext.drawImage(SDL.v77NativeMapViewport,
-                      0,0,640,380,0,0,pageCanvas.width,
-                      Math.round(pageCanvas.height*380/480));
-                    if (!SDL.v77Presented) {
-                      SDL.v77Presented=true;
-                      out("V77: original native SDL viewport presented to page canvas");
+
+                      // Emscripten SDL1 canvas compatibility fallback.
+                      // Copy genuine native tile pixels only when the
+                      // normal SDL blit left the destination empty.
+                      if (v78Opaque>0 && v78DestOpaque===0) {
+                        dstData.ctx.putImageData(
+                          v78Image,dr.x,dr.y
+                        );
+                        SDL.v78RecoveredBlits=
+                          (SDL.v78RecoveredBlits||0)+1;
+                      }
+                    }
+                  } catch (v78Error) {
+                    if (!SDL.v78ProbeErrorReported) {
+                      SDL.v78ProbeErrorReported=true;
+                      err("V78: SDL tile probe error "+v78Error);
                     }
                   }
-          '''+marker)
-          # Leave the existing SDL surface readback logic untouched.
-          # This changes only original SDL map presentation and diagnostics.
-          p.write_text(s,encoding='utf-8')
-          subprocess.run(['node','--check',str(p)],check=True)
-          print('V77: SDL native map-to-page bridge and syntax verified.',flush=True)
-          PY
-          python3 -m py_compile /tmp/v77-native-viewport.py /tmp/v77-sdl-bridge.py
-          cat > /tmp/v77-wire.py <<'PY'
-          from pathlib import Path
-          import re
-          import ast
-          import subprocess
-          build_file=Path('/tmp/v77-build.sh')
-          s=build_file.read_text()
-          # Both hooks run after the proven V76 source preparation / JS
-          # proxy-index correction, before assets are packaged into the page.
-          orig="subprocess.run(['python3','/tmp/v77-tile-graphics.py'],check=True)"
-          assert s.count(orig)==1,('V77 C++ hook',s.count(orig))
-          s=s.replace(orig,orig+"\n        subprocess.run(['python3','/tmp/v77-native-viewport.py'],check=True)",1)
-          anchor="code=code.replace(needle,hooks+needle,1)"
-          assert s.count(anchor)==1,('V77 JS hook',s.count(anchor))
-          injection='''
-          bridge_anchor="        align_sdl_proxy_indices('dist/lineage-v77.js')"
-          assert code.count(bridge_anchor)==1,('V77 proxy hook',code.count(bridge_anchor))
-          code=code.replace(bridge_anchor,
-              bridge_anchor+"\\n        subprocess.run(['python3','/tmp/v77-sdl-bridge.py'],check=True)",1)
-          '''
-          s=s.replace(anchor,anchor+'\n'+injection.strip('\n'),1)
-          matches=list(re.finditer(r"(?m)^cat > (/tmp/[\w-]+\.py) <<'PY'\n([\s\S]*?)\nPY$",s))
-          assert len(matches)>=3,('V77 nested Python scripts',len(matches))
-          for m in matches:
-              ast.parse(m.group(2),filename=m.group(1))
-          build_file.write_text(s)
-          subprocess.run(['bash','-n',str(build_file)],check=True)
-          print('V77: native and JavaScript hooks inserted; Python and bash pass syntax checks.',flush=True)
-          PY
-          python3 -m py_compile /tmp/v77-wire.py
-          python3 /tmp/v77-wire.py | tee reports/V77-bridge-preflight.log
+                }
 
-      - name: "V77 | Extract original assets, compile and test browser"
+                if (v78N<=2 || v78N===32 ||
+                    v78N===128 || v78N===512 ||
+                    v78N===1024 || v78N===2048) {
+                  out("V78: tile blit after draw="+v78N+
+                    " sourceOpaque="+v78Opaque+
+                    " sourceColored="+v78Colored+
+                    " destinationOpaque="+v78DestOpaque+
+                    " recovered="+(SDL.v78RecoveredBlits||0));
+                }
+
+                // Display the real original SDL viewport on the browser
+                // canvas after the main client's normal drawing cycle.
+                if (!SDL.v78FramePresenterInstalled) {
+                  SDL.v78FramePresenterInstalled=true;
+                  var v78Present=function() {
+                    if (SDL.v78NativeMapViewport) {
+                      var c=Module["canvas"];
+                      if (c) {
+                        var ctx=c.getContext("2d");
+                        ctx.drawImage(
+                          SDL.v78NativeMapViewport,
+                          0,0,640,380,
+                          0,0,c.width,
+                          Math.round(c.height*380/480)
+                        );
+                      }
+                    }
+                    requestAnimationFrame(v78Present);
+                  };
+                  requestAnimationFrame(v78Present);
+                  out("V78: original SDL viewport frame presenter installed");
+                }
+              }
+          '''
+
+          source=source.replace(anchor,anchor+'\n'+patch,1)
+          js.write_text(source,encoding='utf-8')
+
+          subprocess.run(['node','--check',str(js)],check=True)
+          print(
+              'V78: post-blit pixel verification and native viewport bridge installed.',
+              flush=True
+          )
+          PY
+
+          python3 -m py_compile /tmp/v78-sdl-bridge.py
+
+          # Validate that the restored build still invokes both patch files.
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('/tmp/v78-build.sh').read_text()
+          for required in (
+              '/tmp/v78-native-viewport.py',
+              '/tmp/v78-sdl-bridge.py',
+              'align_sdl_proxy_indices'
+          ):
+              assert required in s,required
+          print('V78: original compiler hooks confirmed.')
+          PY
+
+          bash -n /tmp/v78-build.sh
+
+      - name: "V78 | Extract original assets and run real C++ browser test"
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          bash /tmp/v77-extract.sh 2>&1 | tee reports/V77-extraction.log
-          bash /tmp/v77-build.sh 2>&1 | tee reports/V77-build-test.log
+
+          bash /tmp/v78-extract.sh \
+            2>&1 | tee reports/V78-extraction.log
+
+          bash /tmp/v78-build.sh \
+            2>&1 | tee reports/V78-build-test.log
+
           python3 - <<'PY'
           import json
           from pathlib import Path
-          r=json.loads(Path('reports/V77-browser.json').read_text())
-          assert r['passed'] and r['native_game_ready']
-          assert r['character_saved'] and r['character_restored']
-          assert r['native_map_unique_colors']>=8
-          assert r['native_map_nonblack_fraction']>0.02
-          assert Path('reports/V77-map-canvas.png').stat().st_size>500
-          print('V77 authentic native map visible:',r['native_map_nonblack_fraction'])
+
+          result=json.loads(
+              Path('reports/V78-browser.json').read_text()
+          )
+
+          assert result['character_saved']
+          assert result['character_restored']
+          assert result['native_game_ready']
+          assert result['passed']
+          assert result['native_map_unique_colors']>=8
+          assert result['native_map_nonblack_fraction']>0.02
+          assert Path('reports/V78-map-canvas.png').stat().st_size>500
+
+          print(
+              'V78 original Sanctuary map pixels verified:',
+              result['native_map_nonblack_fraction']
+          )
           PY
 
-      - name: "V77 | Upload build, map and browser diagnostics"
+      - name: "V78 | Save all native graphics and browser diagnostics"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V77-Native-Map
+          name: Sanctuary-game2-V78-Native-Map
           path: |
-            reports/V77-preflight.log
-            reports/V77-bridge-preflight.log
-            reports/V77-extraction.log
-            reports/V77-build-test.log
-            reports/V77-extract.log
-            reports/V77-browser.json
-            reports/V77-map-canvas.png
-            reports/V77-mobile.png
-            reports/V77-http.txt
-            assets/v77/v77-map-manifest.json
+            reports/V78-restore.log
+            reports/V78-preflight.log
+            reports/V78-bridge-preflight.log
+            reports/V78-extraction.log
+            reports/V78-build-test.log
+            reports/V78-extract.log
+            reports/V78-browser.json
+            reports/V78-map-canvas.png
+            reports/V78-mobile.png
+            reports/V78-http.txt
+            assets/v78/v78-map-manifest.json
           if-no-files-found: warn
           retention-days: 30
 
-      - name: "V77 | Publish only after authentic SDL canvas test"
+      - name: "V78 | Publish only after original map actually appears"
         shell: bash
         run: |
           set -euo pipefail
+
           python3 - <<'PY'
           from pathlib import Path
           import json
-          r=json.loads(Path('reports/V77-browser.json').read_text())
-          assert r['passed'] and r['character_saved'] and r['character_restored']
-          assert r['native_game_ready'] and r['native_map_unique_colors']>=8
+
+          r=json.loads(Path('reports/V78-browser.json').read_text())
+
+          assert r['passed']
+          assert r['character_saved']
+          assert r['character_restored']
+          assert r['native_game_ready']
+          assert r['native_map_unique_colors']>=8
           assert r['native_map_nonblack_fraction']>0.02
-          assert Path('reports/V77-map-canvas.png').stat().st_size>500
+
           original=Path('published/lineage-v70.data').stat().st_size
-          current=Path('published/lineage-v77.data').stat().st_size
-          assets=sum(p.stat().st_size for p in Path('assets/v77/lineage').rglob('*') if p.is_file())
-          assert original<current<=original+assets+2000000
+          current=Path('published/lineage-v78.data').stat().st_size
+          map_bytes=sum(
+              p.stat().st_size
+              for p in Path('assets/v78/lineage').rglob('*')
+              if p.is_file()
+          )
+
+          assert original<current<=original+map_bytes+2000000
+          assert Path('reports/V78-map-canvas.png').stat().st_size>500
+
+          print('V78 native original map deployment gate passed.')
           PY
-          git -C published add -- index.html v77.html \
-            lineage-v77.js lineage-v77.wasm lineage-v77.data
+
+          git -C published add -- \
+            index.html \
+            v78.html \
+            lineage-v78.js \
+            lineage-v78.wasm \
+            lineage-v78.data
+
           git -C published config user.name 'github-actions[bot]'
-          git -C published config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C published config user.email \
+            '41898282+github-actions[bot]@users.noreply.github.com'
+
           if ! git -C published diff --cached --quiet; then
-            git -C published commit -m 'build-web.yml V77: repair authentic SDL viewport presentation'
+            git -C published commit -m \
+              'build-web.yml V78: inspect and repair native SDL tile presentation'
             git -C published push origin HEAD:gh-pages
           fi
 
-      - name: "V77 | Record exact scope"
+      - name: "V78 | Report measured rendering stages"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V77 | Sanctuary game2 GitHub Pages'
-            echo 'V76 extracted 16 authentic maps and 196 banks and entered native game.'
-            echo 'V76 canvas was uniformly RGB(5,5,5), confirmed by actual screenshot.'
-            echo 'V77 uses the original native SDL viewport rather than a fake image.'
-            echo 'V77 attempts a viewport-size native cache and patches the SDL browser bridge.'
-            echo 'The patched JavaScript reports native SDL map blits and page presentation.'
-            echo 'V70 character persistence and source assets are retained.'
-            echo 'The map must pass actual Chromium pixel verification before publishing.'
-            echo 'Movement, other maps and combat are not verified.'
+            echo '# build-web.yml | V78 | Sanctuary game2 GitHub Pages'
+            echo
+            echo 'V77 compiled the original C++ game and parsed all four starting map sections.'
+            echo 'V77 reached the SDL viewport but the browser canvas contained no map colors.'
+            echo 'V77 destination measurements occurred before the SDL tile draw.'
+            echo 'V78 measures actual native RGB555 tile pixels before SDL transfer.'
+            echo 'V78 measures tile source and destination pixels after SDL draw.'
+            echo 'Only genuine original SDL pixel data may be copied by the fallback.'
+            echo 'The original map viewport is presented on each browser frame.'
+            echo 'Character persistence and authentic source graphics are preserved.'
+            echo 'Deployment requires nonblank original map pixels and working native entry.'
+            echo 'Failure leaves the successful V70 Pages deployment unchanged.'
+            echo 'Movement, combat and additional map regions remain unverified.'
           } >> "$GITHUB_STEP_SUMMARY"
