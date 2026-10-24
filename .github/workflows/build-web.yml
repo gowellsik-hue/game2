@@ -1,11 +1,10 @@
 # FILE: .github/workflows/build-web.yml
-# VERSION: V82
+# VERSION: V83
 # BASE: V81, commit f2539964659dc7fdf8ecea9cefaf84989154fe0e
-# Keeps the original Sanctuary C++ engine and the V81 native tile renderer.
-# Removes the five upstream chat-window sample lines and restores mobile top alignment.
-# Reports original-player sprite status instead of claiming it is rendered.
-name: "build-web.yml | V82 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V82 | Sanctuary game2 GitHub Pages"
+# Keep the original Sanctuary C++ engine and V81 native tile renderer.
+# Remove five original chat demo lines; preserve actual chat functions.
+name: "build-web.yml | V83 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V83 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
@@ -18,29 +17,29 @@ permissions:
   contents: write
 
 concurrency:
-  group: game2-v82-native-client
+  group: game2-v83-native-client
   cancel-in-progress: false
 
 jobs:
-  original_client_v82:
-    name: "build-web.yml | V82 | Restore original client and clean game display"
+  original_client_v83:
+    name: "build-web.yml | V83 | Restore original client and clean game display"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
 
     steps:
-      - name: "V82 | Checkout game2 full history"
+      - name: "V83 | Checkout game2 full history"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: "V82 | Preserve last successful Pages deployment"
+      - name: "V83 | Preserve last successful Pages deployment"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
 
-      - name: "V82 | Checkout exact original Sanctuary C++ client"
+      - name: "V83 | Checkout exact original Sanctuary C++ client"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -48,18 +47,18 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V82 | Set up unchanged Emscripten toolchain"
+      - name: "V83 | Set up unchanged Emscripten toolchain"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V82 | Recover complete V81 native extraction and build scripts"
+      - name: "V83 | Recover complete V81 native extraction and build scripts"
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install --quiet 'PyYAML==6.0.2'
           mkdir -p reports
-          cat > /tmp/v82-restore.py <<'PY'
+          cat > /tmp/v83-restore.py <<'PY'
           from pathlib import Path
           import subprocess
           import yaml
@@ -79,171 +78,265 @@ jobs:
           ]
           assert all(name in scripts for name in originals)
           for name in originals:
-              script=scripts[name].replace('V81','V82').replace('v81','v82')
+              script=scripts[name].replace('V81','V83').replace('v81','v83')
               subprocess.run(
                   ['bash','-e','-o','pipefail','-c',script],
                   check=True
               )
               print('Recovered:',name,flush=True)
 
-          for name in ('/tmp/v82-extract.sh','/tmp/v82-build.sh'):
+          for name in ('/tmp/v83-extract.sh','/tmp/v83-build.sh'):
               assert Path(name).is_file(),name
               subprocess.run(['bash','-n',name],check=True)
 
-          for name in ('/tmp/v82-sdl-bridge.py','/tmp/v82-native-viewport.py'):
+          for name in ('/tmp/v83-sdl-bridge.py','/tmp/v83-native-viewport.py'):
               assert Path(name).is_file(),name
               subprocess.run(['python3','-m','py_compile',name],check=True)
 
-          assert '/tmp/v82-sdl-bridge.py' in Path('/tmp/v82-build.sh').read_text()
-          print('V82: V81 original map, SDL_Rect and character stages preserved.')
+          assert '/tmp/v83-sdl-bridge.py' in Path('/tmp/v83-build.sh').read_text()
+          print('V83: V81 original map, SDL_Rect and character stages preserved.')
           PY
-          python3 -m py_compile /tmp/v82-restore.py
-          python3 -u /tmp/v82-restore.py 2>&1 | tee reports/V82-restore.log
+          python3 -m py_compile /tmp/v83-restore.py
+          python3 -u /tmp/v83-restore.py 2>&1 | tee reports/V83-restore.log
 
-      - name: "V82 | Remove only original chat demonstration text"
+      - name: "V83 | Remove only original chat demonstration text"
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           import re
+
           p=Path('upstream-l1j/src/widgets/chat_window.cpp')
           source=p.read_text(encoding='utf-8')
+
           marker='text_box *tb = (text_box*)widgets[3];'
-          assert source.count(marker)==1
+
+          # The original client has two legitimate references:
+          # one in the constructor and one in add_line().
+          assert source.count(marker)==2, (
+              'Original accessors',source.count(marker)
+          )
+
           old=r'(?m)^[ \t]*tb->add_line\("[^"\n]*"\);[ \t]*\r?\n'
           cleaned,count=re.subn(old,'',source)
-          assert count==5,('Expected five upstream demo chat lines',count)
+
+          assert count==5,(
+              'Expected five upstream demo chat lines',count
+          )
           assert 'This is a test of displaying text' not in cleaned
           assert 'The number 42 is required' not in cleaned
+
+          # The actual chat handler must remain intact.
+          assert cleaned.count(marker)==2
+          assert 'tb->add_line(data);' in cleaned
+
           p.write_text(cleaned,encoding='utf-8')
-          Path('reports/V82-chat-audit.txt').write_text(
+
+          Path('reports/V83-chat-audit.txt').write_text(
               'Removed exactly five hardcoded test messages from original '
               'chat_window.cpp; real chat_window and text_box remain.\n'
           )
-          print('V82: removed five original sample chat messages.')
+          print('V83: removed five original sample chat messages.')
           PY
-          bash -n /tmp/v82-build.sh
+          bash -n /tmp/v83-build.sh
 
-      - name: "V82 | Build original C++ client and verify real map pixels"
+      - name: "V83 | Build original C++ client and verify real map pixels"
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          bash /tmp/v82-extract.sh 2>&1 | tee reports/V82-extract-stage.log
-          bash /tmp/v82-build.sh 2>&1 | tee reports/V82-build-stage.log
+
+          bash /tmp/v83-extract.sh \
+            2>&1 | tee reports/V83-extract-stage.log
+
+          bash /tmp/v83-build.sh \
+            2>&1 | tee reports/V83-build-stage.log
+
           python3 - <<'PY'
           from pathlib import Path
           import json
-          report=json.loads(Path('reports/V82-browser.json').read_text())
-          for name in ('character_saved','character_restored','native_game_ready','passed'):
+
+          report=json.loads(
+              Path('reports/V83-browser.json').read_text()
+          )
+
+          for name in (
+              'character_saved',
+              'character_restored',
+              'native_game_ready',
+              'passed'
+          ):
               assert report[name],(name,report.get(name))
+
           assert report['native_map_unique_colors']>=8
           assert report['native_map_nonblack_fraction']>0.02
-          assert Path('reports/V82-map-canvas.png').stat().st_size>500
+          assert Path('reports/V83-map-canvas.png').stat().st_size>500
 
-          native=Path('upstream-l1j/src/sdl_user.cpp').read_text()
+          native=Path(
+              'upstream-l1j/src/sdl_user.cpp'
+          ).read_text()
+
           assert 'game->set_selected_char(local);' in native
-          draw=Path('upstream-l1j/src/drawmode/draw_game.cpp').read_text()
+
+          draw=Path(
+              'upstream-l1j/src/drawmode/draw_game.cpp'
+          ).read_text()
+
           assert 'themap->move_sprite(info->id' in draw
-          entry=native.split('game->set_selected_char(local);',1)[1]
-          spawn_in_entry='game->place_character(' in entry.split('delete [] local->name;',1)[0]
-          state=('native player spawn called' if spawn_in_entry
-                 else 'native character metadata set; no player spawn call')
-          Path('reports/V82-character-audit.txt').write_text(
+
+          entry=native.split(
+              'game->set_selected_char(local);',1
+          )[1]
+
+          spawn_in_entry=(
+              'game->place_character('
+              in entry.split('delete [] local->name;',1)[0]
+          )
+
+          state=(
+              'native player spawn called'
+              if spawn_in_entry
+              else 'native character metadata set; no player spawn call'
+          )
+
+          Path('reports/V83-character-audit.txt').write_text(
               state+'\nReal sprite graphics not verified by this browser test.\n'
           )
-          print('V82:',state)
-          print('V82: original map colors',report['native_map_unique_colors'])
+
+          print('V83:',state)
+          print(
+              'V83: original map colors',
+              report['native_map_unique_colors']
+          )
           PY
 
-      - name: "V82 | Correct mobile stage alignment without covering native HUD"
+      - name: "V83 | Correct mobile stage alignment without covering native HUD"
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          for name in ('index.html','v82.html'):
+
+          for name in ('index.html','v83.html'):
               target=Path('published')/name
               source=target.read_text(encoding='utf-8')
-              assert 'V82' in source,('Wrong version',name)
-              old='#stage{position:relative;display:flex;align-items:center;justify-content:center;'
-              new='#stage{position:relative;display:flex;align-items:flex-start;justify-content:center;'
-              assert source.count(old)==1,('Stage CSS changed',name)
+
+              assert 'V83' in source,('Wrong version',name)
+
+              old=(
+                  '#stage{position:relative;display:flex;'
+                  'align-items:center;justify-content:center;'
+              )
+              new=(
+                  '#stage{position:relative;display:flex;'
+                  'align-items:flex-start;justify-content:center;'
+              )
+
+              assert source.count(old)==1,(
+                  'Stage CSS changed',name
+              )
+
               source=source.replace(old,new,1)
+
               assert 'sanctuary-game2-characters-v1' in source
-              assert 'lineage-v82.js' in source
+              assert 'lineage-v83.js' in source
+
               target.write_text(source,encoding='utf-8')
-          print('V82: map aligned to top; original bottom HUD stays available.')
+
+          print(
+              'V83: map aligned to top; original bottom HUD stays available.'
+          )
           PY
 
-      - name: "V82 | Upload original runtime and character diagnostics"
+      - name: "V83 | Upload original runtime and character diagnostics"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V82-Original-Runtime
+          name: Sanctuary-game2-V83-Original-Runtime
           path: |
-            reports/V82-restore.log
-            reports/V82-chat-audit.txt
-            reports/V82-character-audit.txt
-            reports/V82-preflight.log
-            reports/V82-bridge-preflight.log
-            reports/V82-extract-stage.log
-            reports/V82-build-stage.log
-            reports/V82-browser.json
-            reports/V82-map-canvas.png
-            reports/V82-mobile.png
-            reports/V82-http.txt
-            assets/v82/v82-map-manifest.json
+            reports/V83-restore.log
+            reports/V83-chat-audit.txt
+            reports/V83-character-audit.txt
+            reports/V83-preflight.log
+            reports/V83-bridge-preflight.log
+            reports/V83-extract-stage.log
+            reports/V83-build-stage.log
+            reports/V83-browser.json
+            reports/V83-map-canvas.png
+            reports/V83-mobile.png
+            reports/V83-http.txt
+            assets/v83/v83-map-manifest.json
           if-no-files-found: warn
           retention-days: 30
 
-      - name: "V82 | Publish only after original native map verification"
+      - name: "V83 | Publish only after original native map verification"
         shell: bash
         run: |
           set -euo pipefail
+
           python3 - <<'PY'
           import json
           from pathlib import Path
-          report=json.loads(Path('reports/V82-browser.json').read_text())
+
+          report=json.loads(
+              Path('reports/V83-browser.json').read_text()
+          )
+
           assert report['passed'] and report['native_game_ready']
-          assert report['character_saved'] and report['character_restored']
+          assert report['character_saved']
+          assert report['character_restored']
           assert report['native_map_unique_colors']>=8
           assert report['native_map_nonblack_fraction']>0.02
-          assert (Path('published')/'lineage-v82.js').is_file()
-          assert (Path('published')/'lineage-v82.wasm').is_file()
-          assert (Path('published')/'lineage-v82.data').is_file()
-          assert Path('published/v82.html').is_file()
-          before=Path('published/lineage-v70.data').stat().st_size
-          after=Path('published/lineage-v82.data').stat().st_size
+
+          assert Path('published/lineage-v83.js').is_file()
+          assert Path('published/lineage-v83.wasm').is_file()
+          assert Path('published/lineage-v83.data').is_file()
+          assert Path('published/v83.html').is_file()
+
+          before=Path(
+              'published/lineage-v70.data'
+          ).stat().st_size
+
+          after=Path(
+              'published/lineage-v83.data'
+          ).stat().st_size
+
           assets=sum(
               p.stat().st_size
-              for p in Path('assets/v82/lineage').rglob('*') if p.is_file()
+              for p in Path('assets/v83/lineage').rglob('*')
+              if p.is_file()
           )
+
           assert before<after<=before+assets+2000000
           PY
+
           git -C published add -- \
             index.html \
-            v82.html \
-            lineage-v82.js \
-            lineage-v82.wasm \
-            lineage-v82.data
-          git -C published config user.name 'github-actions[bot]'
+            v83.html \
+            lineage-v83.js \
+            lineage-v83.wasm \
+            lineage-v83.data
+
+          git -C published config user.name \
+            'github-actions[bot]'
+
           git -C published config user.email \
             '41898282+github-actions[bot]@users.noreply.github.com'
+
           if ! git -C published diff --cached --quiet; then
             git -C published commit -m \
-              'build-web.yml V82: retain original map and remove demo chat'
+              'build-web.yml V83: retain original map and remove demo chat'
             git -C published push origin HEAD:gh-pages
           fi
 
-      - name: "V82 | Report exact implementation status"
+      - name: "V83 | Report exact implementation status"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V82 | Sanctuary game2 GitHub Pages'
+            echo '# build-web.yml | V83 | Sanctuary game2 GitHub Pages'
             echo 'Builds the pinned original Sanctuary C++ engine, not a substitute engine.'
             echo 'Reuses complete V81 SDL_Rect and native tile pipeline.'
             echo 'Removes the original chat widget five hardcoded test lines.'
