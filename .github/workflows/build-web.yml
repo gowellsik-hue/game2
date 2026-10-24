@@ -1,6 +1,6 @@
 
-name: "build-web.yml | V79 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V79 | Sanctuary game2 GitHub Pages"
+name: "build-web.yml | V80 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V80 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
@@ -13,29 +13,29 @@ permissions:
   contents: write
 
 concurrency:
-  group: game2-v79-native-map
+  group: game2-v80-native-map
   cancel-in-progress: false
 
 jobs:
-  original_client_v79:
-    name: "build-web.yml | V79 | Repair native SDL tile clipping and pixels"
+  original_client_v80:
+    name: "build-web.yml | V80 | Repair original SDL map tile blits"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
 
     steps:
-      - name: "V79 | Checkout game2 history"
+      - name: "V80 | Checkout game2 history"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: "V79 | Preserve V70 GitHub Pages"
+      - name: "V80 | Preserve successful V70 Pages"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
 
-      - name: "V79 | Checkout exact original Sanctuary C++ source"
+      - name: "V80 | Checkout original Sanctuary C++"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -43,457 +43,253 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V79 | Set up verified Emscripten toolchain"
+      - name: "V80 | Set up original Emscripten toolchain"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V79 | Restore successful V78 build and original map extraction"
+      - name: "V80 | Restore verified V79 archive and native build stages"
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install --quiet 'PyYAML==6.0.2'
           mkdir -p reports
-
-          cat > /tmp/v79-restore.py <<'PY'
-          import subprocess
+          cat > /tmp/v80-restore.py <<'PY'
           from pathlib import Path
+          import subprocess
           import yaml
 
-          baseline='6f7fa6f3cf9b550e7e75c6396a91adc5a2a2ef72'
-
-          raw=subprocess.check_output(
-              ['git','show',
-               baseline+':.github/workflows/build-web.yml'],
-              text=True
-          )
-
-          workflow=yaml.safe_load(raw)
-          steps=workflow['jobs']['original_client_v78']['steps']
-          scripts={step['name']:step['run']
-                   for step in steps if 'run' in step}
-
-          stages=[
-              'V78 | Restore V77 native compiler and original map extraction',
-              'V78 | Inspect original decoded tile pixels before SDL transfer',
-              'V78 | Repair SDL tile blits and present the real map buffer'
-          ]
-
-          assert all(name in scripts for name in stages)
-
-          for number,name in enumerate(stages,1):
-              script=scripts[name]
-              script=script.replace('V78','V79')
-              script=script.replace('v78','v79')
-
-              print('V79 restore',number,name,flush=True)
-
-              subprocess.run(
-                  ['bash','-e','-o','pipefail','-c',script],
-                  check=True
-              )
-
-          required=[
-              '/tmp/v79-extract.sh',
-              '/tmp/v79-build.sh',
-              '/tmp/v79-native-viewport.py',
-              '/tmp/v79-sdl-bridge.py'
-          ]
-
-          for filename in required:
-              assert Path(filename).is_file(),filename
-
-          for filename in required[:2]:
-              subprocess.run(
-                  ['bash','-n',filename],check=True
-              )
-
-          for filename in required[2:]:
-              subprocess.run(
-                  ['python3','-m','py_compile',filename],
-                  check=True
-              )
-
-          print('V79: V78 C++ and asset build stages restored.',
-                flush=True)
+          # V79 successfully extracted 16 map sections, 196 tile banks and
+          # compiled the original C++ engine. Do not reuse its restrictive
+          # SDL tile compositor: it was never entered at runtime.
+          revision='0bb85ea170faa084081d59a3a72d1920f2a0f6d3'
+          previous=subprocess.check_output(
+              ['git','show',revision+':.github/workflows/build-web.yml'],
+              text=True)
+          steps=yaml.safe_load(previous)['jobs']['original_client_v79']['steps']
+          name='V79 | Restore successful V78 build and original map extraction'
+          script=next(s['run'] for s in steps if s['name']==name)
+          script=script.replace('V79','V80').replace('v79','v80')
+          subprocess.run(['bash','-e','-o','pipefail','-c',script],check=True)
+          for f in ('/tmp/v80-extract.sh','/tmp/v80-build.sh'):
+              assert Path(f).is_file(),f
+              subprocess.run(['bash','-n',f],check=True)
+          for f in ('/tmp/v80-native-viewport.py','/tmp/v80-sdl-bridge.py'):
+              assert Path(f).is_file(),f
+              subprocess.run(['python3','-m','py_compile',f],check=True)
+          print('V80: V79 original assets and C++ build restored',flush=True)
           PY
+          python3 -m py_compile /tmp/v80-restore.py
+          python3 -u /tmp/v80-restore.py | tee reports/V80-restore.log
 
-          python3 -m py_compile /tmp/v79-restore.py
-          python3 -u /tmp/v79-restore.py \
-            2>&1 | tee reports/V79-restore.log
-
-      - name: "V79 | Correct original SDL tile clipping and destination pixels"
+      - name: "V80 | Install clipped native SDL tile compositor"
         shell: bash
         run: |
           set -euo pipefail
-
-          cat >> /tmp/v79-sdl-bridge.py <<'PY'
+          cat >> /tmp/v80-sdl-bridge.py <<'PY'
           from pathlib import Path
           import subprocess
 
-          target=Path('dist/lineage-v79.js')
-          source=target.read_text(encoding='utf-8')
-
+          target=Path('dist/lineage-v80.js')
+          code=target.read_text(encoding='utf-8')
           begin='  blitSurface(src, srcrect, dst, dstrect, scale) {'
           end='  downFingers: {},'
+          assert code.count(begin)==1
+          start=code.index(begin)
+          stop=code.index(end,start)
+          part=code[start:stop]
+          needle='    if (dstData.clipRect) {'
+          assert part.count(needle)==1
 
-          assert source.count(begin)==1
-          start=source.index(begin)
-          finish=source.index(end,start)
-          section=source[start:finish]
-
-          # Insert before Emscripten SDL clips or rewrites the
-          # original SDL_Rect. V78 attempted recovery afterward
-          # and required a completely visible 24x24 rectangle.
-          marker='    if (dstData.clipRect) {'
-          assert section.count(marker)==1
-
-          repair=r'''
-              if (srcData.width===24 &&
-                  srcData.height===24 &&
-                  dstData.width===640 &&
-                  dstData.height===380 &&
-                  !scale &&
-                  sr.x===0 && sr.y===0 &&
-                  sr.w===24 && sr.h===24) {
-
-                SDL.v79TileCount=(SDL.v79TileCount||0)+1;
-
-                var v79x=dr.x|0;
-                var v79y=dr.y|0;
-
-                var left=Math.max(0,v79x);
-                var top=Math.max(0,v79y);
-                var right=Math.min(dstData.width,v79x+24);
-                var bottom=Math.min(dstData.height,v79y+24);
-
-                var painted=0;
-                var width=right-left;
-                var height=bottom-top;
-                var firstVisible=false;
-
-                if (width>0 && height>0) {
+          # The V79 patch required sr=(0,0,24,24) and !scale, so the
+          # compositor was never reached. Use the actual native 24x24 SDL
+          # surface and the native destination coordinates, without those
+          # restrictions. Preserve the original alpha/color bytes.
+          compositor=r'''
+              if (srcData.width===24 && srcData.height===24 &&
+                  dstData.width===640 && dstData.height===380) {
+                SDL.v80TileCalls=(SDL.v80TileCalls||0)+1;
+                var n=SDL.v80TileCalls;
+                var dx=Number(dr.x), dy=Number(dr.y);
+                var painted=0, colored=0;
+                var left=0, top=0, right=0, bottom=0;
+                if (Number.isFinite(dx) && Number.isFinite(dy)) {
+                  dx=Math.trunc(dx);
+                  dy=Math.trunc(dy);
+                  left=Math.max(0,dx);
+                  top=Math.max(0,dy);
+                  right=Math.min(640,dx+24);
+                  bottom=Math.min(380,dy+24);
+                }
+                if (n<=4) {
+                  out('V80: SDL rect '+n+' src='+
+                    [sr.x,sr.y,sr.w,sr.h].join(',')+' dst='+
+                    [dr.x,dr.y,dr.w,dr.h].join(',')+
+                    ' scale='+scale);
+                }
+                if (right>left && bottom>top) {
                   try {
-                    var tilePixels=srcData.ctx.getImageData(
-                      0,0,24,24
-                    ).data;
-
-                    var destination=dstData.ctx.getImageData(
-                      left,top,width,height
-                    );
-
-                    var pixels=destination.data;
-
-                    for (var yy=0;yy<height;yy++) {
-                      for (var xx=0;xx<width;xx++) {
-                        var sx=left+xx-v79x;
-                        var sy=top+yy-v79y;
-
-                        var si=(sy*24+sx)*4;
-                        var di=(yy*width+xx)*4;
-
-                        var alpha=tilePixels[si+3]/255;
-                        if (alpha<=0) continue;
-
+                    var srcPixels=srcData.ctx.getImageData(0,0,24,24).data;
+                    var w=right-left, h=bottom-top;
+                    var result=dstData.ctx.getImageData(left,top,w,h);
+                    var dstPixels=result.data;
+                    for (var y=0;y<h;y++) {
+                      for (var x=0;x<w;x++) {
+                        var si=((top+y-dy)*24+(left+x-dx))*4;
+                        var di=(y*w+x)*4;
+                        var a=srcPixels[si+3]/255;
+                        if (a<=0) continue;
                         painted++;
-
-                        if (alpha>=1) {
-                          pixels[di]=tilePixels[si];
-                          pixels[di+1]=tilePixels[si+1];
-                          pixels[di+2]=tilePixels[si+2];
-                          pixels[di+3]=255;
-                        } else {
-                          var oldAlpha=pixels[di+3]/255;
-                          var outAlpha=
-                            alpha+oldAlpha*(1-alpha);
-
-                          if (outAlpha>0) {
-                            for (var c=0;c<3;c++) {
-                              pixels[di+c]=(
-                                tilePixels[si+c]*alpha+
-                                pixels[di+c]*oldAlpha*
-                                  (1-alpha)
-                              )/outAlpha;
-                            }
-                            pixels[di+3]=outAlpha*255;
-                          }
+                        if (srcPixels[si]>35 || srcPixels[si+1]>35 ||
+                            srcPixels[si+2]>35) colored++;
+                        var da=dstPixels[di+3]/255;
+                        var oa=a+da*(1-a);
+                        if (oa<=0) continue;
+                        for (var c=0;c<3;c++) {
+                          dstPixels[di+c]=Math.round(
+                            (srcPixels[si+c]*a+
+                             dstPixels[di+c]*da*(1-a))/oa);
                         }
+                        dstPixels[di+3]=Math.round(oa*255);
                       }
                     }
-
-                    if (painted>0) {
-                      dstData.ctx.putImageData(
-                        destination,left,top
-                      );
-
-                      SDL.v79PaintedPixels=
-                        (SDL.v79PaintedPixels||0)+painted;
-
-                      firstVisible=!SDL.v79FirstVisible;
-                      SDL.v79FirstVisible=true;
-
-                      // Genuine C++ SDL viewport, not an HTML map.
-                      SDL.v79NativeMapViewport=dstData.canvas;
-
-                      if (!SDL.v79PresenterInstalled) {
-                        SDL.v79PresenterInstalled=true;
-
-                        var presentNativeViewport=function() {
-                          var canvas=Module["canvas"];
-                          var nativeMap=
-                            SDL.v79NativeMapViewport;
-
-                          if (canvas && nativeMap) {
-                            var ctx=canvas.getContext("2d");
-
-                            ctx.drawImage(
-                              nativeMap,
-                              0,0,640,380,
-                              0,0,canvas.width,
-                              Math.round(
-                                canvas.height*380/480
-                              )
-                            );
+                    if (painted) {
+                      dstData.ctx.putImageData(result,left,top);
+                      SDL.v80Painted=(SDL.v80Painted||0)+painted;
+                      SDL.v80Colored=(SDL.v80Colored||0)+colored;
+                      SDL.v80NativeMap=dstData.canvas;
+                      if (!SDL.v80PresenterStarted) {
+                        SDL.v80PresenterStarted=true;
+                        var present=function() {
+                          var page=Module['canvas'];
+                          var map=SDL.v80NativeMap;
+                          if (page && map) {
+                            page.getContext('2d').drawImage(
+                              map,0,0,640,380,0,0,page.width,
+                              Math.round(page.height*380/480));
                           }
-
-                          requestAnimationFrame(
-                            presentNativeViewport
-                          );
+                          requestAnimationFrame(present);
                         };
-
-                        requestAnimationFrame(
-                          presentNativeViewport
-                        );
-
-                        out(
-                          "V79: native SDL tile presenter started"
-                        );
+                        requestAnimationFrame(present);
+                        out('V80: original SDL tile presenter started');
                       }
                     }
-
-                    if (SDL.v79TileCount<=4 ||
-                        SDL.v79TileCount%128===0 ||
-                        firstVisible) {
-                      out(
-                        "V79: tile="+SDL.v79TileCount+
-                        " x="+v79x+
-                        " y="+v79y+
-                        " area="+width+"x"+height+
-                        " painted="+painted+
-                        " total="+
-                          (SDL.v79PaintedPixels||0)
-                      );
-                    }
-
-                    // The original SDL image was used, with
-                    // proper partial clipping and alpha blending.
-                    // Avoid sending the same tile through the
-                    // previously broken compatibility blit.
-                    return 0;
-
-                  } catch (error) {
-                    if (!SDL.v79ErrorReported) {
-                      SDL.v79ErrorReported=true;
-                      err(
-                        "V79: native tile pixel copy failed: "+
-                        error
-                      );
+                  } catch(e) {
+                    if (!SDL.v80Error) {
+                      SDL.v80Error=true;
+                      err('V80: native tile copy error: '+e);
                     }
                   }
                 }
-
-                if (SDL.v79TileCount<=4 ||
-                    SDL.v79TileCount%128===0) {
-                  out(
-                    "V79: offscreen tile="+
-                    SDL.v79TileCount+
-                    " x="+v79x+
-                    " y="+v79y+
-                    " visible="+width+"x"+height
-                  );
+                if (n<=4 || n===32 || n===128 || n%512===0 ||
+                    (painted>0 && !SDL.v80FirstPaint)) {
+                  out('V80: tile '+n+' dst='+dx+','+dy+
+                    ' area='+Math.max(0,right-left)+'x'+
+                    Math.max(0,bottom-top)+' pixels='+painted+
+                    ' colored='+colored+' total='+(SDL.v80Painted||0));
                 }
+                if (painted>0) SDL.v80FirstPaint=true;
+                // Avoid Emscripten's incompatible SDL1 canvas blit once
+                // the genuine tile has been composited successfully.
+                if (painted>0) return 0;
               }
-
           '''
-
-          section=section.replace(
-              marker,repair+marker,1
-          )
-
-          source=source[:start]+section+source[finish:]
-
-          assert source.count(
-              'V79: native SDL tile presenter started'
-          )==1
-          assert source.count('V79: tile=')==1
-          assert source.count('V79: offscreen tile=')==1
-
-          target.write_text(source,encoding='utf-8')
-
-          subprocess.run(
-              ['node','--check',str(target)],
-              check=True
-          )
-
-          print(
-              'V79: native SDL tile compositor verified.',
-              flush=True
-          )
+          part=part.replace(needle,compositor+'\n'+needle,1)
+          code=code[:start]+part+code[stop:]
+          assert code.count('V80: SDL rect ')==1
+          assert code.count('V80: original SDL tile presenter started')==1
+          target.write_text(code,encoding='utf-8')
+          subprocess.run(['node','--check',str(target)],check=True)
+          print('V80: actual SDL tile compositor installed',flush=True)
           PY
-
-          python3 -m py_compile /tmp/v79-sdl-bridge.py
-
+          python3 -m py_compile /tmp/v80-sdl-bridge.py
           python3 - <<'PY'
           from pathlib import Path
-
-          script=Path('/tmp/v79-build.sh').read_text()
-
-          assert '/tmp/v79-native-viewport.py' in script
-          assert '/tmp/v79-sdl-bridge.py' in script
-          assert 'align_sdl_proxy_indices' in script
-
-          print('V79: original C++ and SDL hooks present.')
+          code=Path('/tmp/v80-build.sh').read_text()
+          for required in ('/tmp/v80-sdl-bridge.py',
+                           '/tmp/v80-native-viewport.py',
+                           'align_sdl_proxy_indices'):
+              assert required in code,required
+          print('V80: original compiler invokes the SDL patch',flush=True)
           PY
+          bash -n /tmp/v80-build.sh
 
-          bash -n /tmp/v79-build.sh
-
-      - name: "V79 | Extract original maps and verify real game canvas"
+      - name: "V80 | Extract original assets, compile and test native map"
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-
-          bash /tmp/v79-extract.sh \
-            2>&1 | tee reports/V79-extraction.log
-
-          bash /tmp/v79-build.sh \
-            2>&1 | tee reports/V79-build-test.log
-
+          bash /tmp/v80-extract.sh 2>&1 | tee reports/V80-extract-stage.log
+          bash /tmp/v80-build.sh 2>&1 | tee reports/V80-build-stage.log
           python3 - <<'PY'
           import json
           from pathlib import Path
-
-          result=json.loads(
-              Path('reports/V79-browser.json').read_text()
-          )
-
-          assert result['character_saved']
-          assert result['character_restored']
-          assert result['native_game_ready']
-          assert result['passed']
-
-          assert result['native_map_unique_colors']>=8
-          assert result['native_map_nonblack_fraction']>0.02
-
-          assert Path(
-              'reports/V79-map-canvas.png'
-          ).stat().st_size>500
-
-          print(
-              'V79 original map visible:',
-              result['native_map_nonblack_fraction'],
-              flush=True
-          )
+          r=json.loads(Path('reports/V80-browser.json').read_text())
+          assert r['character_saved'] and r['character_restored']
+          assert r['native_game_ready'] and r['passed']
+          assert r['native_map_unique_colors']>=8
+          assert r['native_map_nonblack_fraction']>0.02
+          assert Path('reports/V80-map-canvas.png').stat().st_size>500
+          print('V80: original SDL map verified',r['native_map_nonblack_fraction'])
           PY
 
-      - name: "V79 | Upload real original-map diagnostics"
+      - name: "V80 | Save map and SDL diagnostics on every outcome"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V79-Native-Map
+          name: Sanctuary-game2-V80-Native-Map
           path: |
-            reports/V79-restore.log
-            reports/V79-preflight.log
-            reports/V79-bridge-preflight.log
-            reports/V79-extraction.log
-            reports/V79-build-test.log
-            reports/V79-extract.log
-            reports/V79-browser.json
-            reports/V79-map-canvas.png
-            reports/V79-mobile.png
-            reports/V79-http.txt
-            assets/v79/v79-map-manifest.json
+            reports/V80-restore.log
+            reports/V80-preflight.log
+            reports/V80-bridge-preflight.log
+            reports/V80-extract-stage.log
+            reports/V80-build-stage.log
+            reports/V80-browser.json
+            reports/V80-map-canvas.png
+            reports/V80-mobile.png
+            reports/V80-http.txt
+            assets/v80/v80-map-manifest.json
           if-no-files-found: warn
           retention-days: 30
 
-      - name: "V79 | Publish only when original C++ map pixels are visible"
+      - name: "V80 | Publish only after real native map pixels pass"
         shell: bash
         run: |
           set -euo pipefail
-
           python3 - <<'PY'
-          from pathlib import Path
           import json
-
-          r=json.loads(
-              Path('reports/V79-browser.json').read_text()
-          )
-
-          assert r['passed']
-          assert r['character_saved']
-          assert r['character_restored']
-          assert r['native_game_ready']
-
+          from pathlib import Path
+          r=json.loads(Path('reports/V80-browser.json').read_text())
+          assert r['passed'] and r['native_game_ready']
+          assert r['character_saved'] and r['character_restored']
           assert r['native_map_unique_colors']>=8
           assert r['native_map_nonblack_fraction']>0.02
-
-          original=Path(
-              'published/lineage-v70.data'
-          ).stat().st_size
-
-          current=Path(
-              'published/lineage-v79.data'
-          ).stat().st_size
-
-          assets=sum(
-              p.stat().st_size
-              for p in Path('assets/v79/lineage').rglob('*')
-              if p.is_file()
-          )
-
-          assert original<current<=original+assets+2000000
-
-          assert Path(
-              'reports/V79-map-canvas.png'
-          ).stat().st_size>500
-
-          print('V79 deployment gate passed.')
+          before=Path('published/lineage-v70.data').stat().st_size
+          after=Path('published/lineage-v80.data').stat().st_size
+          assets=sum(p.stat().st_size for p in Path('assets/v80/lineage').rglob('*') if p.is_file())
+          assert before<after<=before+assets+2000000
           PY
-
-          git -C published add -- \
-            index.html \
-            v79.html \
-            lineage-v79.js \
-            lineage-v79.wasm \
-            lineage-v79.data
-
-          git -C published config user.name \
-            'github-actions[bot]'
-          git -C published config user.email \
-            '41898282+github-actions[bot]@users.noreply.github.com'
-
+          git -C published add -- index.html v80.html \
+            lineage-v80.js lineage-v80.wasm lineage-v80.data
+          git -C published config user.name 'github-actions[bot]'
+          git -C published config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           if ! git -C published diff --cached --quiet; then
-            git -C published commit -m \
-              'build-web.yml V79: fix genuine SDL tile clipping and alpha composition'
+            git -C published commit -m 'build-web.yml V80: render authentic SDL tiles with clipped alpha pixels'
             git -C published push origin HEAD:gh-pages
           fi
 
-      - name: "V79 | Record measured rendering results"
+      - name: "V80 | Record verified scope"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V79 | Sanctuary game2 GitHub Pages'
-            echo
-            echo 'V78 successfully decoded original RGB555 tile pixels.'
-            echo 'V78 source tiles had 288 opaque and colored pixels.'
-            echo 'V78 destination tiles remained transparent.'
-            echo 'V79 clips original SDL tiles against the viewport.'
-            echo 'V79 composites authentic RGBA tile pixels.'
-            echo 'V79 reports actual destination coordinates and painted pixels.'
-            echo 'Original C++ engine, characters and map data are retained.'
-            echo 'Publishing requires nonblank original-map canvas pixels.'
-            echo 'A failure leaves the successful V70 deployment unchanged.'
-            echo 'Movement and combat are not yet verified.'
+            echo '# build-web.yml | V80 | Sanctuary game2 GitHub Pages'
+            echo 'V79 did not enter its native SDL tile compositor.'
+            echo 'V80 records native SDL source and destination rectangle values.'
+            echo 'V80 composites authentic RGB555-decoded tile pixels with clipping.'
+            echo 'Original C++ source, characters, and 196 extracted tile banks are preserved.'
+            echo 'Actual nonblank map pixels are required before publishing.'
+            echo 'A failed run leaves the successful V70 deployment unchanged.'
+            echo 'Movement, combat and other map regions are still unverified.'
           } >> "$GITHUB_STEP_SUMMARY"
