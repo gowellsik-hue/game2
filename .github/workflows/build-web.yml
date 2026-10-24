@@ -1,44 +1,45 @@
 # FILE: .github/workflows/build-web.yml
-# VERSION: V84
-# BASE: verified map-rendering V83, keep existing original C++ adapter.
-# Gate release on native SPR decoding, actor spawn, keyboard movement,
-# full SDL composition, and changed map pixels; never accept map-only pixels.
-name: "build-web.yml | V84 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V84 | Sanctuary game2 GitHub Pages"
+# VERSION: V85
+# V84's first-stage failure: a6296642 is V82, not V83.
+# V85 reuses the pinned V84 game implementation with corrected V83 history.
+# Replays each full prior step in order; no partial patch needs to be pasted.
+# Native player, visible SPR, and movement tests must pass before deployment.
+name: "build-web.yml | V85 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V85 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [.github/workflows/build-web.yml]
+    paths:
+      - .github/workflows/build-web.yml
 
 permissions:
   contents: write
 
 concurrency:
-  group: game2-v84-native-player
+  group: game2-v85-native-player
   cancel-in-progress: false
 
 jobs:
-  original_client_v84:
-    name: "build-web.yml | V84 | Restore original client and clean game display"
+  original_client_v85:
+    name: "build-web.yml | V85 | Restore original client and clean game display"
     runs-on: ubuntu-24.04
     timeout-minutes: 180
-
     steps:
-      - name: "V84 | Checkout original game2 history"
+      - name: "V85 | Checkout full game2 history"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: "V84 | Preserve previous GitHub Pages"
+      - name: "V85 | Keep last GitHub Pages deployment"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
 
-      - name: "V84 | Checkout pinned L1J C++ client adapter"
+      - name: "V85 | Checkout pinned original L1J C++ adapter"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -46,894 +47,202 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V84 | Emscripten version from V83"
+      - name: "V85 | Set up V83 Emscripten compiler"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V84 | Restore V83 exact map-rendering pipeline"
+      - name: "V85 | Validate prior commits and prepare full build stages"
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install --quiet 'PyYAML==6.0.2' 'Pillow==11.3.0'
           mkdir -p reports
 
-          cat > /tmp/v84-restore.py <<'PY'
-          import subprocess,yaml
+          cat > /tmp/v85-execute.py <<'PY'
+          import ast
+          import re
+          import subprocess
+          import sys
+          import yaml
           from pathlib import Path
 
-          revision='a6296642f08028b2d92ad5b43ff3c054ec7d8ea3'
-          raw=subprocess.check_output(
-              ['git','show',revision+':.github/workflows/build-web.yml'],
-              text=True
-          )
-          workflow=yaml.safe_load(raw)
-          assert workflow['name']=='build-web.yml | V83 | Sanctuary game2 GitHub Pages'
+          V84='90b2b8d02ecf38b1e5da0e5a64fae97c27619542'
+          V83='779b4f65b9f8a4e6c40300724f6575d7a123fda8'
+          WRONG_V82='a6296642f08028b2d92ad5b43ff3c054ec7d8ea3'
 
-          scripts={
-              x['name']:x['run']
-              for x in workflow['jobs']['original_client_v83']['steps']
-              if 'run' in x
+          STAGES={
+              'restore':'V84 | Restore V83 exact map-rendering pipeline',
+              'sprites':'V84 | Prepare original sprite banks from exact archive indices',
+              'wire':'V84 | Wire native C++ spawn, directional movement and complete SDL compositing',
+              'build':'V84 | Extract original map and SPR, then compile native client',
+              'smoke':'V84 | Browser gate for actual actor sprite and movement',
+              'publish':'V84 | Publish only an actually moving original-SPR character',
           }
 
-          steps=[
-              'V83 | Recover complete V81 native extraction and build scripts',
-              'V83 | Remove only original chat demonstration text'
-          ]
+          def file_at(revision):
+              return subprocess.check_output(
+                  ['git','show',revision+':.github/workflows/build-web.yml'],
+                  text=True
+              )
 
-          for title in steps:
-              assert title in scripts,title
-              source=scripts[title].replace('V83','V84').replace('v83','v84')
+          prior=yaml.safe_load(file_at(V84))
+          assert prior['name']=='build-web.yml | V84 | Sanctuary game2 GitHub Pages'
+          assert 'original_client_v84' in prior['jobs']
+          source_steps={
+              s['name']:s['run']
+              for s in prior['jobs']['original_client_v84']['steps']
+              if 'run' in s
+          }
+          assert all(s in source_steps for s in STAGES.values())
+
+          previous=yaml.safe_load(file_at(V83))
+          assert previous['name']=='build-web.yml | V83 | Sanctuary game2 GitHub Pages'
+          assert 'original_client_v83' in previous['jobs']
+
+          # Never make a guessed success claim from the legacy map-only test.
+          def prepare(which):
+              if which not in STAGES:
+                  raise RuntimeError('Unknown V85 stage: '+which)
+              stage=STAGES[which]
+              script=source_steps[stage]
+              script=script.replace('V84','V85').replace('v84','v85')
+
+              if which=='restore':
+                  assert script.count(WRONG_V82)==1, 'V84 bad commit not found exactly once'
+                  script=script.replace(WRONG_V82,V83,1)
+                  assert WRONG_V82 not in script
+                  assert "workflow['name']=='build-web.yml | V83 | Sanctuary game2 GitHub Pages'" in script
+
+              if which=='sprites':
+                  # The browser test is for male knight only. Do not preload
+                  # ten unrelated or unverified actors into mobile resources.
+                  old='actors=[0,1,61,48,138,37,734,1186,2786,2796]'
+                  assert script.count(old)==1, 'V84 actor selection changed'
+                  script=script.replace(old,'actors=[61]',1)
+                  assert "assert not missing['61']" in script
+
+              if which=='wire':
+                  # Do not allow other classes to be marked as verified just
+                  # because the one knight smoke test passed.
+                  old='if (cls<0 || cls>4) throw "V85: sprite mapping not verified for this class";'
+                  new='if (cls!=1 || gender!=0) throw "V85: only male knight SPR verified";'
+                  assert script.count(old)==1, 'V84 native class guard changed'
+                  script=script.replace(old,new,1)
+
+              if which=='smoke':
+                  # A generic 'movement' log is insufficient: require the
+                  # exact destination for one press of the RIGHT key.
+                  old="document.querySelector('#logbox').textContent.includes('V85: native movement x=')"
+                  new="document.querySelector('#logbox').textContent.includes('V85: native movement x=32550 y=32925 heading=2')"
+                  assert script.count(old)==1, 'V84 movement test changed'
+                  script=script.replace(old,new,1)
+
+              # Preflight the actual embedded Python sources, rather than only
+              # testing YAML parse. No GitHub service calls are hidden here.
+              pattern=(
+                  r"(?ms)^(?:cat >|cat >>) (/tmp/[\w-]+\.py) <<'PY'\n"
+                  r"(.*?)\nPY$"
+              )
+              found=list(re.finditer(pattern,script))
+              for match in found:
+                  ast.parse(match.group(2),filename=match.group(1))
+              if which in ('restore','sprites','wire','smoke'):
+                  assert found,('Missing embedded Python',which)
+              return script
+
+          if len(sys.argv)!=2:
+              raise SystemExit('Usage: v85-execute.py stage')
+          stage=sys.argv[1]
+          if stage=='preflight':
+              for name in STAGES:
+                  script=prepare(name)
+                  subprocess.run(
+                      ['bash','-n'],input=script,text=True,check=True
+                  )
+                  print('V85 preflight:',name,'OK',flush=True)
+              print('V85: V82/V83 commit confusion corrected and stages validated.')
+          else:
+              code=prepare(stage)
+              print('V85 executing:',STAGES[stage],flush=True)
               subprocess.run(
-                  ['bash','-e','-o','pipefail','-c',source],
-                  check=True
+                  ['bash','-e','-o','pipefail','-c',code],check=True
               )
-
-          for path in ('/tmp/v84-extract.sh','/tmp/v84-build.sh'):
-              assert Path(path).is_file(),path
-              subprocess.run(['bash','-n',path],check=True)
-
-          print('PASS: V83 native SDL and resource pipeline restored.')
+              print('V85 completed:',stage,flush=True)
           PY
 
-          python3 /tmp/v84-restore.py 2>&1 | tee reports/V84-restore.log
+          python3 -m py_compile /tmp/v85-execute.py
+          python3 -u /tmp/v85-execute.py preflight \
+            2>&1 | tee reports/V85-preflight.log
 
-      - name: "V84 | Prepare original sprite banks from exact archive indices"
+      - name: "V85 | Restore exact V83 extraction and native SDL scripts"
         shell: bash
         run: |
           set -euo pipefail
+          python3 -u /tmp/v85-execute.py restore \
+            2>&1 | tee reports/V85-restore.log
 
-          cat > /tmp/v84-append-sprites.py <<'PY'
-          # Runs at the END of the original multi-volume ZIP extractor.
-          # Its records/extract_record are the exact V71 verified ZIP reader.
-          import json,struct,re
-          from pathlib import Path
-
-          source=Path('published')
-
-          def package(version):
-              js=(source/f'lineage-{version}.js').read_text()
-              marker='  loadPackage({'
-              assert js.count(marker)==1,('Package marker',version)
-              meta,_=json.JSONDecoder().raw_decode(
-                  js[js.index(marker)+len('  loadPackage('):]
-              )
-              data=(source/f'lineage-{version}.data').read_bytes()
-              assert meta['remote_package_size']==len(data)
-              return {
-                  v['filename'].lower():v for v in meta['files']
-              },data
-
-          files45,bytes45=package('v45')
-          files59,bytes59=package('v59')
-
-          actors=[0,1,61,48,138,37,734,1186,2786,2796]
-          selected={}
-          missing={}
-          indices={}
-
-          for actor in actors:
-              absent=[]
-              for d in (0,2,4,6):
-                  name=f'{actor}-{d}.spr'
-                  bank='Sprite%02d'%(sum(name.encode('ascii')) & 15)
-                  key=f'/lineage/{bank}.idx'.lower()
-
-                  if key not in files45:
-                      absent.append(name+' (no IDX)')
-                      continue
-
-                  if bank not in indices:
-                      entry=files45[key]
-                      raw=bytes45[entry['start']:entry['end']]
-                      count=struct.unpack_from('<I',raw)[0]
-                      assert len(raw)==4+28*count,(bank,count,len(raw))
-
-                      records_by_name={}
-                      for i in range(count):
-                          off,text,size=struct.unpack_from(
-                              '<i20si',raw,4+28*i
-                          )
-                          filename=text.split(b'\x00',1)[0].decode(
-                              'latin1'
-                          ).lower()
-                          if off>=0 and size>0:
-                              records_by_name[filename]=(off,text,size)
-
-                      indices[bank]=records_by_name
-
-                  item=indices[bank].get(name)
-                  if item:
-                      selected.setdefault(bank,{})[name]=item
-                  else:
-                      absent.append(name)
-
-              missing[str(actor)]=absent
-
-          assert not missing['61'],(
-              'Native male knight SPR missing',missing['61']
-          )
-
-          actual=[]
-          root=Path('assets/v84/lineage')
-          root.mkdir(parents=True,exist_ok=True)
-
-          for bank,needed in sorted(selected.items()):
-              source_bank=next(
-                  (
-                      r for r in records
-                      if r['name'].lower().endswith(
-                          '/'+bank.lower()+'.pak'
-                      )
-                  ),
-                  None
-              )
-              assert source_bank,('Original ZIP missing SPR bank',bank)
-              complete=extract_record(source_bank)
-
-              # Merge original V59 startup images.
-              # Never replace its base PNG/IMG indices.
-              ip=f'/lineage/{bank}.idx'.lower()
-              pp=f'/lineage/{bank}.pak'.lower()
-
-              old=[]
-              packed=bytearray()
-
-              if ip in files59 and pp in files59:
-                  a,b=files59[ip],files59[pp]
-                  index=bytes59[a['start']:a['end']]
-                  packed.extend(bytes59[b['start']:b['end']])
-                  count=struct.unpack_from('<I',index)[0]
-                  assert len(index)==4+28*count
-
-                  for i in range(count):
-                      off,nm,sz=struct.unpack_from(
-                          '<i20si',index,4+i*28
-                      )
-                      assert 0<=off and off+sz<=len(packed)
-                      old.append((off,nm,sz))
-
-              names={
-                  n.split(b'\x00',1)[0].decode('latin1').lower()
-                  for _,n,_ in old
-              }
-
-              for filename,(offset,name,size) in sorted(needed.items()):
-                  assert 0<=offset and offset+size<=len(complete),(
-                      bank,filename
-                  )
-                  if filename in names:
-                      continue
-
-                  raw=complete[offset:offset+size]
-                  assert len(raw)==size and size>20,(bank,filename)
-
-                  old.append((len(packed),name,size))
-                  packed.extend(raw)
-                  names.add(filename)
-                  actual.append({
-                      'bank':bank,
-                      'file':filename,
-                      'bytes':size
-                  })
-
-              (root/(bank+'.idx')).write_bytes(
-                  struct.pack('<I',len(old))+
-                  b''.join(
-                      struct.pack('<i20si',*e) for e in old
-                  )
-              )
-              (root/(bank+'.pak')).write_bytes(packed)
-
-              print(
-                  'V84 original sprite bank',bank,
-                  'entries',len(old),'bytes',len(packed),
-                  flush=True
-              )
-              del complete
-
-          report={
-              'player_spr_files':actual,
-              'missing_directions':missing,
-              'verified_male_knight':not missing['61'],
-              'source':'original Sanctuary split ZIP and full original V45 indices'
-          }
-
-          Path('assets/v84/v84-player-sprites.json').write_text(
-              json.dumps(report,indent=2)
-          )
-
-          print(
-              'V84 verified male knight original SPR directions 0,2,4,6',
-              flush=True
-          )
-          PY
-
-          python3 -m py_compile /tmp/v84-append-sprites.py
-
-          python3 - <<'PY'
-          from pathlib import Path
-          import subprocess
-
-          p=Path('/tmp/v84-extract.sh')
-          script=p.read_text()
-          anchor="cat > /tmp/v84-extract.py <<'PY'\n"
-          assert script.count(anchor)==1
-
-          at=script.index(anchor)+len(anchor)
-          end=script.index('\nPY\n',at)
-
-          addon=Path('/tmp/v84-append-sprites.py').read_text()
-          script=script[:end]+'\n'+addon+script[end:]
-          p.write_text(script)
-
-          subprocess.run(['bash','-n',str(p)],check=True)
-
-          print(
-              'V84 original sprite extraction wired into existing ZIP parser.'
-          )
-          PY
-
-      - name: "V84 | Wire native C++ spawn, directional movement and complete SDL compositing"
+      - name: "V85 | Prepare verified male-knight SPR archive extraction"
         shell: bash
         run: |
           set -euo pipefail
+          python3 -u /tmp/v85-execute.py sprites \
+            2>&1 | tee reports/V85-sprites-preparation.log
 
-          cat > /tmp/v84-native.py <<'PY'
-          from pathlib import Path
+      - name: "V85 | Wire native spawn, movement and SDL display"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u /tmp/v85-execute.py wire \
+            2>&1 | tee reports/V85-native-wiring.log
 
-          root=Path('upstream-l1j/src')
-
-          u=root/'sdl_user.cpp'
-          source=u.read_text()
-          target='game->set_selected_char(local);'
-          assert source.count(target)==1
-
-          actor_code=r'''
-          // Native offline player: only verified original SPR files are eligible.
-          const int v84actors[5][2]={{0,1},{61,48},{138,37},{734,1186},{2786,2796}};
-          if (cls<0 || cls>4) throw "V84: sprite mapping not verified for this class";
-          const int v84actor=v84actors[cls][gender];
-
-          sprite_definition v84def={};
-          v84def.shadow=-1;
-          v84def.mspf=100;
-          v84def.actions[3].num_frames=1;
-          v84def.actions[3].frames=new sprite_action_frame[1]();
-          v84def.actions[3].frames[0].sprite=v84actor;
-          v84def.actions[3].frames[0].sub_sprite=0;
-          v84def.actions[3].frames[0].sub_frame=0;
-          v84def.actions[3].frames[0].length=1;
-          v84def.actions[3].frames[0].audio=-1;
-          sprite_data.override(v84actor,v84def);
-
-          ground_item v84player={};
-          v84player.id=0x8401;
-          v84player.x=32549;
-          v84player.y=32925;
-          v84player.gnd_icon=v84actor;
-          v84player.heading=0;
-
-          game->set_player_id(v84player.id);
-          game->place_character(&v84player);
-
-          printf(
-              "V84: native player spawned actor=%d x=%d y=%d\n",
-              v84actor,32549,32925
-          );
-          fflush(stdout);
-          '''
-
-          source=source.replace(target,target+'\n'+actor_code,1)
-          u.write_text(source)
-
-          p=root/'drawmode/draw_game.cpp'
-          source=p.read_text()
-
-          old='''void draw_game::key_press(SDL_KeyboardEvent *button)
-          {
-          \tsdl_drawmode::key_press(button);
-          }'''
-
-          assert source.count(old)==1,(
-              'Original key_press not found',source.count(old)
-          )
-
-          new='''void draw_game::key_press(SDL_KeyboardEvent *button)
-          {
-              if (character && button->type==SDL_KEYDOWN) {
-                  if (button->keysym.sym==SDLK_F9) {
-                      static bool visible=true;
-                      visible=!visible;
-
-                      if (!visible) {
-                          themap->remove_character(0x8401);
-                      } else {
-                          const int actors[5][2]={{0,1},{61,48},{138,37},{734,1186},{2786,2796}};
-                          ground_item back={};
-                          back.id=0x8401;
-                          back.x=(uint16_t)x;
-                          back.y=(uint16_t)y;
-                          back.gnd_icon=actors[character->char_type][character->gender];
-                          back.heading=0;
-                          place_character(&back);
-                      }
-
-                      printf("V84: native actor visibility=%d\\n",visible?1:0);
-                      fflush(stdout);
-                      return;
-                  }
-
-                  int dx=0,dy=0,heading=0;
-                  switch(button->keysym.sym) {
-                      case SDLK_UP: dy=-1; heading=0; break;
-                      case SDLK_RIGHT: dx=1; heading=2; break;
-                      case SDLK_DOWN: dy=1; heading=4; break;
-                      case SDLK_LEFT: dx=-1; heading=6; break;
-                      default: break;
-                  }
-
-                  if (dx || dy) {
-                      const int actors[5][2]={{0,1},{61,48},{138,37},{734,1186},{2786,2796}};
-                      if (character->char_type<0 || character->char_type>4)
-                          return;
-
-                      ground_item player={};
-                      player.id=0x8401;
-                      player.x=(uint16_t)(x+dx);
-                      player.y=(uint16_t)(y+dy);
-                      player.gnd_icon=actors[character->char_type][character->gender];
-                      player.heading=(int8_t)heading;
-
-                      place_character(&player);
-
-                      printf("V84: native movement x=%d y=%d heading=%d\\n",x,y,heading);
-                      fflush(stdout);
-                      return;
-                  }
-              }
-
-              sdl_drawmode::key_press(button);
-          }'''.replace('\\\\n','\\n')
-
-          source=source.replace(old,new,1)
-          p.write_text(source)
-
-          p=root/'widgets/sprite.cpp'
-          source=p.read_text()
-          needle='\tsprite_num = sprnum;'
-          assert source.count(needle)==1
-
-          source=source.replace(
-              needle,needle+'\n\tcur_frame=0;',1
-          )
-
-          # Verification runs inside native sprite rendering.
-          needle='\t\ttemp.drawat(x, y, '
-          assert source.count(needle)==1
-
-          trace='''        if (temp.is_loaded()) {
-              static bool once=false;
-              if (!once) {
-                  printf("V84: native SPR frame submitted actor=%d\\n",sprite_num);
-                  fflush(stdout);
-                  once=true;
-              }
-          }
-          '''
-
-          source=source.replace(needle,trace+needle,1)
-          p.write_text(source)
-
-          p=root/'widgets/sprite_motion.cpp'
-          source=p.read_text()
-          marker='\tloaded = 1;\n\tSDL_mutexV(delay_mtx);'
-          assert source.count(marker)==1
-
-          source=source.replace(
-              marker,
-              '''
-          \tloaded = 1;
-          \tif (num_frames>0 && num_tiles>0) {
-          \t    printf("V84: original SPR decoded file=%s frames=%d tiles=%d\\n",filename,num_frames,num_tiles);
-          \t    fflush(stdout);
-          \t}
-          \tSDL_mutexV(delay_mtx);''',
-              1
-          )
-          p.write_text(source)
-
-          print(
-              'V84 native player spawned via original move_sprite; '
-              'keyboard and SPR path connected.'
-          )
-          PY
-
-          python3 -m py_compile /tmp/v84-native.py
-
-          cat >> /tmp/v84-sdl-bridge.py <<'PY'
-          from pathlib import Path
-          import subprocess
-
-          path=Path('dist/lineage-v84.js')
-          text=path.read_text(encoding='utf-8')
-
-          begin='  blitSurface(src, srcrect, dst, dstrect, scale) {'
-          end='  downFingers: {},'
-
-          assert text.count(begin)==1 and text.count(end)==1
-
-          i=text.index(begin)
-          j=text.index(end,i)
-          part=text[i:j]
-
-          old='var map=SDL.v84NativeMap;'
-          assert part.count(old)==1,(
-              'Missing original map presenter',part.count(old)
-          )
-
-          part=part.replace(
-              old,
-              'var map=SDL.v84Composed || SDL.v84NativeMap;',
-              1
-          )
-
-          needle='if (srcData.width===24 && srcData.height===24 &&'
-          assert part.count(needle)==1,(
-              'Original tile compositor missing',part.count(needle)
-          )
-
-          native='''if (srcData.width===640 && srcData.height===380 &&
-              dstData.width===640 && dstData.height===480) {
-              SDL.v84Composed=srcData.canvas;
-              if (!SDL.v84CompositeSeen) {
-                SDL.v84CompositeSeen=true;
-                out('V84: complete SDL map and actor composition reached');
-              }
-            }
-            '''
-
-          part=part.replace(needle,native+needle,1)
-          text=text[:i]+part+text[j:]
-
-          path.write_text(text,encoding='utf-8')
-          subprocess.run(['node','--check',str(path)],check=True)
-
-          print(
-              'V84: presenter now prefers the fully composed SDL game buffer.'
-          )
-          PY
-
-          python3 -m py_compile /tmp/v84-sdl-bridge.py
-
-          python3 - <<'PY'
-          from pathlib import Path
-          import subprocess
-
-          p=Path('/tmp/v84-build.sh')
-          source=p.read_text()
-
-          needle="subprocess.run(['python3','/tmp/v84-map-patch.py'],check=True)"
-          assert source.count(needle)==1,(
-              'Compile hook missing',source.count(needle)
-          )
-
-          source=source.replace(
-              needle,
-              needle+"\n                  subprocess.run(['python3','/tmp/v84-native.py'],check=True)",
-              1
-          )
-
-          p.write_text(source)
-          subprocess.run(['bash','-n',str(p)],check=True)
-
-          print(
-              'V84 source patch executes after original map patch, '
-              'BEFORE native compilation.'
-          )
-          PY
-
-      - name: "V84 | Extract original map and SPR, then compile native client"
+      - name: "V85 | Extract real SPR and map; build and test browser"
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          python3 -u /tmp/v85-execute.py build \
+            2>&1 | tee reports/V85-build-and-browser.log
 
-          bash /tmp/v84-extract.sh \
-            2>&1 | tee reports/V84-extract.log
-
-          bash /tmp/v84-build.sh \
-            2>&1 | tee reports/V84-build.log
-
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          test=json.loads(
-              Path('reports/V84-browser.json').read_text()
-          )
-
-          assert test['passed'] and test['native_game_ready']
-          assert test['native_map_unique_colors']>=8
-          assert test['native_map_nonblack_fraction']>0.02
-          assert Path('reports/V84-map-canvas.png').stat().st_size>500
-
-          raw=Path(
-              'upstream-l1j/src/drawmode/draw_game.cpp'
-          ).read_text()
-          assert 'V84: native movement x=' in raw
-
-          raw=Path(
-              'upstream-l1j/src/sdl_user.cpp'
-          ).read_text()
-          assert 'V84: native player spawned' in raw
-
-          print(
-              'V84 baseline map and C++ source checks passed; '
-              'verifying actor visibility next.'
-          )
-          PY
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          for filename in ('index.html','v84.html'):
-              file=Path('published')/filename
-              html=file.read_text(encoding='utf-8')
-
-              old='#stage{position:relative;display:flex;align-items:center;justify-content:center;'
-              new='#stage{position:relative;display:flex;align-items:flex-start;justify-content:center;'
-
-              assert html.count(old)==1
-              html=html.replace(old,new,1)
-
-              html=html.replace(
-                  '캐릭터 게임 화면 진입 · 맵 이식 진행 중',
-                  '원본 SPR 캐릭터 표시 및 이동 미검증'
-              )
-              file.write_text(html,encoding='utf-8')
-          PY
-
-      - name: "V84 | Browser gate for actual actor sprite and movement"
+      - name: "V85 | Verify real sprite pixels and directional movement"
         shell: bash
         run: |
           set -euo pipefail
+          python3 -u /tmp/v85-execute.py smoke \
+            2>&1 | tee reports/V85-native-player-test.log
 
-          cat > /tmp/v84-smoke.py <<'PY'
-          import asyncio,io,json
-          from pathlib import Path
-          from PIL import Image,ImageChops
-          from playwright.async_api import async_playwright
-
-          result={
-              'version':'V84',
-              'sprite_decoded':False,
-              'sprite_drawn':False,
-              'native_spawn':False,
-              'native_move':False,
-              'composed':False,
-              'sprite_pixels':False,
-              'map_changed':False,
-              'passed':False
-          }
-
-          async def main():
-              async with async_playwright() as p:
-                  browser=await p.chromium.launch(
-                      headless=True,
-                      args=['--no-sandbox','--disable-dev-shm-usage']
-                  )
-
-                  context=await browser.new_context(
-                      viewport={'width':393,'height':852},
-                      is_mobile=True,
-                      has_touch=True
-                  )
-
-                  page=await context.new_page()
-                  errors=[]
-                  page.on('pageerror',lambda e:errors.append(str(e)))
-
-                  try:
-                      await page.goto(
-                          'http://127.0.0.1:8765/game2/v84.html',
-                          wait_until='domcontentloaded'
-                      )
-
-                      await page.evaluate(
-                          '''() => localStorage.setItem('sanctuary-game2-characters-v1',
-                          JSON.stringify([{name:'NativeKnight',cls:1,gender:0,stats:[20,12,14,9,12,8]},null,null,null]))'''
-                      )
-
-                      await page.reload(wait_until='domcontentloaded')
-
-                      await page.get_by_role(
-                          'button',name='선택·입장'
-                      ).first.click()
-
-                      async def log():
-                          return (
-                              await page.locator('#logbox').text_content()
-                              or ''
-                          )
-
-                      await page.wait_for_function(
-                          "() => document.querySelector('#logbox').textContent.includes('V84: native player spawned')",
-                          timeout=120000
-                      )
-                      result['native_spawn']=True
-
-                      await page.wait_for_function(
-                          "() => document.querySelector('#logbox').textContent.includes('V84: native SPR frame submitted')",
-                          timeout=35000
-                      )
-
-                      result['sprite_decoded']=(
-                          'V84: original SPR decoded' in await log()
-                      )
-                      result['sprite_drawn']=True
-                      result['composed']=(
-                          'V84: complete SDL map and actor composition reached'
-                          in await log()
-                      )
-
-                      await page.locator('#canvas').focus()
-                      await page.wait_for_timeout(500)
-
-                      before=Image.open(
-                          io.BytesIO(
-                              await page.locator('#canvas').screenshot()
-                          )
-                      ).convert('RGB')
-
-                      # Hide the native actor temporarily.
-                      # Only original sprite pixels should disappear.
-                      await page.keyboard.press('F9')
-
-                      await page.wait_for_function(
-                          "() => document.querySelector('#logbox').textContent.includes('V84: native actor visibility=0')",
-                          timeout=15000
-                      )
-                      await page.wait_for_timeout(500)
-
-                      hidden=Image.open(
-                          io.BytesIO(
-                              await page.locator('#canvas').screenshot()
-                          )
-                      ).convert('RGB')
-
-                      w,h=before.size
-                      region=(
-                          int(w*.36),int(h*.20),
-                          int(w*.64),int(h*.65)
-                      )
-
-                      result['sprite_pixels']=(
-                          ImageChops.difference(
-                              before.crop(region),
-                              hidden.crop(region)
-                          ).getbbox() is not None
-                      )
-
-                      # Restore the native actor, then test real movement.
-                      await page.keyboard.press('F9')
-
-                      await page.wait_for_function(
-                          "() => document.querySelector('#logbox').textContent.includes('V84: native actor visibility=1')",
-                          timeout=15000
-                      )
-
-                      await page.keyboard.press('ArrowRight')
-
-                      await page.wait_for_function(
-                          "() => document.querySelector('#logbox').textContent.includes('V84: native movement x=')",
-                          timeout=25000
-                      )
-
-                      result['native_move']=True
-                      await page.wait_for_timeout(1000)
-
-                      after=Image.open(
-                          io.BytesIO(
-                              await page.locator('#canvas').screenshot()
-                          )
-                      ).convert('RGB')
-
-                      diff=ImageChops.difference(before,after)
-                      result['map_changed']=diff.getbbox() is not None
-
-                      result['errors']=errors
-                      result['last_log']=(await log())[-4500:]
-
-                      await page.screenshot(
-                          path='reports/V84-mobile.png'
-                      )
-
-                  except Exception as e:
-                      result['exception']=str(e)
-                      try:
-                          result['last_log']=(await log())[-5000:]
-                      except Exception:
-                          pass
-
-                  finally:
-                      await browser.close()
-
-              result['passed']=(
-                  all(result[k] for k in (
-                      'sprite_decoded',
-                      'sprite_drawn',
-                      'sprite_pixels',
-                      'native_spawn',
-                      'native_move',
-                      'composed',
-                      'map_changed'
-                  ))
-                  and not result.get('errors')
-                  and not result.get('exception')
-              )
-
-              Path('reports/V84-player-smoke.json').write_text(
-                  json.dumps(result,indent=2,ensure_ascii=False)
-              )
-
-              print(
-                  json.dumps(result,indent=2,ensure_ascii=False),
-                  flush=True
-              )
-
-              if not result['passed']:
-                  raise SystemExit(
-                      'V84 real actor/movement test failed; '
-                      'retaining V83 deployment'
-                  )
-
-          asyncio.run(main())
-          PY
-
-          python3 -m py_compile /tmp/v84-smoke.py
-
-          cat > /tmp/v84-http.py <<'PY'
-          from functools import partial
-          from http.server import SimpleHTTPRequestHandler,ThreadingHTTPServer
-          from pathlib import Path
-
-          class Handler(SimpleHTTPRequestHandler):
-              def end_headers(self):
-                  for k,v in [
-                      ('Cross-Origin-Opener-Policy','same-origin'),
-                      ('Cross-Origin-Embedder-Policy','require-corp'),
-                      ('Cross-Origin-Resource-Policy','same-origin')
-                  ]:
-                      self.send_header(k,v)
-                  super().end_headers()
-
-          root=Path('reports/site-root').resolve()
-          ThreadingHTTPServer(
-              ('127.0.0.1',8765),
-              partial(Handler,directory=str(root))
-          ).serve_forever()
-          PY
-
-          mkdir -p reports/site-root
-          ln -sfn "$GITHUB_WORKSPACE/published" reports/site-root/game2
-
-          python3 /tmp/v84-http.py > reports/V84-http.log 2>&1 &
-          server=$!
-          trap 'kill "$server" 2>/dev/null || true' EXIT
-
-          for i in $(seq 1 30); do
-            if curl -fsS -o /dev/null \
-              http://127.0.0.1:8765/game2/v84.html; then
-              break
-            fi
-            sleep 1
-          done
-
-          python3 /tmp/v84-smoke.py \
-            2>&1 | tee reports/V84-smoke.log
-
-      - name: "V84 | Upload logs even if native sprite test fails"
+      - name: "V85 | Save failure-stage logs and runtime evidence"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V84-Native-Player
+          name: Sanctuary-game2-V85-Native-Player
           path: |
-            reports/V84-*.log
-            reports/V84-*.json
-            reports/V84-*.png
-            reports/V84-*.txt
-            assets/v84/v84-player-sprites.json
+            reports/V85-*.log
+            reports/V85-*.json
+            reports/V85-*.png
+            reports/V85-*.txt
+            assets/v85/v85-player-sprites.json
           retention-days: 30
           if-no-files-found: warn
 
-      - name: "V84 | Publish only an actually moving original-SPR character"
+      - name: "V85 | Deploy only verified native sprite and movement"
         shell: bash
         run: |
           set -euo pipefail
+          python3 -u /tmp/v85-execute.py publish \
+            2>&1 | tee reports/V85-deploy.log
 
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          r=json.loads(
-              Path('reports/V84-player-smoke.json').read_text()
-          )
-
-          assert r['passed']
-          assert r['native_spawn'] and r['native_move']
-          assert r['sprite_decoded'] and r['sprite_drawn']
-          assert r['sprite_pixels'] and r['composed']
-          assert r['map_changed']
-
-          for name in (
-              'index.html',
-              'v84.html',
-              'lineage-v84.js',
-              'lineage-v84.wasm',
-              'lineage-v84.data'
-          ):
-              assert (Path('published')/name).is_file(),name
-
-          for name in ('index.html','v84.html'):
-              path=Path('published')/name
-              s=path.read_text()
-              assert 'V84' in s
-
-              s=s.replace(
-                  '원본 SPR 캐릭터 표시 및 이동 미검증',
-                  'C++ 캐릭터 표시 및 이동 확인됨'
-              )
-              path.write_text(s)
-          PY
-
-          git -C published add -- \
-            index.html \
-            v84.html \
-            lineage-v84.js \
-            lineage-v84.wasm \
-            lineage-v84.data
-
-          git -C published config user.name 'github-actions[bot]'
-          git -C published config user.email \
-            '41898282+github-actions[bot]@users.noreply.github.com'
-
-          if ! git -C published diff --cached --quiet; then
-            git -C published commit -m \
-              'build-web.yml V84: native actor SPR and real movement verification'
-            git -C published push origin HEAD:gh-pages
-          fi
-
-      - name: "V84 | Record verified scope"
+      - name: "V85 | Record actual implementation scope"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V84 | Sanctuary game2 GitHub Pages'
-            echo 'L1J C++ adapter, not the proprietary Sanctuary game executable.'
-            echo 'Uses original Sanctuary S32 and original archive-indexed SPR files.'
-            echo 'Native movement must be seen in C++ logs and original SDL map pixels.'
-            echo 'Original collision, NPCs, combat, all classes and actual start location remain unverified.'
-            echo 'No new Pages release if actor sprite or movement test fails.'
+            echo '# build-web.yml | V85 | Sanctuary game2 GitHub Pages'
+            echo 'V84 failed because its restore stage pointed to the V82 commit.'
+            echo 'V85 uses actual V83 commit 779b4f65b9f8a4e6c40300724f6575d7a123fda8.'
+            echo 'The runtime remains an L1J C++ adapter using Sanctuary source assets.'
+            echo 'Only the original male-knight SPR is being tested in this version.'
+            echo 'SPR pixel evidence and SDL movement must pass before deployment.'
+            echo 'No deployment occurs on extraction, build, browser, or sprite-test failure.'
           } >> "$GITHUB_STEP_SUMMARY"
