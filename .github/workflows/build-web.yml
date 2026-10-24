@@ -1,831 +1,254 @@
-
-# FILE: .github/workflows/build-slknight-web.yml
-# VERSION: V229R65
-# BASE: successful V229R64 deployed full game, run 40093849653.
-# FIX: foreground wall faces must NOT be treated as solid ground.
-# LOGIC: original native ground tile 384/385 and original S32 directions;
-# only actual bottom/side edge of a painted vertical wall blocks movement.
-# 1F screenshot: allow 94,78 -> 94,82 behind wall; stop on solid floor below.
-# 1F old issue: prohibit 97,70 -> 97,69 across lower wall face edge.
-# PRESERVE: R64 foreground z/fade, all map PNGs, monster spawns, drops,
-# 491EV balance, saved games, movement engine and all other 135 scripts.
-name: build-slknight-web.yml | V229R65 | Clean Native Events and 2x Terrain
+# FILE: .github/workflows/build-web.yml
+# VERSION: V82
+# BASE: V81, commit f2539964659dc7fdf8ecea9cefaf84989154fe0e
+# Keeps the original Sanctuary C++ engine and the V81 native tile renderer.
+# Removes the five upstream chat-window sample lines and restores mobile top alignment.
+# Reports original-player sprite status instead of claiming it is rendered.
+name: "build-web.yml | V82 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V82 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [.github/workflows/build-slknight-web.yml]
+    paths:
+      - .github/workflows/build-web.yml
 
 permissions:
-  contents: read
-  actions: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: slknight-github-pages
+  group: game2-v82-native-client
   cancel-in-progress: false
 
 jobs:
-  build:
+  original_client_v82:
+    name: "build-web.yml | V82 | Restore original client and clean game display"
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
+
     steps:
-      - name: V229R65 Restore successful R64 full game
-        uses: actions/download-artifact@v4
+      - name: "V82 | Checkout game2 full history"
+        uses: actions/checkout@v4
         with:
-          repository: gowellsik-hue/Game
-          run-id: 40093849653
-          name: github-pages
-          github-token: ${{ github.token }}
-          path: r64
+          fetch-depth: 0
 
-      - name: V229R65 Set up native image analysis
-        uses: actions/setup-python@v5
+      - name: "V82 | Preserve last successful Pages deployment"
+        uses: actions/checkout@v4
         with:
-          python-version: '3.11'
+          ref: gh-pages
+          path: published
+          fetch-depth: 1
 
-      - name: V229R65 Install pinned image processing dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m pip install --quiet pillow==11.3.0 numpy==2.2.6
-
-      - name: V229R65 Recover 5517-file successful R64 game
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p site build
-          test -s r64/artifact.tar
-          tar -xf r64/artifact.tar -C site
-          python3 - <<'PY_BASE'
-          from pathlib import Path
-          import hashlib,json
-          root=Path('site')
-          assert 'V229R64' in (root/'index.html').read_text('utf-8')
-          p=root/'knight/gameasync/Data/Scripts.rxdata'
-          assert hashlib.sha256(p.read_bytes()).hexdigest()=='02e472171f7af3e96f843a8b3f4374779018052bfcae98a52c1b9221857d15b0'
-          original={str(f.relative_to(root)):hashlib.sha256(f.read_bytes()).hexdigest() for f in root.rglob('*') if f.is_file()}
-          assert len(original)==5517,len(original)
-          Path('build/r65-baseline.json').write_text(json.dumps(original,sort_keys=True))
-          print('PASS R64 exact 5517-file baseline')
-          PY_BASE
-
-      - name: V229R65 Extract original ground tiles, S32 directions, and spawns
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/r65_export.rb <<'RB_EXPORT'
-          # encoding: UTF-8
-          require 'zlib'
-          require 'json'
-          class Table
-            def self._load(raw); obj=allocate;obj.instance_variable_set(:@raw,raw);obj;end
-            def [](x,y,z)
-              w,h=@raw.byteslice(4,8).unpack('L<L<')
-              @raw.byteslice(20+((z*h+y)*w+x)*2,2).unpack('v')[0]
-            end
-          end
-          module RPG
-            class Map;end
-            class AudioFile;end
-            class Event
-              class Page
-                class Condition;end
-                class Graphic;end
-              end
-            end
-            class EventCommand;end
-            class MoveRoute;end
-            class MoveCommand;end
-          end
-          class Tone;def self._load(_raw);allocate;end;end
-          class Color;def self._load(_raw);allocate;end;end
-          src='site/knight/gameasync/Data/Scripts.rxdata'
-          a=Marshal.load(File.binread(src))
-          raise 'Wrong R64 script count' unless a.size==136
-          text=Zlib::Inflate.inflate(a[21][2]).force_encoding('UTF-8')
-          x=text.index('module SLTI_V229R42')
-          y=text.index('module SLTI_V229R44',x)
-          raise 'Original S32 graph missing' unless x && y
-          eval(text[x...y])
-          pre='site/knight/gameasync/Data/MMUQTFCAEUWWMMVPHJPLWSKVJOHMECOINFTBCWIO'
-          spawns={}
-          [45,46].each do |mid|
-            w,h=mid==45 ? [288,144]:[336,168]
-            raw=SLTI_V229R42.const_get("EDGES_#{mid}")
-            raise "Unexpected native S32 length #{mid}" unless raw.bytesize==w*h
-            File.binwrite("build/r65-original-#{mid}.bin",raw)
-            map=Marshal.load(File.binread(pre+format('Map%03d.rxdata',mid)))
-            raise 'Wrong map dimensions' unless map.instance_variable_get(:@width)==w && map.instance_variable_get(:@height)==h
-            data=map.instance_variable_get(:@data)
-            base=Array.new(w*h){|i|data[i%w,i/w,0]}
-            raise 'Unexpected floor tile' unless base.all?{|v|v==384 || v==385}
-            File.binwrite("build/r65-floor-#{mid}.bin",base.pack('S<*'))
-            monsters=map.instance_variable_get(:@events).values.select{|v|v.instance_variable_get(:@name).to_s.start_with?('[ID')}
-            spawns[mid.to_s]=monsters.map{|v|[v.instance_variable_get(:@id),v.instance_variable_get(:@x),v.instance_variable_get(:@y)]}
-            puts "PASS Map#{mid} S32 graph, floor tiles and #{monsters.length} monster spawn events"
-          end
-          File.write('build/r65-spawns.json',JSON.generate(spawns))
-          RB_EXPORT
-          ruby -c /tmp/r65_export.rb
-          ruby /tmp/r65_export.rb
-
-      - name: V229R65 Build real ground and wall-foot direction graph
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/r65_graph.py <<'PY_GRAPH'
-          from pathlib import Path
-          from PIL import Image
-          import numpy as np,json
-          base=Path('build');gfx=Path('site/knight/gameasync/Graphics/Panoramas')
-          spawn=json.loads((base/'r65-spawns.json').read_text())
-          report={'version':'V229R65','base':'V229R64','basis':'original 384/385 ground + original S32 directional edges, separate painted wall face and physical wall bottom boundary','maps':{}}
-          for mid,w,h in [(45,288,144),(46,336,168)]:
-              t=np.fromfile(base/f'r65-floor-{mid}.bin',dtype='<u2').reshape(h,w)
-              src=np.fromfile(base/f'r65-original-{mid}.bin',dtype=np.uint8).reshape(h,w)
-              walk=t==384
-              density=np.zeros((h,w),dtype=np.float32)
-              foot=np.zeros_like(density)
-              top=np.zeros_like(density)
-              center=np.zeros_like(density)
-              # These are PRESENTATION pixels, not a collision mask.
-              # Only the lower edge of an opaque vertical wall FACE forms a barrier.
-              for cy in range((h+31)//32):
-                for cx in range((w+31)//32):
-                  p=gfx/f'SLTI_{mid}_W_C{cx}_{cy}.png'
-                  if not p.exists():continue
-                  im=np.asarray(Image.open(p).convert('RGBA').getchannel('A'),np.float32)/255.0
-                  assert im.shape==(512,512)
-                  a=im.reshape(32,16,32,16).transpose(0,2,1,3)
-                  rh=min(32,h-cy*32);rw=min(32,w-cx*32)
-                  sl=np.s_[cy*32:cy*32+rh,cx*32:cx*32+rw]
-                  density[sl]=a[:rh,:rw].mean((2,3))
-                  foot[sl]=a[:rh,:rw,12:16,5:11].mean((2,3))
-                  top[sl]=a[:rh,:rw,0:4,5:11].mean((2,3))
-                  center[sl]=a[:rh,:rw,4:12,4:12].mean((2,3))
-              if mid==45:
-                  # Previously confirmed actual double doorway; permit only this opening.
-                  assert (t[57,133:135]==384).all() and (t[61,133:135]==384).all()
-                  assert (t[58:60,133:135]==385).all()
-                  walk[58:61,133:135]=True
-              edges=np.zeros((h,w),np.uint8)
-              xlink=walk[:,:-1]&walk[:,1:]&((src[:,:-1]&8)>0)&((src[:,1:]&4)>0)
-              edges[:,:-1][xlink]|=8;edges[:,1:][xlink]|=4
-              ylink=walk[:-1,:]&walk[1:,:]&((src[:-1,:]&2)>0)&((src[1:,:]&1)>0)
-              edges[:-1,:][ylink]|=2;edges[1:,:][ylink]|=1
-              if mid==45:
-                  for x in (133,134):
-                    for y in (57,58,59,60):
-                      assert walk[y,x] and walk[y+1,x]
-                      edges[y,x]|=2;edges[y+1,x]|=1
-                  for y in (58,59,60):
-                    edges[y,133]|=8;edges[y,134]|=4
-              # DO NOT make a solid wall simply because its foreground picture covers
-              # the player's floor. A vertical face belongs to the foreground renderer.
-              # Block only movement crossing the BOTTOM LIP of that face.
-              vertical=(density[:-1,:]>=.65)&(foot[:-1,:]<.35)&(density[1:,:]<.23)&(top[1:,:]<.35)
-              vertical &= ((edges[:-1,:]&2)>0)&((edges[1:,:]&1)>0)
-              edges[:-1,:][vertical]&=np.uint8(253)
-              edges[1:,:][vertical]&=np.uint8(254)
-              lateral=(((density[:,:-1]>=.70)&(density[:,1:]<=.20)&(center[:,:-1]>=.6)&(top[:,1:]<.35)) |
-                       ((density[:,1:]>=.70)&(density[:,:-1]<=.20)&(center[:,1:]>=.6)&(top[:,:-1]<.35)))
-              lateral &= ((edges[:,:-1]&8)>0)&((edges[:,1:]&4)>0)
-              edges[:,:-1][lateral]&=np.uint8(247)
-              edges[:,1:][lateral]&=np.uint8(251)
-              # Keep original ground impassable; verify every 4-way pair is reciprocal.
-              assert not edges[~walk].any()
-              assert np.array_equal((edges[:,:-1]&8)>0,(edges[:,1:]&4)>0)
-              assert np.array_equal((edges[:-1,:]&2)>0,(edges[1:,:]&1)>0)
-              assert not (edges[:,0]&4).any() and not (edges[:,-1]&8).any()
-              assert not (edges[0,:]&1).any() and not (edges[-1,:]&2).any()
-              bad=[(eid,x,y) for eid,x,y in spawn[str(mid)] if edges[y,x]==0]
-              assert not bad, ('Original monster spawn blocked',mid,bad)
-              if mid==45:
-                  # REAL SCREENSHOT: hero behind foreground wall must walk down under it.
-                  for y in (78,79,80,81):
-                      assert edges[y,94]&2 and edges[y+1,94]&1,('behind wall blocked',94,y)
-                  assert not(edges[82,94]&2), 'No walking through solid floor below facade'
-                  # OLD SCREENSHOT: character must not climb UP THROUGH visible wall base.
-                  assert not(edges[70,97]&1) and not(edges[69,97]&2),'Lower wall edge still open'
-                  for x in (133,134):
-                      for y in (57,58,59,60):
-                          assert edges[y,x]&2 and edges[y+1,x]&1
-                  assert not edges[59,132] and not edges[59,135]
-              else:
-                  assert edges[94,81] and edges[100,156]
-              edges.tofile(base/f'r65-repaired-{mid}.bin')
-              report['maps'][str(mid)]={'tiles':w*h,'native_walkable_tiles':int((t==384).sum()),
-                  'final_directional_cells':int(np.count_nonzero(edges)),
-                  'actual_wall_bottom_vertical_barriers':int(vertical.sum()),
-                  'actual_wall_side_barriers':int(lateral.sum()),
-                  'monster_spawn_positions_checked':len(spawn[str(mid)]),
-                  'painted_wall_faces_used_as_impassable_floor':False}
-              print('PASS',mid,report['maps'][str(mid)])
-          assert report['maps']['45']['final_directional_cells']==3677
-          assert report['maps']['46']['final_directional_cells']==7004
-          (base/'r65-map-audit.json').write_text(json.dumps(report,indent=2))
-          PY_GRAPH
-          python3 /tmp/r65_graph.py
-
-      - name: V229R65 Patch only native collision graph script 21
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/r65_patch.rb <<'RB_PATCH'
-          # encoding: UTF-8
-          require 'zlib'
-          require 'json'
-          p='site/knight/gameasync/Data/Scripts.rxdata'
-          items=Marshal.load(File.binread(p))
-          old=Marshal.load(File.binread(p))
-          raise 'Unexpected RPG scripts' unless items.size==136
-          source=Zlib::Inflate.inflate(items[21][2]).force_encoding('UTF-8')
-          pos=source.index('module SLTI_V229R44')
-          raise 'Missing current 4-way mask' if pos.nil?
-          head=source[0...pos]
-          tail=source[pos..-1]
-          [45,46].each do |mid|
-            newmap=File.binread("build/r65-repaired-#{mid}.bin")
-            expected=mid==45 ? 288*144 : 336*168
-            raise 'Bad grid size' unless newmap.bytesize==expected
-            regex=/^  EDGES_#{mid} = \[\r?\n.*?\r?\n  \]\.join\.unpack\('m'\)\[0\]/m
-            raise "No unique mask #{mid}" unless tail.scan(regex).length==1
-            lines=[newmap].pack('m0').scan(/.{1,120}/).map{|s|'    '+s.inspect}.join(",\n")
-            tail=tail.sub(regex,"  EDGES_#{mid} = [\n#{lines}\n  ].join.unpack('m')[0]")
-          end
-          items[21][2]=Zlib::Deflate.deflate((head+tail).b)
-          raise 'Unrelated script changed' unless items.each_index.all?{|i|i==21 || items[i]==old[i]}
-          File.binwrite(p,Marshal.dump(items))
-          check=Marshal.load(File.binread(p))
-          updated=Zlib::Inflate.inflate(check[21][2]).force_encoding('UTF-8')
-          a=updated.index('module SLTI_V229R44');b=updated.index("\nclass Game_Map",a)
-          raise 'No RGSS runtime bounds' unless a && b
-          eval(updated[a...b])
-          [45,46].each do |mid|
-            actual=SLTI_V229R44.const_get("EDGES_#{mid}")
-            raise "R65 mask did not decode: #{mid}" unless actual==File.binread("build/r65-repaired-#{mid}.bin")
-          end
-          File맞습니다. 어려운 문제가 아니라 **충돌과 표시를 분리해야 하는 문제**였습니다. 이전에는 벽면 그림 자체를 통행 차단에 사용해서 계속 오류가 났습니다.
-
-이번 R65 수정에서는 세 부분을 다음처럼 구분했습니다.
-
-| 구분 | 이동 | 화면 표시 |
-|---|---|---|
-| 벽 앞 | 가능 | 캐릭터가 벽보다 앞에 표시 |
-| 벽 뒤 | 가능 | 캐릭터를 벽이 가림 |
-| **벽바닥** | **불가능** | 실제 벽이 서 있는 자리 |
-| 문 | 가능 | 정상 통행 |
-
-**벽 앞·뒤 이미지의 측면을 추가로 차단하던 코드를 제거했습니다.** 바닥의 불통행 타일과 벽이 실제로 닿는 하단 경계만 충돌에 사용합니다.
-
-R64 실제 배포본으로 다시 검사한 결과, 사진에서 막혔던 **벽 뒤 아래 방향 이동**과 이전에 발생한 **아래쪽에서 벽 밑면을 뚫고 올라가는 이동 차단**을 모두 확인했습니다. 1·2층 몬스터 배치와 5,517개 원본 파일 보존 검사도 통과했습니다.
-
-### `build-slknight-web.yml` — V229R65 전문
-
-앞·뒤 벽면은 **표시용**, 실제 벽바닥만 **이동 차단용**으로 구분한 수정본입니다. 기존 벽 이미지 파일은 유지하고, 게임 내부에서 세 역할을 분리했습니다.
-
-<CodeBlock language="yaml" editable>
-# FILE: .github/workflows/build-slknight-web.yml
-# VERSION: V229R65
-# BASE: successful V229R64 deployed full game, run 40093849653.
-# FIX: render front/back independently from solid wall-base collision.
-# THREE ROLES: FRONT (visual), BACK (visual), BASE (collision).
-# WALL BASE: native tile 385 and physical bottom contact.
-# Visual wall front/back must not block walkable native tile 384.
-# 1F: allow 94,78 -> 94,82 behind wall.
-# 1F: block 97,70 -> 97,69 across physical wall base.
-# Preserve original map events, images, monsters, loot and saves.
-name: build-slknight-web.yml | V229R65 | Clean Native Events and 2x Terrain
-
-"on":
-  workflow_dispatch:
-  push:
-    branches: [main]
-    paths: [.github/workflows/build-slknight-web.yml]
-
-permissions:
-  contents: read
-  actions: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: slknight-github-pages
-  cancel-in-progress: false
-
-jobs:
-  build:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - name: V229R65 Restore successful R64 full game
-        uses: actions/download-artifact@v4
+      - name: "V82 | Checkout exact original Sanctuary C++ client"
+        uses: actions/checkout@v4
         with:
-          repository: gowellsik-hue/Game
-          run-id: 40093849653
-          name: github-pages
-          github-token: ${{ github.token }}
-          path: r64
+          repository: uglyoldbob/l1j-client
+          ref: 83052f6b1c5bda59d4c4cbaf01aa2e72ea409853
+          path: upstream-l1j
+          persist-credentials: false
 
-      - name: V229R65 Set up native image analysis
-        uses: actions/setup-python@v5
+      - name: "V82 | Set up unchanged Emscripten toolchain"
+        uses: emscripten-core/setup-emsdk@v15
         with:
-          python-version: '3.11'
+          version: '3.1.74'
 
-      - name: V229R65 Install pinned image processing dependencies
+      - name: "V82 | Recover complete V81 native extraction and build scripts"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m pip install --quiet pillow==11.3.0 numpy==2.2.6
-
-      - name: V229R65 Recover original R64 game
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p site build
-          test -s r64/artifact.tar
-          tar -xf r64/artifact.tar -C site
-          python3 - <<'PY_BASE'
+          python3 -m pip install --quiet 'PyYAML==6.0.2'
+          mkdir -p reports
+          cat > /tmp/v82-restore.py <<'PY'
           from pathlib import Path
-          import hashlib,json
-          root=Path('site')
-          assert 'V229R64' in (root/'index.html').read_text('utf-8')
-          p=root/'knight/gameasync/Data/Scripts.rxdata'
-          assert hashlib.sha256(p.read_bytes()).hexdigest()=='02e472171f7af3e96f843a8b3f4374779018052bfcae98a52c1b9221857d15b0'
-          original={str(f.relative_to(root)):hashlib.sha256(f.read_bytes()).hexdigest() for f in root.rglob('*') if f.is_file()}
-          assert len(original)==5517,len(original)
-          Path('build/r65-baseline.json').write_text(json.dumps(original,sort_keys=True))
-          print('PASS R64 exact 5517-file baseline')
-          PY_BASE
+          import subprocess
+          import yaml
 
-      - name: V229R65 Extract original ground, wall directions and spawns
+          revision='f2539964659dc7fdf8ecea9cefaf84989154fe0e'
+          content=subprocess.check_output(
+              ['git','show',revision+':.github/workflows/build-web.yml'],
+              text=True
+          )
+          workflow=yaml.safe_load(content)
+          assert workflow['name']=='build-web.yml | V81 | Sanctuary game2 GitHub Pages'
+          steps=workflow['jobs']['original_client_v81']['steps']
+          scripts={step['name']:step['run'] for step in steps if 'run' in step}
+          originals=[
+              'V81 | Restore V80 original resource and C++ stages',
+              'V81 | Repair the original SDL_Rect memory layout',
+          ]
+          assert all(name in scripts for name in originals)
+          for name in originals:
+              script=scripts[name].replace('V81','V82').replace('v81','v82')
+              subprocess.run(
+                  ['bash','-e','-o','pipefail','-c',script],
+                  check=True
+              )
+              print('Recovered:',name,flush=True)
+
+          for name in ('/tmp/v82-extract.sh','/tmp/v82-build.sh'):
+              assert Path(name).is_file(),name
+              subprocess.run(['bash','-n',name],check=True)
+
+          for name in ('/tmp/v82-sdl-bridge.py','/tmp/v82-native-viewport.py'):
+              assert Path(name).is_file(),name
+              subprocess.run(['python3','-m','py_compile',name],check=True)
+
+          assert '/tmp/v82-sdl-bridge.py' in Path('/tmp/v82-build.sh').read_text()
+          print('V82: V81 original map, SDL_Rect and character stages preserved.')
+          PY
+          python3 -m py_compile /tmp/v82-restore.py
+          python3 -u /tmp/v82-restore.py 2>&1 | tee reports/V82-restore.log
+
+      - name: "V82 | Remove only original chat demonstration text"
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/r65_export.rb <<'RB_EXPORT'
-          require 'zlib'
-          require 'json'
-          class Table
-            def self._load(raw)
-              obj=allocate
-              obj.instance_variable_set(:@raw,raw)
-              obj
-            end
-            def [](x,y,z)
-              w,h=@raw.byteslice(4,8).unpack('L<L<')
-              @raw.byteslice(20+((z*h+y)*w+x)*2,2).unpack('v')[0]
-            end
-          end
-          module RPG
-            class Map;end
-            class AudioFile;end
-            class Event
-              class Page
-                class Condition;end
-                class Graphic;end
-              end
-            end
-            class EventCommand;end
-            class MoveRoute;end
-            class MoveCommand;end
-          end
-          class Tone
-            def self._load(raw);allocate;end
-          end
-          class Color
-            def self._load(raw);allocate;end
-          end
-
-          src='site/knight/gameasync/Data/Scripts.rxdata'
-          a=Marshal.load(File.binread(src))
-          raise 'Wrong R64 script count' unless a.size==136
-
-          text=Zlib::Inflate.inflate(a[21][2]).force_encoding('UTF-8')
-          x=text.index('module SLTI_V229R42')
-          y=text.index('module SLTI_V229R44',x)
-          raise 'Original S32 graph missing' unless x && y
-          eval(text[x...y])
-
-          pre='site/knight/gameasync/Data/MMUQTFCAEUWWMMVPHJPLWSKVJOHMECOINFTBCWIO'
-          spawns={}
-
-          [45,46].each do |mid|
-            w,h=mid==45 ? [288,144]:[336,168]
-            raw=SLTI_V229R42.const_get("EDGES_#{mid}")
-            raise "Unexpected native S32 length #{mid}" unless raw.bytesize==w*h
-            File.binwrite("build/r65-original-#{mid}.bin",raw)
-
-            map=Marshal.load(File.binread(pre+format('Map%03d.rxdata',mid)))
-            raise 'Wrong map dimensions' unless map.instance_variable_get(:@width)==w && map.instance_variable_get(:@height)==h
-
-            data=map.instance_variable_get(:@data)
-            base=Array.new(w*h){|i|data[i%w,i/w,0]}
-            raise 'Unexpected floor tile' unless base.all?{|v|v==384 || v==385}
-            File.binwrite("build/r65-floor-#{mid}.bin",base.pack('S<*'))
-
-            monsters=map.instance_variable_get(:@events).values.select{|v|v.instance_variable_get(:@name).to_s.start_with?('[ID')}
-            spawns[mid.to_s]=monsters.map{|v|[v.instance_variable_get(:@id),v.instance_variable_get(:@x),v.instance_variable_get(:@y)]}
-            puts "PASS Map#{mid}: S32, floor and #{monsters.length} monster spawns"
-          end
-          File.write('build/r65-spawns.json',JSON.generate(spawns))
-          RB_EXPORT
-          ruby -c /tmp/r65_export.rb
-          ruby /tmp/r65_export.rb
-
-      - name: V229R65 Build wall-base collision independent of front and back
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/r65_graph.py <<'PY_GRAPH'
+          python3 - <<'PY'
           from pathlib import Path
-          from PIL import Image
-          import numpy as np,json
-
-          base=Path('build')
-          gfx=Path('site/knight/gameasync/Graphics/Panoramas')
-          spawn=json.loads((base/'r65-spawns.json').read_text())
-          report={
-              'version':'V229R65',
-              'base':'V229R64',
-              'roles':{
-                  'wall_front':'visual only',
-                  'wall_back':'visual only',
-                  'wall_base':'collision only'
-              },
-              'maps':{}
-          }
-
-          for mid,w,h in [(45,288,144),(46,336,168)]:
-              t=np.fromfile(base/f'r65-floor-{mid}.bin',dtype='<u2').reshape(h,w)
-              src=np.fromfile(base/f'r65-original-{mid}.bin',dtype=np.uint8).reshape(h,w)
-
-              # Only the native physical floor and wall-base decide
-              # whether a tile itself can be occupied.
-              walk=t==384
-
-              density=np.zeros((h,w),dtype=np.float32)
-              foot=np.zeros_like(density)
-              top=np.zeros_like(density)
-
-              # FRONT and BACK are display roles, not collision masks.
-              # Sample the painted layer only to find the narrow point
-              # where the physical wall base contacts the ground.
-              for cy in range((h+31)//32):
-                for cx in range((w+31)//32):
-                  p=gfx/f'SLTI_{mid}_W_C{cx}_{cy}.png'
-                  if not p.exists():
-                      continue
-
-                  im=np.asarray(
-                      Image.open(p).convert('RGBA').getchannel('A'),
-                      np.float32
-                  )/255.0
-                  assert im.shape==(512,512)
-
-                  a=im.reshape(32,16,32,16).transpose(0,2,1,3)
-                  rh=min(32,h-cy*32)
-                  rw=min(32,w-cx*32)
-                  sl=np.s_[cy*32:cy*32+rh,cx*32:cx*32+rw]
-                  density[sl]=a[:rh,:rw].mean((2,3))
-                  foot[sl]=a[:rh,:rw,12:16,5:11].mean((2,3))
-                  top[sl]=a[:rh,:rw,0:4,5:11].mean((2,3))
-
-              if mid==45:
-                  # Preserve the actual double doorway.
-                  assert (t[57,133:135]==384).all()
-                  assert (t[61,133:135]==384).all()
-                  assert (t[58:60,133:135]==385).all()
-                  walk[58:61,133:135]=True
-
-              # Directional movement from native floor and original S32.
-              # Do not create movement from visible wall-face pixels.
-              edges=np.zeros((h,w),np.uint8)
-
-              xlink=(
-                  walk[:,:-1]&walk[:,1:]&
-                  ((src[:,:-1]&8)>0)&
-                  ((src[:,1:]&4)>0)
-              )
-              edges[:,:-1][xlink]|=8
-              edges[:,1:][xlink]|=4
-
-              ylink=(
-                  walk[:-1,:]&walk[1:,:]&
-                  ((src[:-1,:]&2)>0)&
-                  ((src[1:,:]&1)>0)
-              )
-              edges[:-1,:][ylink]|=2
-              edges[1:,:][ylink]|=1
-
-              if mid==45:
-                  for x in (133,134):
-                    for y in (57,58,59,60):
-                      assert walk[y,x] and walk[y+1,x]
-                      edges[y,x]|=2
-                      edges[y+1,x]|=1
-                  for y in (58,59,60):
-                    edges[y,133]|=8
-                    edges[y,134]|=4
-
-              # The visual front/back of a wall never blocks movement.
-              # Restrict only the physical lower contact line of a wall.
-              wall_base_contact=(
-                  (density[:-1,:]>=.65)&
-                  (foot[:-1,:]<.35)&
-                  (density[1:,:]<.23)&
-                  (top[1:,:]<.35)
-              )
-              wall_base_contact &= (
-                  ((edges[:-1,:]&2)>0)&
-                  ((edges[1:,:]&1)>0)
-              )
-
-              edges[:-1,:][wall_base_contact]&=np.uint8(253)
-              edges[1:,:][wall_base_contact]&=np.uint8(254)
-
-              # No extra side-wall image collision.
-              # Original S32 provides existing directional restrictions.
-              assert not edges[~walk].any()
-              assert np.array_equal(
-                  (edges[:,:-1]&8)>0,(edges[:,1:]&4)>0
-              )
-              assert np.array_equal(
-                  (edges[:-1,:]&2)>0,(edges[1:,:]&1)>0
-              )
-              assert not (edges[:,0]&4).any()
-              assert not (edges[:,-1]&8).any()
-              assert not (edges[0,:]&1).any()
-              assert not (edges[-1,:]&2).any()
-
-              blocked_spawns=[
-                  (eid,x,y)
-                  for eid,x,y in spawn[str(mid)]
-                  if edges[y,x]==0
-              ]
-              assert not blocked_spawns,(
-                  'Monster spawn blocked',mid,blocked_spawns
-              )
-
-              if mid==45:
-                  # Screenshot: player must be able to walk BEHIND wall.
-                  for y in (78,79,80,81):
-                      assert edges[y,94]&2
-                      assert edges[y+1,94]&1
-
-                  # The true wall-base/floor boundary must block.
-                  assert not (edges[82,94]&2)
-
-                  # Old wall-breaking position must stay blocked.
-                  assert not (edges[70,97]&1)
-                  assert not (edges[69,97]&2)
-
-                  # Actual doorway must remain traversable.
-                  for x in (133,134):
-                      for y in (57,58,59,60):
-                          assert edges[y,x]&2
-                          assert edges[y+1,x]&1
-
-                  assert not edges[59,132]
-                  assert not edges[59,135]
-              else:
-                  assert edges[94,81]
-                  assert edges[100,156]
-
-              edges.tofile(base/f'r65-repaired-{mid}.bin')
-
-              report['maps'][str(mid)]={
-                  'tiles':w*h,
-                  'native_walkable_tiles':int((t==384).sum()),
-                  'final_directional_cells':int(np.count_nonzero(edges)),
-                  'physical_wall_base_contacts':int(wall_base_contact.sum()),
-                  'extra_wall_face_barriers':0,
-                  'monster_spawns_checked':len(spawn[str(mid)]),
-                  'front_and_back_are_visual_only':True
-              }
-
-              print('PASS Map',mid,report['maps'][str(mid)])
-
-          assert 3500<=report['maps']['45']['final_directional_cells']<=3728
-          assert 6800<=report['maps']['46']['final_directional_cells']<=7120
-
-          (base/'r65-map-audit.json').write_text(
-              json.dumps(report,indent=2)
+          import re
+          p=Path('upstream-l1j/src/widgets/chat_window.cpp')
+          source=p.read_text(encoding='utf-8')
+          marker='text_box *tb = (text_box*)widgets[3];'
+          assert source.count(marker)==1
+          old=r'(?m)^[ \t]*tb->add_line\("[^"\n]*"\);[ \t]*\r?\n'
+          cleaned,count=re.subn(old,'',source)
+          assert count==5,('Expected five upstream demo chat lines',count)
+          assert 'This is a test of displaying text' not in cleaned
+          assert 'The number 42 is required' not in cleaned
+          p.write_text(cleaned,encoding='utf-8')
+          Path('reports/V82-chat-audit.txt').write_text(
+              'Removed exactly five hardcoded test messages from original '
+              'chat_window.cpp; real chat_window and text_box remain.\n'
           )
-          PY_GRAPH
-          python3 /tmp/r65_graph.py
+          print('V82: removed five original sample chat messages.')
+          PY
+          bash -n /tmp/v82-build.sh
 
-      - name: V229R65 Patch only native collision graph script 21
+      - name: "V82 | Build original C++ client and verify real map pixels"
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          cat > /tmp/r65_patch.rb <<'RB_PATCH'
-          require 'zlib'
-          require 'json'
-
-          p='site/knight/gameasync/Data/Scripts.rxdata'
-          items=Marshal.load(File.binread(p))
-          old=Marshal.load(File.binread(p))
-
-          raise 'Unexpected RPG scripts' unless items.size==136
-          source=Zlib::Inflate.inflate(items[21][2]).force_encoding('UTF-8')
-          pos=source.index('module SLTI_V229R44')
-          raise 'Missing current 4-way mask' if pos.nil?
-
-          head=source[0...pos]
-          tail=source[pos..-1]
-
-          [45,46].each do |mid|
-            newmap=File.binread("build/r65-repaired-#{mid}.bin")
-            expected=mid==45 ? 288*144 : 336*168
-            raise 'Bad grid size' unless newmap.bytesize==expected
-
-            regex=/^  EDGES_#{mid} = \[\r?\n.*?\r?\n  \]\.join\.unpack\('m'\)\[0\]/m
-            raise "No unique mask #{mid}" unless tail.scan(regex).length==1
-
-            lines=[newmap].pack('m0').scan(/.{1,120}/).map{|s|
-              '    '+s.inspect
-            }.join(",\n")
-            tail=tail.sub(
-              regex,
-              "  EDGES_#{mid} = [\n#{lines}\n  ].join.unpack('m')[0]"
-            )
-          end
-
-          items[21][2]=Zlib::Deflate.deflate((head+tail).b)
-          raise 'Unrelated script changed' unless
-            items.each_index.all?{|i|i==21 || items[i]==old[i]}
-
-          File.binwrite(p,Marshal.dump(items))
-
-          check=Marshal.load(File.binread(p))
-          updated=Zlib::Inflate.inflate(check[21][2]).force_encoding('UTF-8')
-          a=updated.index('module SLTI_V229R44')
-          b=updated.index("\nclass Game_Map",a)
-          raise 'No RGSS runtime bounds' unless a && b
-
-          eval(updated[a...b])
-
-          [45,46].each do |mid|
-            actual=SLTI_V229R44.const_get("EDGES_#{mid}")
-            raise "R65 mask did not decode: #{mid}" unless
-              actual==File.binread("build/r65-repaired-#{mid}.bin")
-          end
-
-          File.binwrite('build/r65-script21.rb',updated)
-
-          # Do not alter R64 front/back depth rendering or fade.
-          raise 'Wall foreground depth modified' unless
-            check[134]==old[134]
-
-          puts 'PASS collision-only script changed'
-          puts 'PASS front/back rendering and AI unchanged'
-          RB_PATCH
-          ruby -c /tmp/r65_patch.rb
-          ruby /tmp/r65_patch.rb
-          ruby -c build/r65-script21.rb
-
-      - name: V229R65 Verify wall-behind movement and wall-base collision
-        shell: bash
-        run: |
-          set -euo pipefail
-          ruby - <<'RB_TEST'
-          require 'zlib'
-
-          scripts=Marshal.load(
-              File.binread('site/knight/gameasync/Data/Scripts.rxdata')
-          )
-          raise 'Wrong script count' unless scripts.length==136
-
-          source=Zlib::Inflate.inflate(scripts[21][2]).force_encoding('UTF-8')
-          a=source.index('module SLTI_V229R44')
-          b=source.index("\nclass Game_Map",a)
-          raise 'No live map collision' unless a && b
-          eval(source[a...b])
-
-          char=Zlib::Inflate.inflate(scripts[23][2]).force_encoding('UTF-8')
-          raise 'Character collision bypass' unless
-              char.include?('SLTI_V229R44.allowed?')
-          raise 'Map collision bypass' unless
-              source.include?('SLTI_V229R44.allowed?(@map_id, x, y, d)')
-
-          # Behind wall: passable even when painted wall overlaps actor.
-          (78..81).each do |y|
-            raise "Hero blocked behind wall y=#{y}" unless
-                SLTI_V229R44.allowed?(45,94,y,2) &&
-                SLTI_V229R44.allowed?(45,94,y+1,8)
-          end
-
-          # Physical wall base: impassable.
-          raise 'Walking through solid floor' if
-              SLTI_V229R44.allowed?(45,94,82,2)
-          raise 'Lower wall breakthrough open' if
-              SLTI_V229R44.allowed?(45,97,70,8)
-
-          # Verified real doorway.
-          (57..60).each do |y|
-            raise 'Doorway blocked' unless
-                SLTI_V229R44.allowed?(45,133,y,2)
-          end
-
-          raise '2F entry or boss floor blocked' unless
-              SLTI_V229R44.allowed?(46,81,94,6) &&
-              SLTI_V229R44.allowed?(46,156,100,6)
-
-          # Front/back drawing remains a separate visual operation.
-          wall=Zlib::Inflate.inflate(scripts[134][2]).force_encoding('UTF-8')
-          raise 'Depth rendering overwritten' unless
-              wall.include?('covered=overlap && actor_depth<wall_depth')
-
-          puts 'PASS shared player and monster collision graph'
-          puts 'PASS movement BEHIND wall'
-          puts 'PASS physical wall BASE blocks movement'
-          puts 'PASS front/back depth rendering preserved'
-          RB_TEST
-
-      - name: V229R65 Update script cache and verify original game preservation
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY_FINAL'
+          bash /tmp/v82-extract.sh 2>&1 | tee reports/V82-extract-stage.log
+          bash /tmp/v82-build.sh 2>&1 | tee reports/V82-build-stage.log
+          python3 - <<'PY'
           from pathlib import Path
-          import hashlib,json,re
+          import json
+          report=json.loads(Path('reports/V82-browser.json').read_text())
+          for name in ('character_saved','character_restored','native_game_ready','passed'):
+              assert report[name],(name,report.get(name))
+          assert report['native_map_unique_colors']>=8
+          assert report['native_map_nonblack_fraction']>0.02
+          assert Path('reports/V82-map-canvas.png').stat().st_size>500
 
-          root=Path('site')
-          engine=root/'knight/gameasync'
-          mapping=engine/'mapping.js'
-          content=mapping.read_text('utf-8')
-
-          key='Data/Scripts.rxdata'
-          digest=hashlib.md5((engine/key).read_bytes()).hexdigest()
-          content,count=re.subn(
-              re.escape(key)+r'\?h=[0-9a-f]{32}',
-              lambda m:key+'?h='+digest,
-              content
+          native=Path('upstream-l1j/src/sdl_user.cpp').read_text()
+          assert 'game->set_selected_char(local);' in native
+          draw=Path('upstream-l1j/src/drawmode/draw_game.cpp').read_text()
+          assert 'themap->move_sprite(info->id' in draw
+          entry=native.split('game->set_selected_char(local);',1)[1]
+          spawn_in_entry='game->place_character(' in entry.split('delete [] local->name;',1)[0]
+          state=('native player spawn called' if spawn_in_entry
+                 else 'native character metadata set; no player spawn call')
+          Path('reports/V82-character-audit.txt').write_text(
+              state+'\nReal sprite graphics not verified by this browser test.\n'
           )
-          assert count==1,count
-          mapping.write_text(content,encoding='utf-8')
+          print('V82:',state)
+          print('V82: original map colors',report['native_map_unique_colors'])
+          PY
 
-          for filename in ('index.html','knight/index.html'):
-              file=root/filename
-              v=file.read_text('utf-8')
-              assert 'V229R64' in v
-              file.write_text(
-                  v.replace('V229R64','V229R65').replace(
-                      'v229r64','v229r65'
-                  ),
-                  encoding='utf-8'
-              )
+      - name: "V82 | Correct mobile stage alignment without covering native HUD"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          for name in ('index.html','v82.html'):
+              target=Path('published')/name
+              source=target.read_text(encoding='utf-8')
+              assert 'V82' in source,('Wrong version',name)
+              old='#stage{position:relative;display:flex;align-items:center;justify-content:center;'
+              new='#stage{position:relative;display:flex;align-items:flex-start;justify-content:center;'
+              assert source.count(old)==1,('Stage CSS changed',name)
+              source=source.replace(old,new,1)
+              assert 'sanctuary-game2-characters-v1' in source
+              assert 'lineage-v82.js' in source
+              target.write_text(source,encoding='utf-8')
+          print('V82: map aligned to top; original bottom HUD stays available.')
+          PY
 
-          orig=json.loads(
-              Path('build/r65-baseline.json').read_text()
-          )
-          now={
-              str(p.relative_to(root)):
-              hashlib.sha256(p.read_bytes()).hexdigest()
-              for p in root.rglob('*') if p.is_file()
-          }
-          assert len(now)==len(orig)==5517
-          assert now.keys()==orig.keys()
-
-          changes={x for x in now if orig[x]!=now[x]}
-          expected={
-              'index.html',
-              'knight/index.html',
-              'knight/gameasync/Data/Scripts.rxdata',
-              'knight/gameasync/mapping.js'
-          }
-          assert changes==expected,(
-              'Unexpected changes:',changes^expected
-          )
-
-          print('PASS all 5517 original files preserved')
-          print('PASS only collision, script cache and version labels changed')
-          PY_FINAL
-          node --check site/knight/gameasync/mapping.js
-
-      - name: V229R65 Upload wall-base collision audit
+      - name: "V82 | Upload original runtime and character diagnostics"
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SLKnight-V229R65-Three-Wall-Roles
-          path: build/r65-map-audit.json
+          name: Sanctuary-game2-V82-Original-Runtime
+          path: |
+            reports/V82-restore.log
+            reports/V82-chat-audit.txt
+            reports/V82-character-audit.txt
+            reports/V82-preflight.log
+            reports/V82-bridge-preflight.log
+            reports/V82-extract-stage.log
+            reports/V82-build-stage.log
+            reports/V82-browser.json
+            reports/V82-map-canvas.png
+            reports/V82-mobile.png
+            reports/V82-http.txt
+            assets/v82/v82-map-manifest.json
+          if-no-files-found: warn
           retention-days: 30
-          if-no-files-found: error
 
-      - name: V229R65 Upload complete game to GitHub Pages
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: site
+      - name: "V82 | Publish only after original native map verification"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('reports/V82-browser.json').read_text())
+          assert report['passed'] and report['native_game_ready']
+          assert report['character_saved'] and report['character_restored']
+          assert report['native_map_unique_colors']>=8
+          assert report['native_map_nonblack_fraction']>0.02
+          assert (Path('published')/'lineage-v82.js').is_file()
+          assert (Path('published')/'lineage-v82.wasm').is_file()
+          assert (Path('published')/'lineage-v82.data').is_file()
+          assert Path('published/v82.html').is_file()
+          before=Path('published/lineage-v70.data').stat().st_size
+          after=Path('published/lineage-v82.data').stat().st_size
+          assets=sum(
+              p.stat().st_size
+              for p in Path('assets/v82/lineage').rglob('*') if p.is_file()
+          )
+          assert before<after<=before+assets+2000000
+          PY
+          git -C published add -- \
+            index.html \
+            v82.html \
+            lineage-v82.js \
+            lineage-v82.wasm \
+            lineage-v82.data
+          git -C published config user.name 'github-actions[bot]'
+          git -C published config user.email \
+            '41898282+github-actions[bot]@users.noreply.github.com'
+          if ! git -C published diff --cached --quiet; then
+            git -C published commit -m \
+              'build-web.yml V82: retain original map and remove demo chat'
+            git -C published push origin HEAD:gh-pages
+          fi
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-24.04
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/configure-pages@v6
-      - id: deployment
-        uses: actions/deploy-pages@v5
+      - name: "V82 | Report exact implementation status"
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '# build-web.yml | V82 | Sanctuary game2 GitHub Pages'
+            echo 'Builds the pinned original Sanctuary C++ engine, not a substitute engine.'
+            echo 'Reuses complete V81 SDL_Rect and native tile pipeline.'
+            echo 'Removes the original chat widget five hardcoded test lines.'
+            echo 'Aligns the real map to the top of the mobile stage.'
+            echo 'Character selection persists; native player sprite is separately audited.'
+            echo 'Actual character movement and rendering have not been established.'
+            echo 'Previous Pages remains deployed if the native build fails.'
+          } >> "$GITHUB_STEP_SUMMARY"
