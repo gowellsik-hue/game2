@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#111820">
-<title>Sanctuary — V81 Original Client Web Runtime</title>
+<title>Sanctuary — V83 Original Client Web Runtime</title>
 <style>
 :root{color-scheme:dark;font:14px/1.45 system-ui,-apple-system,'Noto Sans KR',sans-serif}
 *{box-sizing:border-box}body{margin:0;background:#0c1118;color:#eef3fa}
 header{height:49px;display:flex;gap:12px;align-items:center;justify-content:space-between;padding:0 14px;background:#182230;border-bottom:1px solid #2b394c}
 header strong{font-size:14px}#state{font-size:12px;color:#9db6cd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#stage{position:relative;display:flex;align-items:center;justify-content:center;height:calc(100dvh - 49px - env(safe-area-inset-bottom));overflow:hidden;background:#06090c}
+#stage{position:relative;display:flex;align-items:flex-start;justify-content:center;height:calc(100dvh - 49px - env(safe-area-inset-bottom));overflow:hidden;background:#06090c}
 #canvas{display:block;width:min(100%,calc((100dvh - 145px)*4/3));height:auto;max-height:calc(100dvh - 145px);aspect-ratio:4/3;object-fit:contain;image-rendering:pixelated;background:#050505;outline:none;touch-action:none}
 #overlay{position:absolute;inset:0;display:flex;flex-direction:column;gap:9px;align-items:center;justify-content:center;padding:22px;text-align:center;background:rgba(6,9,12,.93)}
 #overlay.hidden{display:none}#overlay h1{font-size:18px;font-weight:700;margin:0}#overlay p{max-width:440px;margin:0;color:#c1ccda;font-size:13px;word-break:break-word}
@@ -45,8 +45,8 @@ header strong{font-size:14px}#state{font-size:12px;color:#9db6cd;white-space:now
   #v65Original {max-height:calc(100dvh - 49px)}
 }
 
-#v81Menu[hidden]{display:none!important}
-#v81Menu {
+#v83Menu[hidden]{display:none!important}
+#v83Menu {
   position:absolute;
   inset:0;
   z-index:7;
@@ -57,7 +57,7 @@ header strong{font-size:14px}#state{font-size:12px;color:#9db6cd;white-space:now
     url('./v65-811.png') center/cover no-repeat;
   -webkit-overflow-scrolling:touch;
 }
-#v81Panel {
+#v83Panel {
   width:min(100%,580px);
   margin:0 auto;
   padding:18px;
@@ -66,9 +66,9 @@ header strong{font-size:14px}#state{font-size:12px;color:#9db6cd;white-space:now
   border-radius:13px;
   box-shadow:0 8px 35px #0009;
 }
-#v81Panel h2 {margin:0 0 12px;font-size:19px}
-#v81Panel h3 {font-size:15px;margin:12px 0 5px}
-#v81Panel button,#v81Panel input,#v81Panel select {
+#v83Panel h2 {margin:0 0 12px;font-size:19px}
+#v83Panel h3 {font-size:15px;margin:12px 0 5px}
+#v83Panel button,#v83Panel input,#v83Panel select {
   font:inherit;
   min-height:37px;
   border:1px solid #61758a;
@@ -77,9 +77,9 @@ header strong{font-size:14px}#state{font-size:12px;color:#9db6cd;white-space:now
   background:#263445;
   padding:6px 9px;
 }
-#v81Panel button {cursor:pointer}
-#v81Panel input,#v81Panel select {width:100%}
-#v81Panel .slot {
+#v83Panel button {cursor:pointer}
+#v83Panel input,#v83Panel select {width:100%}
+#v83Panel .slot {
   padding:11px 0;
   border-bottom:1px solid #45515d;
   display:flex;
@@ -87,37 +87,37 @@ header strong{font-size:14px}#state{font-size:12px;color:#9db6cd;white-space:now
   justify-content:space-between;
   gap:8px;
 }
-#v81Panel .slot-info {flex:1;min-width:0}
-#v81Panel .slot-actions {display:flex;gap:6px}
-#v81Panel .v81-fields {
+#v83Panel .slot-info {flex:1;min-width:0}
+#v83Panel .slot-actions {display:flex;gap:6px}
+#v83Panel .v83-fields {
   display:grid;
   grid-template-columns:1fr 1fr;
   gap:8px;
 }
-#v81Panel .stat {
+#v83Panel .stat {
   display:grid;
   grid-template-columns:45px 1fr 37px 37px;
   align-items:center;
   gap:5px;
   padding:3px 0;
 }
-#v81Panel .stat button {padding:3px}
-#v81Panel .actions {
+#v83Panel .stat button {padding:3px}
+#v83Panel .actions {
   display:flex;
   justify-content:flex-end;
   gap:8px;
   margin-top:16px;
 }
-#v81Message {min-height:22px;color:#efcc81}
+#v83Message {min-height:22px;color:#efcc81}
 @media(max-width:450px) {
-  #v81Menu {padding:9px 8px 25px}
-  #v81Panel {padding:11px}
-  #v81Panel .slot-actions {flex-direction:column}
+  #v83Menu {padding:9px 8px 25px}
+  #v83Panel {padding:11px}
+  #v83Panel .slot-actions {flex-direction:column}
 }
 </style>
 </head>
 <body>
-<header><strong>Sanctuary | Original Client Runtime · V81 (offline characters)</strong><span id="state" role="status" aria-live="polite">초기화 전</span></header>
+<header><strong>Sanctuary | Original Client Runtime · V83 (offline characters)</strong><span id="state" role="status" aria-live="polite">초기화 전</span></header>
 <main id="stage">
   <canvas id="canvas" width="800" height="600" tabindex="0" aria-label="기존 클라이언트가 그리는 실제 SDL 화면"></canvas>
   <img id="v65Original" src="./v65-811.png" alt="" aria-hidden="true">
@@ -137,11 +137,11 @@ header strong{font-size:14px}#state{font-size:12px;color:#9db6cd;white-space:now
     <div id="rightkeys" class="controls"><button data-key="Escape">ESC</button><button data-key="Enter">ENTER</button></div>
   </div>
 
-<section id="v81Menu" aria-label="캐릭터 선택 및 생성">
-  <div id="v81Panel">
+<section id="v83Menu" aria-label="캐릭터 선택 및 생성">
+  <div id="v83Panel">
     <h2>캐릭터 선택</h2>
-    <div id="v81Content"></div>
-    <p id="v81Message" role="status"></p>
+    <div id="v83Content"></div>
+    <p id="v83Message" role="status"></p>
   </div>
 </section>
 </main>
@@ -168,10 +168,10 @@ function log(message){
 let filteredSpriteLines=0;
 function enginePrint(message){
   const line=String(message??'');
-  if(line.includes('V81: offline native game ready:')){
+  if(line.includes('V83: offline native game ready:')){
     status('캐릭터 게임 화면 진입 · 맵 이식 진행 중');
     document.getElementById('v65Original').style.display='none';
-    log('V81: native game state entered');
+    log('V83: native game state entered');
   }
   if(/^(?:mspdf for sprite \d+ is \d+|Sprite \d+ has .*|Weapon on sprite \d+.*|\s*\d{2,7}\s*)$/.test(line)){
     filteredSpriteLines++;
@@ -233,7 +233,7 @@ async function checkCrossOriginIsolation(){
 function loadScript(src){return new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.async=true;s.onload=resolve;s.onerror=()=>reject(new Error(src+' 파일을 찾거나 실행하지 못했습니다.'));document.head.append(s);});}
 async function startEngine(){
   if(launched)return;
-  launched=true;status('엔진 로딩 중');head.textContent='원본 C++ 클라이언트 로딩 중';desc.textContent='컴파일된 lineage-v81.js / lineage-v81.wasm 파일을 확인합니다.';
+  launched=true;status('엔진 로딩 중');head.textContent='원본 C++ 클라이언트 로딩 중';desc.textContent='컴파일된 lineage-v83.js / lineage-v83.wasm 파일을 확인합니다.';
   try{
     if(location.protocol==='file:')throw Error('GitHub Pages 또는 로컬 HTTP 서버에서 실행해야 합니다.');
     const isolated=await checkCrossOriginIsolation();
@@ -248,18 +248,18 @@ async function startEngine(){
         throw Error('Original PAK streaming unavailable: '+name);
       log('V45 original '+name+': '+manifest.files[name].size+' bytes (HTTP ranges)');
     }
-    const response=await fetch('./lineage-v81.js',{method:'HEAD',cache:'no-store'});
-    if(!response.ok)throw Error('lineage-v81.js가 없습니다. 아직 WebAssembly 빌드·배포가 완료되지 않았습니다.');
-    if(typeof window.createLineage!=='function')await loadScript('./lineage-v81.js');
-    if(typeof window.createLineage!=='function')throw Error('lineage-v81.js에 createLineage() 엔트리 포인트가 없습니다.');
+    const response=await fetch('./lineage-v83.js',{method:'HEAD',cache:'no-store'});
+    if(!response.ok)throw Error('lineage-v83.js가 없습니다. 아직 WebAssembly 빌드·배포가 완료되지 않았습니다.');
+    if(typeof window.createLineage!=='function')await loadScript('./lineage-v83.js');
+    if(typeof window.createLineage!=='function')throw Error('lineage-v83.js에 createLineage() 엔트리 포인트가 없습니다.');
     status('원본 클라이언트 main() 실행 요청');
     await window.createLineage({
       preRun:[function(module){
-        if(!v81SelectedText)
+        if(!v83SelectedText)
           throw Error("No selected character");
         module.FS.writeFile(
-          "/v81-character.txt",
-          new TextEncoder().encode(v81SelectedText)
+          "/v83-character.txt",
+          new TextEncoder().encode(v83SelectedText)
         );
       }],
       canvas, noInitialRun:false, locateFile:(file,prefix)=>'./'+file,
@@ -288,7 +288,7 @@ function resumeOriginalMusic(){
 document.addEventListener('pointerdown',resumeOriginalMusic);
 document.addEventListener('keydown',resumeOriginalMusic);
 
-window.addEventListener('load',()=>{v81OpenMenu();checkCrossOriginIsolation().catch(e=>log(String(e)));},{once:true});
+window.addEventListener('load',()=>{v83OpenMenu();checkCrossOriginIsolation().catch(e=>log(String(e)));},{once:true});
 window.addEventListener('error',event=>{if(launched)problem('브라우저/작업 스레드 오류\n'+errorDetail(event));});
 window.addEventListener('unhandledrejection',event=>{
   const reason=event.reason;
@@ -307,15 +307,15 @@ for(const button of document.querySelectorAll('[data-key]')){
   for(const type of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(type,e=>{e.preventDefault();keyEvent(button.dataset.key,'keyup');});
 }
 
-const v81Key='sanctuary-game2-characters-v1';
-const v81Names=[
+const v83Key='sanctuary-game2-characters-v1';
+const v83Names=[
   '군주','기사','요정','마법사',
   '다크엘프','용기사','환술사'
 ];
-const v81StatNames=['STR','DEX','CON','WIS','CHA','INT'];
+const v83StatNames=['STR','DEX','CON','WIS','CHA','INT'];
 
 // Directly transcribed from the original global.cpp.
-const v81Base=[
+const v83Base=[
   [13,10,10,11,13,10],
   [16,12,14,9,12,8],
   [11,12,12,12,9,12],
@@ -325,34 +325,34 @@ const v81Base=[
   [11,10,12,12,8,12]
 ];
 
-const v81Caps=v81Base.map((a,i)=>
+const v83Caps=v83Base.map((a,i)=>
   a.map((_,j)=>i===1&&j===0?20:18)
 );
 
-let v81Characters=Array(4).fill(null);
-let v81Draft=null;
-let v81Slot=-1;
-let v81SelectedText='';
+let v83Characters=Array(4).fill(null);
+let v83Draft=null;
+let v83Slot=-1;
+let v83SelectedText='';
 
-const v81Content=document.getElementById('v81Content');
-const v81Message=document.getElementById('v81Message');
+const v83Content=document.getElementById('v83Content');
+const v83Message=document.getElementById('v83Message');
 
-function v81MessageSet(text){
-  v81Message.textContent=text||'';
+function v83MessageSet(text){
+  v83Message.textContent=text||'';
 }
 
-function v81Escape(text){
+function v83Escape(text){
   return String(text).replace(/[&<>"']/g,c=>({
     '&':'&amp;','<':'&lt;','>':'&gt;',
     '"':'&quot;',"'":'&#39;'
   }[c]));
 }
 
-function v81Load(){
+function v83Load(){
   try{
-    const saved=JSON.parse(localStorage.getItem(v81Key));
+    const saved=JSON.parse(localStorage.getItem(v83Key));
     if(Array.isArray(saved)){
-      v81Characters=Array.from({length:4},(_,i)=>{
+      v83Characters=Array.from({length:4},(_,i)=>{
         const x=saved[i];
         if(!x || typeof x.name!=='string' ||
            !Array.isArray(x.stats) ||
@@ -362,8 +362,8 @@ function v81Load(){
            ![0,1].includes(gender))return null;
         const stats=x.stats.map(Number);
         if(stats.some((n,j)=>!Number.isInteger(n) ||
-           n<v81Base[cls][j] ||
-           n>v81Caps[cls][j]) ||
+           n<v83Base[cls][j] ||
+           n>v83Caps[cls][j]) ||
            stats.reduce((a,b)=>a+b,0)!==75)return null;
         return {
           name:x.name,cls,gender,stats
@@ -371,38 +371,38 @@ function v81Load(){
       });
     }
   }catch(e){
-    v81MessageSet('저장 데이터를 읽지 못했습니다.');
+    v83MessageSet('저장 데이터를 읽지 못했습니다.');
   }
 }
 
-function v81Store(){
+function v83Store(){
   try{
     localStorage.setItem(
-      v81Key,JSON.stringify(v81Characters)
+      v83Key,JSON.stringify(v83Characters)
     );
     return true;
   }catch(e){
-    v81MessageSet('브라우저 저장소에 기록할 수 없습니다.');
+    v83MessageSet('브라우저 저장소에 기록할 수 없습니다.');
     return false;
   }
 }
 
-function v81OpenMenu(){
-  v81Load();
+function v83OpenMenu(){
+  v83Load();
   overlay.classList.add('hidden');
-  document.getElementById('v81Menu').hidden=false;
+  document.getElementById('v83Menu').hidden=false;
   document.getElementById('v65Original').style.display='';
   status('캐릭터 선택 · 서버 로그인 생략');
-  v81List();
+  v83List();
 }
 
-function v81List(){
-  v81Draft=null;
-  document.querySelector('#v81Panel h2').textContent=
+function v83List(){
+  v83Draft=null;
+  document.querySelector('#v83Panel h2').textContent=
     '캐릭터 선택';
-  v81Content.replaceChildren();
+  v83Content.replaceChildren();
 
-  v81Characters.forEach((character,i)=>{
+  v83Characters.forEach((character,i)=>{
     const row=document.createElement('div');
     row.className='slot';
 
@@ -414,7 +414,7 @@ function v81List(){
       name.textContent=character.name;
       const details=document.createElement('div');
       details.textContent=
-        v81Names[character.cls]+' · '+
+        v83Names[character.cls]+' · '+
         (character.gender?'여':'남')+' · Lv.1';
       info.append(name,details);
     }else{
@@ -427,7 +427,7 @@ function v81List(){
     const button=document.createElement('button');
     button.textContent=character?'선택·입장':'새 캐릭터';
     button.onclick=()=>character?
-      v81Play(i):v81Create(i);
+      v83Play(i):v83Create(i);
     actions.append(button);
 
     if(character){
@@ -435,136 +435,136 @@ function v81List(){
       remove.textContent='삭제';
       remove.onclick=()=>{
         if(confirm(character.name+' 캐릭터를 삭제할까요?')){
-          v81Characters[i]=null;
-          if(v81Store())v81List();
+          v83Characters[i]=null;
+          if(v83Store())v83List();
         }
       };
       actions.append(remove);
     }
     row.append(info,actions);
-    v81Content.append(row);
+    v83Content.append(row);
   });
 
-  v81MessageSet('저장 위치: 현재 브라우저 · 최대 4명');
+  v83MessageSet('저장 위치: 현재 브라우저 · 최대 4명');
 }
 
-function v81Create(slot){
-  v81Slot=slot;
-  v81Draft={
+function v83Create(slot){
+  v83Slot=slot;
+  v83Draft={
     name:'',cls:1,gender:0,
-    stats:[...v81Base[1]]
+    stats:[...v83Base[1]]
   };
-  v81DrawForm();
+  v83DrawForm();
 }
 
-function v81Remaining(){
-  return 75-v81Draft.stats.reduce((a,b)=>a+b,0);
+function v83Remaining(){
+  return 75-v83Draft.stats.reduce((a,b)=>a+b,0);
 }
 
-function v81DrawForm(){
-  document.querySelector('#v81Panel h2').textContent=
+function v83DrawForm(){
+  document.querySelector('#v83Panel h2').textContent=
     '캐릭터 생성';
 
   const form=document.createElement('div');
 
   form.innerHTML=`
     <label>캐릭터 이름
-      <input id="v81Name" maxlength="20"
+      <input id="v83Name" maxlength="20"
         placeholder="캐릭터 이름" autocomplete="off">
     </label>
-    <div class="v81-fields">
+    <div class="v83-fields">
       <label>클래스
-        <select id="v81Class">${v81Names.map((n,i)=>
+        <select id="v83Class">${v83Names.map((n,i)=>
           `<option value="${i}">${n}</option>`
         ).join('')}</select>
       </label>
       <label>성별
-        <select id="v81Gender">
+        <select id="v83Gender">
           <option value="0">남성</option>
           <option value="1">여성</option>
         </select>
       </label>
     </div>
     <h3>능력치 배분</h3>
-    <div id="v81Stats"></div>
+    <div id="v83Stats"></div>
     <div class="actions">
-      <button id="v81Auto" type="button">남은 포인트 배분</button>
-      <button id="v81Cancel" type="button">취소</button>
-      <button id="v81Save" type="button">생성·저장</button>
+      <button id="v83Auto" type="button">남은 포인트 배분</button>
+      <button id="v83Cancel" type="button">취소</button>
+      <button id="v83Save" type="button">생성·저장</button>
     </div>
   `;
 
-  v81Content.replaceChildren(form);
+  v83Content.replaceChildren(form);
 
-  const name=form.querySelector('#v81Name');
-  const cls=form.querySelector('#v81Class');
-  const gender=form.querySelector('#v81Gender');
+  const name=form.querySelector('#v83Name');
+  const cls=form.querySelector('#v83Class');
+  const gender=form.querySelector('#v83Gender');
 
-  name.value=v81Draft.name;
-  cls.value=String(v81Draft.cls);
-  gender.value=String(v81Draft.gender);
+  name.value=v83Draft.name;
+  cls.value=String(v83Draft.cls);
+  gender.value=String(v83Draft.gender);
 
-  name.oninput=()=>v81Draft.name=name.value;
-  gender.onchange=()=>v81Draft.gender=Number(gender.value);
+  name.oninput=()=>v83Draft.name=name.value;
+  gender.onchange=()=>v83Draft.gender=Number(gender.value);
   cls.onchange=()=>{
-    v81Draft.cls=Number(cls.value);
-    v81Draft.stats=[...v81Base[v81Draft.cls]];
-    v81DrawStats();
+    v83Draft.cls=Number(cls.value);
+    v83Draft.stats=[...v83Base[v83Draft.cls]];
+    v83DrawStats();
   };
 
-  form.querySelector('#v81Cancel').onclick=v81List;
-  form.querySelector('#v81Auto').onclick=()=>{
-    let remaining=v81Remaining();
+  form.querySelector('#v83Cancel').onclick=v83List;
+  form.querySelector('#v83Auto').onclick=()=>{
+    let remaining=v83Remaining();
     while(remaining>0){
       let changed=false;
       for(let i=0;i<6 && remaining>0;i++){
-        if(v81Draft.stats[i]<v81Caps[v81Draft.cls][i]){
-          v81Draft.stats[i]++;
+        if(v83Draft.stats[i]<v83Caps[v83Draft.cls][i]){
+          v83Draft.stats[i]++;
           remaining--;
           changed=true;
         }
       }
       if(!changed)break;
     }
-    v81DrawStats();
+    v83DrawStats();
   };
 
-  form.querySelector('#v81Save').onclick=()=>{
-    const draft=v81Draft;
+  form.querySelector('#v83Save').onclick=()=>{
+    const draft=v83Draft;
     const text=draft.name.trim();
 
     if([...text].length<2 || [...text].length>20){
-      v81MessageSet('캐릭터 이름은 2~20자로 입력하세요.');
+      v83MessageSet('캐릭터 이름은 2~20자로 입력하세요.');
       return;
     }
-    if(v81Remaining()!==0){
-      v81MessageSet('75포인트를 전부 배분해야 합니다.');
+    if(v83Remaining()!==0){
+      v83MessageSet('75포인트를 전부 배분해야 합니다.');
       return;
     }
-    if(v81Characters.some(c=>c && c.name===text)){
-      v81MessageSet('이미 존재하는 캐릭터 이름입니다.');
+    if(v83Characters.some(c=>c && c.name===text)){
+      v83MessageSet('이미 존재하는 캐릭터 이름입니다.');
       return;
     }
 
-    v81Characters[v81Slot]={
+    v83Characters[v83Slot]={
       name:text,
       cls:draft.cls,
       gender:draft.gender,
       stats:[...draft.stats]
     };
 
-    if(v81Store())v81List();
+    if(v83Store())v83List();
   };
 
-  v81DrawStats();
+  v83DrawStats();
 }
 
-function v81DrawStats(){
-  const box=document.getElementById('v81Stats');
+function v83DrawStats(){
+  const box=document.getElementById('v83Stats');
   if(!box)return;
   box.replaceChildren();
 
-  v81StatNames.forEach((label,i)=>{
+  v83StatNames.forEach((label,i)=>{
     const row=document.createElement('div');
     row.className='stat';
 
@@ -572,48 +572,48 @@ function v81DrawStats(){
     name.textContent=label;
 
     const value=document.createElement('strong');
-    value.textContent=String(v81Draft.stats[i]);
+    value.textContent=String(v83Draft.stats[i]);
 
     const minus=document.createElement('button');
     minus.textContent='−';
     minus.disabled=(
-      v81Draft.stats[i]===v81Base[v81Draft.cls][i]
+      v83Draft.stats[i]===v83Base[v83Draft.cls][i]
     );
     minus.onclick=()=>{
-      v81Draft.stats[i]--;
-      v81DrawStats();
+      v83Draft.stats[i]--;
+      v83DrawStats();
     };
 
     const plus=document.createElement('button');
     plus.textContent='+';
     plus.disabled=(
-      v81Remaining()<=0 ||
-      v81Draft.stats[i]===v81Caps[v81Draft.cls][i]
+      v83Remaining()<=0 ||
+      v83Draft.stats[i]===v83Caps[v83Draft.cls][i]
     );
     plus.onclick=()=>{
-      v81Draft.stats[i]++;
-      v81DrawStats();
+      v83Draft.stats[i]++;
+      v83DrawStats();
     };
 
     row.append(name,value,minus,plus);
     box.append(row);
   });
 
-  v81MessageSet(
-    '남은 배분 포인트: '+v81Remaining()
+  v83MessageSet(
+    '남은 배분 포인트: '+v83Remaining()
   );
 }
 
-function v81Play(index){
-  const character=v81Characters[index];
+function v83Play(index){
+  const character=v83Characters[index];
   if(!character)return;
 
-  v81SelectedText=
+  v83SelectedText=
     character.name+'\n'+
     character.cls+' '+character.gender+' '+
     character.stats.join(' ')+'\n';
 
-  document.getElementById('v81Menu').hidden=true;
+  document.getElementById('v83Menu').hidden=true;
   document.getElementById('v65Original').style.display='none';
 
   status(
