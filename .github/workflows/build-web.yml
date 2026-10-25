@@ -1,45 +1,45 @@
 # FILE: .github/workflows/build-web.yml
-# VERSION: V89
-# V88 failed because the V87 bootstrap was not executed to create v88-execute.py.
-# Restore the V87 successful chain via V86 bootstrap -> V85 execute -> V83 native.
-# Keep V87's proven 1.89GB Sprite.pak streaming extraction and ZIP records fix.
-# Fix the V84 native hook indentation and precompile the generated runner
-# before downloading any archive volumes. Preserve last working Pages on failure.
-name: "build-web.yml | V89 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V89 | Sanctuary game2 GitHub Pages"
+# VERSION: V90
+# V89: Sprite.pak extraction passed, but the second native.py call reran
+# the offline character entry patch after it had already changed sdl_user.cpp.
+# Preserve the generated actor patch under a different filename before build.
+# Reuse tested V89 stages without modifying map extraction or ZIP streaming.
+name: "build-web.yml | V90 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V90 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [.github/workflows/build-web.yml]
+    paths:
+      - .github/workflows/build-web.yml
 
 permissions:
   contents: write
 
 concurrency:
-  group: game2-v89-native-player
+  group: game2-v90-native-player
   cancel-in-progress: false
 
 jobs:
-  original_client_v89:
-    name: "build-web.yml | V89 | Restore original client and clean game display"
+  original_client_v90:
+    name: "build-web.yml | V90 | Restore original client and clean game display"
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
-      - name: "V89 | Checkout complete game2 history"
+      - name: "V90 | Checkout complete game2 history"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: "V89 | Preserve last GitHub Pages deployment"
+      - name: "V90 | Preserve previous GitHub Pages deployment"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
 
-      - name: "V89 | Checkout pinned L1J C++ client adapter"
+      - name: "V90 | Checkout pinned L1J C++ adapter"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -47,269 +47,224 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V89 | Set up Emscripten"
+      - name: "V90 | Set up Emscripten"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V89 | Restore complete V87 working stage chain"
+      - name: "V90 | Recover verified V89 stage scripts"
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install --quiet 'PyYAML==6.0.2' 'Pillow==11.3.0'
           mkdir -p reports
-          cat > /tmp/v89-stages.py <<'PY'
+          cat > /tmp/v90-stages.py <<'PY'
           import ast
-          import re
           import subprocess
           import sys
-          from pathlib import Path
           import yaml
+          from pathlib import Path
 
-          V86='5b927fc55b87e70c8e22a18ebea62b6387525448'
+          BASE='fe2cb3e0dd2b139fef63a897270ee84f97bbe198'
           raw=subprocess.check_output(
-              ['git','show',V86+':.github/workflows/build-web.yml'],
+              ['git','show',BASE+':.github/workflows/build-web.yml'],
               text=True
           )
-          prior=yaml.safe_load(raw)
-          assert prior['name']=='build-web.yml | V86 | Sanctuary game2 GitHub Pages'
-          steps=prior['jobs']['original_client_v86']['steps']
-          scripts={s['name']:s['run'] for s in steps if 'run' in s}
+          workflow=yaml.safe_load(raw)
+          assert workflow['name']=='build-web.yml | V89 | Sanctuary game2 GitHub Pages'
+          scripts={s['name']:s['run'] for s in
+              workflow['jobs']['original_client_v89']['steps'] if 'run' in s}
           names={
-              'bootstrap':'V86 | Restore exact V85 staged build and preflight',
-              'restore':'V86 | Restore proven V83 map and SDL source',
-              'sprites':'V86 | Prepare original SPR extraction',
-              'slice':'V86 | Fix correct Sprite.idx and streaming PAK extraction',
-              'wire':'V86 | Connect original C++ character and movement',
-              'build':'V86 | Extract original SPR and compile native game',
-              'smoke':'V86 | Verify real sprite visibility and movement',
-              'publish':'V86 | Deploy only original sprite pixels plus movement'
+              'prepare':'V89 | Restore complete V87 working stage chain',
+              'bootstrap':'V89 | Execute V85 bootstrap to create real stage runner',
+              'restore':'V89 | Restore V83 map and native build scripts',
+              'sprites':'V89 | Prepare original male-knight sprite bank',
+              'slice':'V89 | Preserve ZIP central records and indexed Sprite.pak slicing',
+              'wire':'V89 | Wire original C++ actor and keyboard movement',
+              'preflight':'V89 | Fix native hook and precompile final runner before ZIP downloads',
+              'build':'V89 | Extract original map and SPR then compile native client',
+              'smoke':'V89 | Require original sprite pixels and actual player movement',
+              'publish':'V89 | Publish only after real sprite and movement tests pass'
           }
-          assert all(n in scripts for n in names.values())
+          assert all(name in scripts for name in names.values())
 
-          def source(phase):
-              assert phase in names,phase
-              return scripts[names[phase]].replace('V86','V89').replace('v86','v89')
-
-          def repair_zip_records():
-              path=Path('/tmp/v89-extract.sh')
-              script=path.read_text()
-              marker='assert len(records)==nitems,(len(records),nitems)'
-              assert script.count(marker)==1
-              script=script.replace(marker,marker+'\nzip_records=tuple(records)',1)
-              pattern=(
-                  r"r for r in records(?=\n[ \t]*if r\['name'\]"
-                  r"\.lower\(\)\.endswith\()"
-              )
-              assert len(re.findall(pattern,script))==1
-              script=re.sub(pattern,'r for r in zip_records',script,count=1)
-              assert script.index('zip_records=tuple(records)') < script.index('compact=bytearray()')
-              assert script.count('r for r in zip_records')==1
-              assert script.count("bank='Sprite'")==1
-              assert script.count('sources=extract_selected(source_bank,needed)')==1
-              m=re.search(
-                  r"(?ms)^cat > /tmp/v89-extract\.py <<'PY'\n(.*?)\nPY$",
-                  script
-              )
-              assert m,'Original ZIP extractor is missing'
-              ast.parse(m.group(1),filename='/tmp/v89-extract.py')
-              path.write_text(script)
-              subprocess.run(['bash','-n',str(path)],check=True)
-              print('V89: original ZIP dictionary records preserved.',flush=True)
+          def stage_script(stage):
+              assert stage in names,stage
+              script=scripts[names[stage]].replace('V89','V90').replace('v89','v90')
+              if stage=='preflight':
+                  # V89's validation follows the same hook we renamed below.
+                  old='actor_call="subprocess.run([\'python3\',\'/tmp/v90-native.py\'],check=True)"'
+                  new='actor_call="subprocess.run([\'python3\',\'/tmp/v90-actor.py\'],check=True)"'
+                  assert script.count(old)==1, 'V90 preflight actor hook missing'
+                  script=script.replace(old,new,1)
+              return script
 
           if len(sys.argv)!=2:
-              raise SystemExit('Usage: v89-stages.py preflight|repair|stage')
+              raise SystemExit('Usage: v90-stages.py preflight|stage')
           phase=sys.argv[1]
           if phase=='preflight':
-              for name in names:
-                  subprocess.run(['bash','-n'],input=source(name),text=True,check=True)
-                  print('V89 stage syntax:',name,'OK',flush=True)
-          elif phase=='repair':
-              repair_zip_records()
+              for key in names:
+                  script=stage_script(key)
+                  subprocess.run(['bash','-n'],input=script,text=True,check=True)
+                  print('V90 stage verified:',key,flush=True)
           else:
-              print('V89 executing:',phase,flush=True)
+              print('V90 executing:',phase,flush=True)
               subprocess.run(
-                  ['bash','-e','-o','pipefail','-c',source(phase)],
+                  ['bash','-e','-o','pipefail','-c',stage_script(phase)],
                   check=True
               )
-              print('V89 completed:',phase,flush=True)
+              print('V90 completed:',phase,flush=True)
           PY
-          python3 -m py_compile /tmp/v89-stages.py
-          python3 -u /tmp/v89-stages.py preflight \
-            2>&1 | tee reports/V89-stage-preflight.log
+          python3 -m py_compile /tmp/v90-stages.py
+          python3 -u /tmp/v90-stages.py preflight \
+            2>&1 | tee reports/V90-preflight.log
 
-      - name: "V89 | Execute V85 bootstrap to create real stage runner"
+      - name: "V90 | Generate original stage executor"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v89-stages.py bootstrap \
-            2>&1 | tee reports/V89-bootstrap.log
-          test -s /tmp/v89-execute.py
-          python3 -m py_compile /tmp/v89-execute.py
-          echo 'V89: actual V85 stage runner created and compiled.'
+          python3 -u /tmp/v90-stages.py prepare \
+            2>&1 | tee reports/V90-prepare.log
+          python3 -u /tmp/v90-stages.py bootstrap \
+            2>&1 | tee reports/V90-bootstrap.log
+          test -s /tmp/v90-execute.py
+          python3 -m py_compile /tmp/v90-execute.py
 
-      - name: "V89 | Restore V83 map and native build scripts"
+      - name: "V90 | Restore source map and SDL pipeline"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v89-stages.py restore \
-            2>&1 | tee reports/V89-restore.log
-          test -s /tmp/v89-extract.sh
-          test -s /tmp/v89-build.sh
-          bash -n /tmp/v89-extract.sh /tmp/v89-build.sh
+          python3 -u /tmp/v90-stages.py restore \
+            2>&1 | tee reports/V90-restore.log
+          test -s /tmp/v90-extract.sh
+          test -s /tmp/v90-build.sh
 
-      - name: "V89 | Prepare original male-knight sprite bank"
+      - name: "V90 | Prepare genuine male knight SPR extraction"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v89-stages.py sprites \
-            2>&1 | tee reports/V89-sprite-preparation.log
+          python3 -u /tmp/v90-stages.py sprites \
+            2>&1 | tee reports/V90-sprites.log
+          python3 -u /tmp/v90-stages.py slice \
+            2>&1 | tee reports/V90-sprite-index.log
 
-      - name: "V89 | Preserve ZIP central records and indexed Sprite.pak slicing"
+      - name: "V90 | Create native actor implementation"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v89-stages.py slice \
-            2>&1 | tee reports/V89-slice-setup.log
-          python3 -u /tmp/v89-stages.py repair \
-            2>&1 | tee reports/V89-archive-repair.log
+          python3 -u /tmp/v90-stages.py wire \
+            2>&1 | tee reports/V90-wiring.log
 
-      - name: "V89 | Wire original C++ actor and keyboard movement"
+      - name: "V90 | Separate offline initialization from actor injection"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v89-stages.py wire \
-            2>&1 | tee reports/V89-player-wiring.log
-
-      - name: "V89 | Fix native hook and precompile final runner before ZIP downloads"
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/v89-preflight.py <<'PY'
+          cat > /tmp/v90-separate.py <<'PY'
           import ast
-          import re
           import subprocess
           from pathlib import Path
 
-          # V87 failed because this nested insertion had 18 spaces where
-          # the existing map patch invocation uses 8 spaces.
-          path=Path('/tmp/v89-build.sh')
-          lines=path.read_text().splitlines()
-          map_call="subprocess.run(['python3','/tmp/v89-map-patch.py'],check=True)"
-          actor_call="subprocess.run(['python3','/tmp/v89-native.py'],check=True)"
-          m=[i for i,line in enumerate(lines) if line.strip()==map_call]
-          n=[i for i,line in enumerate(lines) if line.strip()==actor_call]
-          assert len(m)==1 and len(n)==1,('Native hook count',m,n)
-          assert n[0]==m[0]+1,('Native hook no longer follows map patch',m,n)
-          prefix=lines[m[0]][:len(lines[m[0]])-len(lines[m[0]].lstrip())]
-          old_indent=len(lines[n[0]])-len(lines[n[0]].lstrip())
-          lines[n[0]]=prefix+actor_call
-          path.write_text('\n'.join(lines)+'\n')
-          subprocess.run(['bash','-n',str(path)],check=True)
-          print('V89: native hook indentation',old_indent,'=>',len(prefix),flush=True)
+          original=Path('/tmp/v90-native.py')
+          actor=Path('/tmp/v90-actor.py')
+          build=Path('/tmp/v90-build.sh')
+          assert original.is_file(),'V90 actor patch source was not generated'
+          assert not actor.exists(),'V90 actor patch destination already exists'
+          source=original.read_text()
+          assert "target='game->set_selected_char(local);'" in source
+          assert 'V90: native player spawned' in source
+          ast.parse(source,filename=str(original))
+          original.rename(actor)
 
-          # V83 already uses the desired flex-start CSS. V84 incorrectly
-          # asserts the obsolete flex-center CSS is still present.
-          executor=Path('/tmp/v89-execute.py')
-          code=executor.read_text()
-          match=re.search(r"(?m)^([ \t]*)if which=='smoke':\s*$",code)
-          assert match,'Cannot locate V85 builder prepare() branching'
-          indentation=match.group(1)
-          fix=(
-              indentation+"if which=='build':\n"
-              +indentation+"    css='assert html.count(old)==1'\n"
-              +indentation+"    assert script.count(css)==1\n"
-              +indentation+"    script=script.replace(css,\n"
-              +indentation+"        'assert html.count(old)==1 or html.count(new)==1',1)\n"
-          )
-          code=code[:match.start()]+fix+code[match.start():]
-          ast.parse(code,filename=str(executor))
-          executor.write_text(code)
-          subprocess.run(['python3','-m','py_compile',str(executor)],check=True)
-          print('V89: CSS assertion now supports already-correct V83 alignment.',flush=True)
-
-          # Build shell embeds the actual Python driver. Extract that source
-          # and run it ONLY up to generating and compiling the final run.py.
-          script=path.read_text()
-          match=re.search(
-              r"(?ms)^cat > /tmp/v89-driver\.py <<'PY'\n(.*?)\nPY$",
-              script
-          )
-          assert match,'Actual V89 builder driver not found'
-          driver=match.group(1)
-          ast.parse(driver,filename='/tmp/v89-driver.py')
-          invoke="subprocess.run(['python3','-u',str(script)],check=True)"
-          match_lines=[line for line in driver.splitlines() if line.strip()==invoke]
-          assert len(match_lines)==1,('Final runner invocation changed',match_lines)
-          original_line=match_lines[0]
-          prefix=original_line[:len(original_line)-len(original_line.lstrip())]
-          stop=(
-              prefix+"print('V89: final generated Python syntax passed',flush=True)\n"
-              +prefix+'raise SystemExit(0)'
-          )
-          driver=driver.replace(original_line,stop,1)
-          ast.parse(driver,filename='/tmp/v89-preflight-driver.py')
-          test_driver=Path('/tmp/v89-preflight-driver.py')
-          test_driver.write_text(driver+'\n')
-          subprocess.run(['python3','-u',str(test_driver)],check=True)
-          generated=Path('/tmp/v89-run.py')
-          assert generated.is_file(),'Final client runner was not generated'
-          subprocess.run(['python3','-m','py_compile',str(generated)],check=True)
-          print('V89: all actual nested Python validated before 1.89GB source extraction.',flush=True)
+          code=build.read_text()
+          old="subprocess.run(['python3','/tmp/v90-native.py'],check=True)"
+          new="subprocess.run(['python3','/tmp/v90-actor.py'],check=True)"
+          assert code.count(old)==1,('V90 original actor hook count',code.count(old))
+          code=code.replace(old,new,1)
+          assert code.count(new)==1
+          build.write_text(code)
+          subprocess.run(['bash','-n',str(build)],check=True)
+          subprocess.run(['python3','-m','py_compile',str(actor)],check=True)
+          assert not original.exists()
+          print('V90: /tmp/v90-native.py is now reserved for V67 offline entry.')
+          print('V90: /tmp/v90-actor.py holds the separate native SPR actor patch.')
+          print('V90: build hook points to the actor patch exactly once.')
           PY
-          python3 -m py_compile /tmp/v89-preflight.py
-          python3 -u /tmp/v89-preflight.py \
-            2>&1 | tee reports/V89-final-runner-preflight.log
+          python3 -u /tmp/v90-separate.py \
+            2>&1 | tee reports/V90-script-separation.log
 
-      - name: "V89 | Extract original map and SPR then compile native client"
+      - name: "V90 | Precompile actual generated native runner before resource download"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u /tmp/v90-stages.py preflight \
+            2>&1 | tee reports/V90-runner-preflight.log
+          test -s /tmp/v90-run.py
+          test -s /tmp/v90-actor.py
+          python3 -m py_compile /tmp/v90-run.py /tmp/v90-actor.py
+          grep -Fq "/tmp/v90-actor.py" /tmp/v90-build.sh
+          echo 'V90: distinct offline and actor scripts and final runner preflight passed.'
+
+      - name: "V90 | Extract real SPR and map and compile native client"
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 -u /tmp/v89-stages.py build \
-            2>&1 | tee reports/V89-build-and-browser.log
+          python3 -u /tmp/v90-stages.py build \
+            2>&1 | tee reports/V90-build-and-browser.log
 
-      - name: "V89 | Require original sprite pixels and actual player movement"
+      - name: "V90 | Verify real SPR pixels and directional movement"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v89-stages.py smoke \
-            2>&1 | tee reports/V89-native-player-test.log
+          python3 -u /tmp/v90-stages.py smoke \
+            2>&1 | tee reports/V90-native-player-test.log
 
-      - name: "V89 | Preserve failure and runtime diagnostics"
+      - name: "V90 | Save generated sources and failure logs"
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p reports
+          for file in /tmp/v90-actor.py /tmp/v90-native.py \
+                      /tmp/v90-driver.py /tmp/v90-run.py \
+                      /tmp/v90-build.sh /tmp/v90-extract.py \
+                      /tmp/v90-execute.py; do
+            if test -f "$file"; then
+              cp "$file" "reports/V90-generated-$(basename "$file")"
+            fi
+          done
+
+      - name: "V90 | Upload debug logs and generated scripts"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V89-Native-Player
+          name: Sanctuary-game2-V90-Native-Player
           path: |
-            reports/V89-*.log
-            reports/V89-*.json
-            reports/V89-*.png
-            reports/V89-*.txt
-            reports/V89-*.py
-            assets/v89/v89-player-sprites.json
+            reports/V90-*.log
+            reports/V90-*.json
+            reports/V90-*.png
+            reports/V90-*.txt
+            reports/V90-generated-*
+            assets/v90/v90-player-sprites.json
           retention-days: 30
           if-no-files-found: warn
 
-      - name: "V89 | Publish only after real sprite and movement tests pass"
+      - name: "V90 | Publish only after authentic player tests pass"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v89-stages.py publish \
-            2>&1 | tee reports/V89-deploy.log
+          python3 -u /tmp/v90-stages.py publish \
+            2>&1 | tee reports/V90-deploy.log
 
-      - name: "V89 | Record exact verified scope"
+      - name: "V90 | Record verified scope"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V89 | Sanctuary game2 GitHub Pages'
-            echo 'V88 failed at bootstrap: v88-execute.py was never generated.'
-            echo 'V89 calls the real V86 -> V85 bootstrap and asserts its output exists.'
-            echo 'V87 successfully extracted the original male-knight SPR bank.'
-            echo 'V89 preserves V87 ZIP record repair and adds runner syntax preflight.'
-            echo 'Only actual SDL sprite pixels and movement can authorize deployment.'
-            echo 'L1J C++ adapter using original Sanctuary resources; not original executable.'
-            echo 'Original collision and start location remain unverified.'
+            echo '# build-web.yml | V90 | Sanctuary game2 GitHub Pages'
+            echo 'V89 restored real Sprite.pak contents and four male-knight SPR files.'
+            echo 'V89 then re-ran its already-applied offline patch due to filename collision.'
+            echo 'V90 keeps v90-native.py for V67 offline entry and v90-actor.py for sprite injection.'
+            echo 'Complete C++ compilation, actual pixel visibility and movement are mandatory.'
+            echo 'Existing L1J adapter using Sanctuary resources; not the Sanctuary executable.'
           } >> "$GITHUB_STEP_SUMMARY"
