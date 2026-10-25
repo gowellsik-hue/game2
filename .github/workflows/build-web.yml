@@ -1,11 +1,10 @@
 # FILE: .github/workflows/build-web.yml
-# VERSION: V91
-# V90 failed before extraction: 'preflight' was both the syntax-check command
-# and the real runner-generation stage. The latter never ran.
-# Pin V90 stages and use 'check' for validation, 'preflight' for execution.
-# Preserve original SPR, map, actor separation, and browser verification gates.
-name: "build-web.yml | V91 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V91 | Sanctuary game2 GitHub Pages"
+# VERSION: V92
+# V91 failed because nested bootstrap overwrote /tmp/v91-stages.py.
+# Keep a separate outer V90 dispatcher for the real runner preflight.
+# Preserve previous verified original SPR archive extraction and gating.
+name: "build-web.yml | V92 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V92 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
@@ -18,28 +17,28 @@ permissions:
   contents: write
 
 concurrency:
-  group: game2-v91-native-player
+  group: game2-v92-native-player
   cancel-in-progress: false
 
 jobs:
-  original_client_v91:
-    name: "build-web.yml | V91 | Restore original client and clean game display"
+  original_client_v92:
+    name: "build-web.yml | V92 | Restore original client and clean game display"
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
-      - name: "V91 | Checkout full game2 history"
+      - name: "V92 | Checkout full game2 history"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: "V91 | Preserve previous GitHub Pages deployment"
+      - name: "V92 | Preserve previous GitHub Pages deployment"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
 
-      - name: "V91 | Checkout pinned L1J C++ adapter"
+      - name: "V92 | Checkout pinned L1J C++ adapter"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -47,18 +46,18 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V91 | Set up Emscripten"
+      - name: "V92 | Set up Emscripten"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V91 | Recover exact V90 pipeline and correct command conflict"
+      - name: "V92 | Restore V90 stage definitions with separate runner dispatcher"
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install --quiet 'PyYAML==6.0.2' 'Pillow==11.3.0'
-          mkdir -p reports /tmp/v91
-          cat > /tmp/v91-loader.py <<'PY'
+          mkdir -p reports /tmp/v92
+          cat > /tmp/v92-loader.py <<'PY'
           import ast
           import re
           import subprocess
@@ -67,8 +66,7 @@ jobs:
 
           PIN='9e78c0bc899fb3c30d24634294e1324a8b1e565c'
           raw=subprocess.check_output(
-              ['git','show',PIN+':.github/workflows/build-web.yml'],
-              text=True
+              ['git','show',PIN+':.github/workflows/build-web.yml'],text=True
           )
           previous=yaml.safe_load(raw)
           assert previous['name']=='build-web.yml | V90 | Sanctuary game2 GitHub Pages'
@@ -90,19 +88,25 @@ jobs:
           }
           assert len(stages)==len(set(stages.values()))
           assert all(name in original for name in stages.values())
-          root=Path('/tmp/v91')
+          root=Path('/tmp/v92')
           for stage,title in stages.items():
-              source=original[title].replace('V90','V91').replace('v90','v91')
+              source=original[title].replace('V90','V92').replace('v90','v92')
               if stage=='prepare':
-                  # The actual V90 defect: this branch intercepted the
-                  # required 'preflight' stage and only repeated bash -n.
                   old="if phase=='preflight':"
                   assert source.count(old)==1,('V90 dispatcher',source.count(old))
                   source=source.replace(old,"if phase=='check':",1)
-                  old='python3 -u /tmp/v91-stages.py preflight'
+                  old='python3 -u /tmp/v92-stages.py preflight'
                   assert source.count(old)==1,('Initial check command',source.count(old))
-                  source=source.replace(old,'python3 -u /tmp/v91-stages.py check',1)
+                  source=source.replace(old,'python3 -u /tmp/v92-stages.py check',1)
                   assert "if stage=='preflight':" in source
+              if stage=='runner':
+                  # /tmp/v92-stages.py is overwritten by the nested V89 bootstrap.
+                  # The saved outer dispatcher alone knows V89's real 'preflight'.
+                  old='python3 -u /tmp/v92-stages.py preflight'
+                  assert source.count(old)==1,('Real runner command',source.count(old))
+                  source=source.replace(
+                      old,'python3 -u /tmp/v92-outer-stages.py preflight',1
+                  )
               matches=list(re.finditer(
                   r"(?ms)^(?:cat >|cat >>) (/tmp/[\w-]+\.py) <<'PY'\n(.*?)\nPY$",
                   source
@@ -112,131 +116,135 @@ jobs:
               path=root/(stage+'.sh')
               path.write_text(source,encoding='utf-8')
               subprocess.run(['bash','-n',str(path)],check=True)
-              print('V91 verified:',stage,'Python:',len(matches),flush=True)
-          print('V91: check and preflight are now separate commands.',flush=True)
+              print('V92 verified:',stage,'Python:',len(matches),flush=True)
+          print('V92: saved outer executor will perform real preflight.',flush=True)
           PY
-          python3 -m py_compile /tmp/v91-loader.py
-          python3 -u /tmp/v91-loader.py \
-            2>&1 | tee reports/V91-loader.log
-          test -s /tmp/v91/runner.sh
-          test -s /tmp/v91/prepare.sh
+          python3 -m py_compile /tmp/v92-loader.py
+          python3 -u /tmp/v92-loader.py 2>&1 | tee reports/V92-loader.log
+          test -s /tmp/v92/runner.sh
+          test -s /tmp/v92/prepare.sh
+          grep -Fq '/tmp/v92-outer-stages.py preflight' /tmp/v92/runner.sh
 
-      - name: "V91 | Generate real V85 stage executor"
+      - name: "V92 | Preserve outer dispatcher before nested bootstrap overwrites it"
         shell: bash
         run: |
           set -euo pipefail
-          bash /tmp/v91/prepare.sh 2>&1 | tee reports/V91-prepare.log
-          test -s /tmp/v91-stages.py
-          grep -Fq "if phase=='check':" /tmp/v91-stages.py
-          bash /tmp/v91/bootstrap.sh 2>&1 | tee reports/V91-bootstrap.log
-          test -s /tmp/v91-execute.py
-          python3 -m py_compile /tmp/v91-execute.py
+          bash /tmp/v92/prepare.sh 2>&1 | tee reports/V92-prepare.log
+          test -s /tmp/v92-stages.py
+          grep -Fq "if phase=='check':" /tmp/v92-stages.py
+          grep -Fq "'preflight':'V89 | Fix native hook" /tmp/v92-stages.py
+          cp /tmp/v92-stages.py /tmp/v92-outer-stages.py
+          python3 -m py_compile /tmp/v92-outer-stages.py
+          bash /tmp/v92/bootstrap.sh 2>&1 | tee reports/V92-bootstrap.log
+          test -s /tmp/v92-execute.py
+          test -s /tmp/v92-outer-stages.py
+          python3 -m py_compile /tmp/v92-execute.py
 
-      - name: "V91 | Restore original map and SDL compiler scripts"
+      - name: "V92 | Restore original map and SDL build scripts"
         shell: bash
         run: |
           set -euo pipefail
-          bash /tmp/v91/restore.sh 2>&1 | tee reports/V91-restore.log
-          test -s /tmp/v91-extract.sh
-          test -s /tmp/v91-build.sh
+          bash /tmp/v92/restore.sh 2>&1 | tee reports/V92-restore.log
+          test -s /tmp/v92-extract.sh
+          test -s /tmp/v92-build.sh
 
-      - name: "V91 | Prepare original male knight sprite extraction"
+      - name: "V92 | Prepare original male knight SPR resources"
         shell: bash
         run: |
           set -euo pipefail
-          bash /tmp/v91/sprites.sh 2>&1 | tee reports/V91-sprites.log
-          test -s /tmp/v91-extract.sh
+          bash /tmp/v92/sprites.sh 2>&1 | tee reports/V92-sprites.log
+          test -s /tmp/v92-extract.sh
 
-      - name: "V91 | Generate native actor and directional movement code"
+      - name: "V92 | Wire original C++ actor and keyboard movement"
         shell: bash
         run: |
           set -euo pipefail
-          bash /tmp/v91/wire.sh 2>&1 | tee reports/V91-wiring.log
-          test -s /tmp/v91-native.py
+          bash /tmp/v92/wire.sh 2>&1 | tee reports/V92-wiring.log
+          test -s /tmp/v92-native.py
 
-      - name: "V91 | Keep offline entry and actor patch separate"
+      - name: "V92 | Separate offline entry from native actor patch"
         shell: bash
         run: |
           set -euo pipefail
-          bash /tmp/v91/separate.sh 2>&1 | tee reports/V91-separation.log
-          test -s /tmp/v91-actor.py
-          test ! -e /tmp/v91-native.py
-          grep -Fq "/tmp/v91-actor.py" /tmp/v91-build.sh
+          bash /tmp/v92/separate.sh 2>&1 | tee reports/V92-separation.log
+          test -s /tmp/v92-actor.py
+          test ! -e /tmp/v92-native.py
+          grep -Fq '/tmp/v92-actor.py' /tmp/v92-build.sh
 
-      - name: "V91 | Execute real runner-generation preflight"
+      - name: "V92 | Run actual final Python generator before archive downloads"
         shell: bash
         run: |
           set -euo pipefail
-          # 'preflight' now runs the real generator, not just the syntax loop.
-          bash /tmp/v91/runner.sh 2>&1 | tee reports/V91-runner-preflight.log
-          test -s /tmp/v91-run.py
-          test -s /tmp/v91-actor.py
-          python3 -m py_compile /tmp/v91-run.py /tmp/v91-actor.py
-          grep -Fq "final generated Python syntax passed" reports/V91-runner-preflight.log
-          echo 'V91: actual final runner compiled before ZIP extraction.'
+          test -s /tmp/v92-outer-stages.py
+          bash /tmp/v92/runner.sh 2>&1 | tee reports/V92-runner-preflight.log
+          test -s /tmp/v92-run.py
+          test -s /tmp/v92-actor.py
+          python3 -m py_compile /tmp/v92-run.py /tmp/v92-actor.py
+          grep -Fq 'final generated Python syntax passed' reports/V92-runner-preflight.log
+          echo 'V92: real generated runner syntax verified.'
 
-      - name: "V91 | Extract original map and SPR and compile native client"
+      - name: "V92 | Extract authentic map and SPR then build native client"
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          bash /tmp/v91/build.sh 2>&1 | tee reports/V91-build-and-browser.log
+          bash /tmp/v92/build.sh 2>&1 | tee reports/V92-build-and-browser.log
 
-      - name: "V91 | Verify real sprite pixels and keyboard movement"
+      - name: "V92 | Require actual SPR pixels and player movement"
         shell: bash
         run: |
           set -euo pipefail
-          bash /tmp/v91/smoke.sh 2>&1 | tee reports/V91-native-player-test.log
+          bash /tmp/v92/smoke.sh 2>&1 | tee reports/V92-native-player-test.log
 
-      - name: "V91 | Save complete generated sources on failure"
+      - name: "V92 | Save all generated build scripts"
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          if test -s /tmp/v91/preserve.sh; then
-            bash /tmp/v91/preserve.sh
+          if test -s /tmp/v92/preserve.sh; then
+            bash /tmp/v92/preserve.sh
           fi
           mkdir -p reports
-          for file in /tmp/v91-stages.py /tmp/v91-loader.py; do
+          for file in /tmp/v92-stages.py /tmp/v92-outer-stages.py /tmp/v92-loader.py; do
             if test -s "$file"; then
-              cp "$file" "reports/V91-generated-$(basename "$file")"
+              cp "$file" "reports/V92-generated-$(basename "$file")"
             fi
           done
 
-      - name: "V91 | Upload build logs and diagnostics"
+      - name: "V92 | Upload diagnostics regardless of outcome"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V91-Native-Player
+          name: Sanctuary-game2-V92-Native-Player
           path: |
-            reports/V91-*.log
-            reports/V91-*.json
-            reports/V91-*.png
-            reports/V91-*.txt
-            reports/V91-generated-*
-            assets/v91/v91-player-sprites.json
+            reports/V92-*.log
+            reports/V92-*.json
+            reports/V92-*.png
+            reports/V92-*.txt
+            reports/V92-generated-*
+            assets/v92/v92-player-sprites.json
           retention-days: 30
           if-no-files-found: warn
 
-      - name: "V91 | Publish only verified native character and movement"
+      - name: "V92 | Publish only verified original sprite and movement"
         shell: bash
         run: |
           set -euo pipefail
-          bash /tmp/v91/publish.sh 2>&1 | tee reports/V91-deploy.log
+          bash /tmp/v92/publish.sh 2>&1 | tee reports/V92-deploy.log
 
-      - name: "V91 | State exact verified scope"
+      - name: "V92 | Report actual validation scope"
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          if test -s /tmp/v91/report.sh; then
-            bash /tmp/v91/report.sh
+          if test -s /tmp/v92/report.sh; then
+            bash /tmp/v92/report.sh
           fi
           {
-            echo 'V90 failed because preflight was intercepted by a syntax-check branch.'
-            echo 'V91 uses check for syntax verification and preflight for runner generation.'
-            echo 'Male knight SPR 61 is verified in original L1J C++ source.'
-            echo 'Original Sprite.pak extraction passed in V89; complete native runtime not yet verified.'
-            echo 'Original SDL sprite pixels and player movement remain mandatory for publication.'
+            echo 'V91 failed because the nested bootstrap overwrote the outer stage dispatcher.'
+            echo 'V92 preserves the outer V90 dispatcher for the real Python runner preflight.'
+            echo 'Original Sanctuary Sprite.pak male knight resource extraction succeeded in V89.'
+            echo 'Original SDL sprite pixels and keyboard movement remain required for deployment.'
+            echo 'Unverified: full native compilation, authentic original character animation and collision.'
           } >> "$GITHUB_STEP_SUMMARY"
