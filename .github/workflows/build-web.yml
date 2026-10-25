@@ -1,11 +1,11 @@
 # FILE: .github/workflows/build-web.yml
-# VERSION: V90
-# V89: Sprite.pak extraction passed, but the second native.py call reran
-# the offline character entry patch after it had already changed sdl_user.cpp.
-# Preserve the generated actor patch under a different filename before build.
-# Reuse tested V89 stages without modifying map extraction or ZIP streaming.
-name: "build-web.yml | V90 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V90 | Sanctuary game2 GitHub Pages"
+# VERSION: V91
+# V90 failed before extraction: 'preflight' was both the syntax-check command
+# and the real runner-generation stage. The latter never ran.
+# Pin V90 stages and use 'check' for validation, 'preflight' for execution.
+# Preserve original SPR, map, actor separation, and browser verification gates.
+name: "build-web.yml | V91 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V91 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
@@ -18,28 +18,28 @@ permissions:
   contents: write
 
 concurrency:
-  group: game2-v90-native-player
+  group: game2-v91-native-player
   cancel-in-progress: false
 
 jobs:
-  original_client_v90:
-    name: "build-web.yml | V90 | Restore original client and clean game display"
+  original_client_v91:
+    name: "build-web.yml | V91 | Restore original client and clean game display"
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
-      - name: "V90 | Checkout complete game2 history"
+      - name: "V91 | Checkout full game2 history"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: "V90 | Preserve previous GitHub Pages deployment"
+      - name: "V91 | Preserve previous GitHub Pages deployment"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
 
-      - name: "V90 | Checkout pinned L1J C++ adapter"
+      - name: "V91 | Checkout pinned L1J C++ adapter"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -47,224 +47,196 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V90 | Set up Emscripten"
+      - name: "V91 | Set up Emscripten"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V90 | Recover verified V89 stage scripts"
+      - name: "V91 | Recover exact V90 pipeline and correct command conflict"
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install --quiet 'PyYAML==6.0.2' 'Pillow==11.3.0'
-          mkdir -p reports
-          cat > /tmp/v90-stages.py <<'PY'
+          mkdir -p reports /tmp/v91
+          cat > /tmp/v91-loader.py <<'PY'
           import ast
+          import re
           import subprocess
-          import sys
-          import yaml
           from pathlib import Path
+          import yaml
 
-          BASE='fe2cb3e0dd2b139fef63a897270ee84f97bbe198'
+          PIN='9e78c0bc899fb3c30d24634294e1324a8b1e565c'
           raw=subprocess.check_output(
-              ['git','show',BASE+':.github/workflows/build-web.yml'],
+              ['git','show',PIN+':.github/workflows/build-web.yml'],
               text=True
           )
-          workflow=yaml.safe_load(raw)
-          assert workflow['name']=='build-web.yml | V89 | Sanctuary game2 GitHub Pages'
-          scripts={s['name']:s['run'] for s in
-              workflow['jobs']['original_client_v89']['steps'] if 'run' in s}
-          names={
-              'prepare':'V89 | Restore complete V87 working stage chain',
-              'bootstrap':'V89 | Execute V85 bootstrap to create real stage runner',
-              'restore':'V89 | Restore V83 map and native build scripts',
-              'sprites':'V89 | Prepare original male-knight sprite bank',
-              'slice':'V89 | Preserve ZIP central records and indexed Sprite.pak slicing',
-              'wire':'V89 | Wire original C++ actor and keyboard movement',
-              'preflight':'V89 | Fix native hook and precompile final runner before ZIP downloads',
-              'build':'V89 | Extract original map and SPR then compile native client',
-              'smoke':'V89 | Require original sprite pixels and actual player movement',
-              'publish':'V89 | Publish only after real sprite and movement tests pass'
+          previous=yaml.safe_load(raw)
+          assert previous['name']=='build-web.yml | V90 | Sanctuary game2 GitHub Pages'
+          original={s['name']:s['run'] for s in
+              previous['jobs']['original_client_v90']['steps'] if 'run' in s}
+          stages={
+              'prepare':'V90 | Recover verified V89 stage scripts',
+              'bootstrap':'V90 | Generate original stage executor',
+              'restore':'V90 | Restore source map and SDL pipeline',
+              'sprites':'V90 | Prepare genuine male knight SPR extraction',
+              'wire':'V90 | Create native actor implementation',
+              'separate':'V90 | Separate offline initialization from actor injection',
+              'runner':'V90 | Precompile actual generated native runner before resource download',
+              'build':'V90 | Extract real SPR and map and compile native client',
+              'smoke':'V90 | Verify real SPR pixels and directional movement',
+              'preserve':'V90 | Save generated sources and failure logs',
+              'publish':'V90 | Publish only after authentic player tests pass',
+              'report':'V90 | Record verified scope',
           }
-          assert all(name in scripts for name in names.values())
-
-          def stage_script(stage):
-              assert stage in names,stage
-              script=scripts[names[stage]].replace('V89','V90').replace('v89','v90')
-              if stage=='preflight':
-                  # V89's validation follows the same hook we renamed below.
-                  old='actor_call="subprocess.run([\'python3\',\'/tmp/v90-native.py\'],check=True)"'
-                  new='actor_call="subprocess.run([\'python3\',\'/tmp/v90-actor.py\'],check=True)"'
-                  assert script.count(old)==1, 'V90 preflight actor hook missing'
-                  script=script.replace(old,new,1)
-              return script
-
-          if len(sys.argv)!=2:
-              raise SystemExit('Usage: v90-stages.py preflight|stage')
-          phase=sys.argv[1]
-          if phase=='preflight':
-              for key in names:
-                  script=stage_script(key)
-                  subprocess.run(['bash','-n'],input=script,text=True,check=True)
-                  print('V90 stage verified:',key,flush=True)
-          else:
-              print('V90 executing:',phase,flush=True)
-              subprocess.run(
-                  ['bash','-e','-o','pipefail','-c',stage_script(phase)],
-                  check=True
-              )
-              print('V90 completed:',phase,flush=True)
+          assert len(stages)==len(set(stages.values()))
+          assert all(name in original for name in stages.values())
+          root=Path('/tmp/v91')
+          for stage,title in stages.items():
+              source=original[title].replace('V90','V91').replace('v90','v91')
+              if stage=='prepare':
+                  # The actual V90 defect: this branch intercepted the
+                  # required 'preflight' stage and only repeated bash -n.
+                  old="if phase=='preflight':"
+                  assert source.count(old)==1,('V90 dispatcher',source.count(old))
+                  source=source.replace(old,"if phase=='check':",1)
+                  old='python3 -u /tmp/v91-stages.py preflight'
+                  assert source.count(old)==1,('Initial check command',source.count(old))
+                  source=source.replace(old,'python3 -u /tmp/v91-stages.py check',1)
+                  assert "if stage=='preflight':" in source
+              matches=list(re.finditer(
+                  r"(?ms)^(?:cat >|cat >>) (/tmp/[\w-]+\.py) <<'PY'\n(.*?)\nPY$",
+                  source
+              ))
+              for match in matches:
+                  ast.parse(match.group(2),filename=match.group(1))
+              path=root/(stage+'.sh')
+              path.write_text(source,encoding='utf-8')
+              subprocess.run(['bash','-n',str(path)],check=True)
+              print('V91 verified:',stage,'Python:',len(matches),flush=True)
+          print('V91: check and preflight are now separate commands.',flush=True)
           PY
-          python3 -m py_compile /tmp/v90-stages.py
-          python3 -u /tmp/v90-stages.py preflight \
-            2>&1 | tee reports/V90-preflight.log
+          python3 -m py_compile /tmp/v91-loader.py
+          python3 -u /tmp/v91-loader.py \
+            2>&1 | tee reports/V91-loader.log
+          test -s /tmp/v91/runner.sh
+          test -s /tmp/v91/prepare.sh
 
-      - name: "V90 | Generate original stage executor"
+      - name: "V91 | Generate real V85 stage executor"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v90-stages.py prepare \
-            2>&1 | tee reports/V90-prepare.log
-          python3 -u /tmp/v90-stages.py bootstrap \
-            2>&1 | tee reports/V90-bootstrap.log
-          test -s /tmp/v90-execute.py
-          python3 -m py_compile /tmp/v90-execute.py
+          bash /tmp/v91/prepare.sh 2>&1 | tee reports/V91-prepare.log
+          test -s /tmp/v91-stages.py
+          grep -Fq "if phase=='check':" /tmp/v91-stages.py
+          bash /tmp/v91/bootstrap.sh 2>&1 | tee reports/V91-bootstrap.log
+          test -s /tmp/v91-execute.py
+          python3 -m py_compile /tmp/v91-execute.py
 
-      - name: "V90 | Restore source map and SDL pipeline"
+      - name: "V91 | Restore original map and SDL compiler scripts"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v90-stages.py restore \
-            2>&1 | tee reports/V90-restore.log
-          test -s /tmp/v90-extract.sh
-          test -s /tmp/v90-build.sh
+          bash /tmp/v91/restore.sh 2>&1 | tee reports/V91-restore.log
+          test -s /tmp/v91-extract.sh
+          test -s /tmp/v91-build.sh
 
-      - name: "V90 | Prepare genuine male knight SPR extraction"
+      - name: "V91 | Prepare original male knight sprite extraction"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v90-stages.py sprites \
-            2>&1 | tee reports/V90-sprites.log
-          python3 -u /tmp/v90-stages.py slice \
-            2>&1 | tee reports/V90-sprite-index.log
+          bash /tmp/v91/sprites.sh 2>&1 | tee reports/V91-sprites.log
+          test -s /tmp/v91-extract.sh
 
-      - name: "V90 | Create native actor implementation"
+      - name: "V91 | Generate native actor and directional movement code"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v90-stages.py wire \
-            2>&1 | tee reports/V90-wiring.log
+          bash /tmp/v91/wire.sh 2>&1 | tee reports/V91-wiring.log
+          test -s /tmp/v91-native.py
 
-      - name: "V90 | Separate offline initialization from actor injection"
+      - name: "V91 | Keep offline entry and actor patch separate"
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/v90-separate.py <<'PY'
-          import ast
-          import subprocess
-          from pathlib import Path
+          bash /tmp/v91/separate.sh 2>&1 | tee reports/V91-separation.log
+          test -s /tmp/v91-actor.py
+          test ! -e /tmp/v91-native.py
+          grep -Fq "/tmp/v91-actor.py" /tmp/v91-build.sh
 
-          original=Path('/tmp/v90-native.py')
-          actor=Path('/tmp/v90-actor.py')
-          build=Path('/tmp/v90-build.sh')
-          assert original.is_file(),'V90 actor patch source was not generated'
-          assert not actor.exists(),'V90 actor patch destination already exists'
-          source=original.read_text()
-          assert "target='game->set_selected_char(local);'" in source
-          assert 'V90: native player spawned' in source
-          ast.parse(source,filename=str(original))
-          original.rename(actor)
-
-          code=build.read_text()
-          old="subprocess.run(['python3','/tmp/v90-native.py'],check=True)"
-          new="subprocess.run(['python3','/tmp/v90-actor.py'],check=True)"
-          assert code.count(old)==1,('V90 original actor hook count',code.count(old))
-          code=code.replace(old,new,1)
-          assert code.count(new)==1
-          build.write_text(code)
-          subprocess.run(['bash','-n',str(build)],check=True)
-          subprocess.run(['python3','-m','py_compile',str(actor)],check=True)
-          assert not original.exists()
-          print('V90: /tmp/v90-native.py is now reserved for V67 offline entry.')
-          print('V90: /tmp/v90-actor.py holds the separate native SPR actor patch.')
-          print('V90: build hook points to the actor patch exactly once.')
-          PY
-          python3 -u /tmp/v90-separate.py \
-            2>&1 | tee reports/V90-script-separation.log
-
-      - name: "V90 | Precompile actual generated native runner before resource download"
+      - name: "V91 | Execute real runner-generation preflight"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v90-stages.py preflight \
-            2>&1 | tee reports/V90-runner-preflight.log
-          test -s /tmp/v90-run.py
-          test -s /tmp/v90-actor.py
-          python3 -m py_compile /tmp/v90-run.py /tmp/v90-actor.py
-          grep -Fq "/tmp/v90-actor.py" /tmp/v90-build.sh
-          echo 'V90: distinct offline and actor scripts and final runner preflight passed.'
+          # 'preflight' now runs the real generator, not just the syntax loop.
+          bash /tmp/v91/runner.sh 2>&1 | tee reports/V91-runner-preflight.log
+          test -s /tmp/v91-run.py
+          test -s /tmp/v91-actor.py
+          python3 -m py_compile /tmp/v91-run.py /tmp/v91-actor.py
+          grep -Fq "final generated Python syntax passed" reports/V91-runner-preflight.log
+          echo 'V91: actual final runner compiled before ZIP extraction.'
 
-      - name: "V90 | Extract real SPR and map and compile native client"
+      - name: "V91 | Extract original map and SPR and compile native client"
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 -u /tmp/v90-stages.py build \
-            2>&1 | tee reports/V90-build-and-browser.log
+          bash /tmp/v91/build.sh 2>&1 | tee reports/V91-build-and-browser.log
 
-      - name: "V90 | Verify real SPR pixels and directional movement"
+      - name: "V91 | Verify real sprite pixels and keyboard movement"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v90-stages.py smoke \
-            2>&1 | tee reports/V90-native-player-test.log
+          bash /tmp/v91/smoke.sh 2>&1 | tee reports/V91-native-player-test.log
 
-      - name: "V90 | Save generated sources and failure logs"
+      - name: "V91 | Save complete generated sources on failure"
         if: always()
         shell: bash
         run: |
+          set -euo pipefail
+          if test -s /tmp/v91/preserve.sh; then
+            bash /tmp/v91/preserve.sh
+          fi
           mkdir -p reports
-          for file in /tmp/v90-actor.py /tmp/v90-native.py \
-                      /tmp/v90-driver.py /tmp/v90-run.py \
-                      /tmp/v90-build.sh /tmp/v90-extract.py \
-                      /tmp/v90-execute.py; do
-            if test -f "$file"; then
-              cp "$file" "reports/V90-generated-$(basename "$file")"
+          for file in /tmp/v91-stages.py /tmp/v91-loader.py; do
+            if test -s "$file"; then
+              cp "$file" "reports/V91-generated-$(basename "$file")"
             fi
           done
 
-      - name: "V90 | Upload debug logs and generated scripts"
+      - name: "V91 | Upload build logs and diagnostics"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V90-Native-Player
+          name: Sanctuary-game2-V91-Native-Player
           path: |
-            reports/V90-*.log
-            reports/V90-*.json
-            reports/V90-*.png
-            reports/V90-*.txt
-            reports/V90-generated-*
-            assets/v90/v90-player-sprites.json
+            reports/V91-*.log
+            reports/V91-*.json
+            reports/V91-*.png
+            reports/V91-*.txt
+            reports/V91-generated-*
+            assets/v91/v91-player-sprites.json
           retention-days: 30
           if-no-files-found: warn
 
-      - name: "V90 | Publish only after authentic player tests pass"
+      - name: "V91 | Publish only verified native character and movement"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v90-stages.py publish \
-            2>&1 | tee reports/V90-deploy.log
+          bash /tmp/v91/publish.sh 2>&1 | tee reports/V91-deploy.log
 
-      - name: "V90 | Record verified scope"
+      - name: "V91 | State exact verified scope"
         if: always()
         shell: bash
         run: |
+          set -euo pipefail
+          if test -s /tmp/v91/report.sh; then
+            bash /tmp/v91/report.sh
+          fi
           {
-            echo '# build-web.yml | V90 | Sanctuary game2 GitHub Pages'
-            echo 'V89 restored real Sprite.pak contents and four male-knight SPR files.'
-            echo 'V89 then re-ran its already-applied offline patch due to filename collision.'
-            echo 'V90 keeps v90-native.py for V67 offline entry and v90-actor.py for sprite injection.'
-            echo 'Complete C++ compilation, actual pixel visibility and movement are mandatory.'
-            echo 'Existing L1J adapter using Sanctuary resources; not the Sanctuary executable.'
+            echo 'V90 failed because preflight was intercepted by a syntax-check branch.'
+            echo 'V91 uses check for syntax verification and preflight for runner generation.'
+            echo 'Male knight SPR 61 is verified in original L1J C++ source.'
+            echo 'Original Sprite.pak extraction passed in V89; complete native runtime not yet verified.'
+            echo 'Original SDL sprite pixels and player movement remain mandatory for publication.'
           } >> "$GITHUB_STEP_SUMMARY"
