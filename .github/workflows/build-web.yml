@@ -1,10 +1,10 @@
 # FILE: .github/workflows/build-web.yml
-# VERSION: V95
-# V94 failed at bootstrap because the V93 stage loader was run twice.
-# Restore the exact V93 pipeline that extracted the original SPR and compiled C++.
-# Fix its sole observed C++ compiler error: shadowed sprite_data access.
-name: "build-web.yml | V95 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V95 | Sanctuary game2 GitHub Pages"
+# VERSION: V96
+# V95 built the native WebAssembly client; SDL bridge aborted on two valid
+# tile-compositor anchors where its assertion expected exactly one.
+# Retain the V95 working extraction and native compiler paths.
+name: "build-web.yml | V96 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V96 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
@@ -17,28 +17,28 @@ permissions:
   contents: write
 
 concurrency:
-  group: game2-v95-native-player
+  group: game2-v96-native-player
   cancel-in-progress: false
 
 jobs:
-  original_client_v95:
-    name: "build-web.yml | V95 | Restore original client and clean game display"
+  original_client_v96:
+    name: "build-web.yml | V96 | Restore original client and clean game display"
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
-      - name: "V95 | Checkout full game2 history"
+      - name: "V96 | Checkout full game2 history"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: "V95 | Preserve previous GitHub Pages deployment"
+      - name: "V96 | Preserve previous GitHub Pages deployment"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
 
-      - name: "V95 | Checkout pinned L1J C++ adapter"
+      - name: "V96 | Checkout pinned L1J C++ adapter"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -46,18 +46,18 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V95 | Set up Emscripten"
+      - name: "V96 | Set up Emscripten"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V95 | Restore V90 stage definitions with separate runner dispatcher"
+      - name: "V96 | Restore V90 stage definitions with separate runner dispatcher"
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install --quiet 'PyYAML==6.0.2' 'Pillow==11.3.0'
-          mkdir -p reports /tmp/v95
-          cat > /tmp/v95-loader.py <<'PY'
+          mkdir -p reports /tmp/v96
+          cat > /tmp/v96-loader.py <<'PY'
           import ast
           import re
           import subprocess
@@ -88,24 +88,24 @@ jobs:
           }
           assert len(stages)==len(set(stages.values()))
           assert all(name in original for name in stages.values())
-          root=Path('/tmp/v95')
+          root=Path('/tmp/v96')
           for stage,title in stages.items():
-              source=original[title].replace('V90','V95').replace('v90','v95')
+              source=original[title].replace('V90','V96').replace('v90','v96')
               if stage=='prepare':
                   old="if phase=='preflight':"
                   assert source.count(old)==1,('V90 dispatcher',source.count(old))
                   source=source.replace(old,"if phase=='check':",1)
-                  old='python3 -u /tmp/v95-stages.py preflight'
+                  old='python3 -u /tmp/v96-stages.py preflight'
                   assert source.count(old)==1,('Initial check command',source.count(old))
-                  source=source.replace(old,'python3 -u /tmp/v95-stages.py check',1)
+                  source=source.replace(old,'python3 -u /tmp/v96-stages.py check',1)
                   assert "if stage=='preflight':" in source
               if stage=='runner':
-                  # /tmp/v95-stages.py is overwritten by the nested V89 bootstrap.
+                  # /tmp/v96-stages.py is overwritten by the nested V89 bootstrap.
                   # The saved outer dispatcher alone knows V89's real 'preflight'.
-                  old='python3 -u /tmp/v95-stages.py preflight'
+                  old='python3 -u /tmp/v96-stages.py preflight'
                   assert source.count(old)==1,('Real runner command',source.count(old))
                   source=source.replace(
-                      old,'python3 -u /tmp/v95-outer-stages.py preflight',1
+                      old,'python3 -u /tmp/v96-outer-stages.py preflight',1
                   )
               matches=list(re.finditer(
                   r"(?ms)^(?:cat >|cat >>) (/tmp/[\w-]+\.py) <<'PY'\n(.*?)\nPY$",
@@ -116,56 +116,56 @@ jobs:
               path=root/(stage+'.sh')
               path.write_text(source,encoding='utf-8')
               subprocess.run(['bash','-n',str(path)],check=True)
-              print('V95 verified:',stage,'Python:',len(matches),flush=True)
-          print('V95: saved outer executor will perform real preflight.',flush=True)
+              print('V96 verified:',stage,'Python:',len(matches),flush=True)
+          print('V96: saved outer executor will perform real preflight.',flush=True)
           PY
-          python3 -m py_compile /tmp/v95-loader.py
-          python3 -u /tmp/v95-loader.py 2>&1 | tee reports/V95-loader.log
-          test -s /tmp/v95/runner.sh
-          test -s /tmp/v95/prepare.sh
-          grep -Fq '/tmp/v95-outer-stages.py preflight' /tmp/v95/runner.sh
+          python3 -m py_compile /tmp/v96-loader.py
+          python3 -u /tmp/v96-loader.py 2>&1 | tee reports/V96-loader.log
+          test -s /tmp/v96/runner.sh
+          test -s /tmp/v96/prepare.sh
+          grep -Fq '/tmp/v96-outer-stages.py preflight' /tmp/v96/runner.sh
 
-      - name: "V95 | Preserve outer dispatcher before nested bootstrap overwrites it"
+      - name: "V96 | Preserve outer dispatcher before nested bootstrap overwrites it"
         shell: bash
         run: |
           set -euo pipefail
-          bash /tmp/v95/prepare.sh 2>&1 | tee reports/V95-prepare.log
-          test -s /tmp/v95-stages.py
-          grep -Fq "if phase=='check':" /tmp/v95-stages.py
-          grep -Fq "'preflight':'V89 | Fix native hook" /tmp/v95-stages.py
-          cp /tmp/v95-stages.py /tmp/v95-outer-stages.py
-          python3 -m py_compile /tmp/v95-outer-stages.py
-          bash /tmp/v95/bootstrap.sh 2>&1 | tee reports/V95-bootstrap.log
-          test -s /tmp/v95-execute.py
-          test -s /tmp/v95-outer-stages.py
-          python3 -m py_compile /tmp/v95-execute.py
+          bash /tmp/v96/prepare.sh 2>&1 | tee reports/V96-prepare.log
+          test -s /tmp/v96-stages.py
+          grep -Fq "if phase=='check':" /tmp/v96-stages.py
+          grep -Fq "'preflight':'V89 | Fix native hook" /tmp/v96-stages.py
+          cp /tmp/v96-stages.py /tmp/v96-outer-stages.py
+          python3 -m py_compile /tmp/v96-outer-stages.py
+          bash /tmp/v96/bootstrap.sh 2>&1 | tee reports/V96-bootstrap.log
+          test -s /tmp/v96-execute.py
+          test -s /tmp/v96-outer-stages.py
+          python3 -m py_compile /tmp/v96-execute.py
 
-      - name: "V95 | Restore original map and SDL build scripts"
+      - name: "V96 | Restore original map and SDL build scripts"
         shell: bash
         run: |
           set -euo pipefail
-          bash /tmp/v95/restore.sh 2>&1 | tee reports/V95-restore.log
-          test -s /tmp/v95-extract.sh
-          test -s /tmp/v95-build.sh
+          bash /tmp/v96/restore.sh 2>&1 | tee reports/V96-restore.log
+          test -s /tmp/v96-extract.sh
+          test -s /tmp/v96-build.sh
 
-      - name: "V95 | Prepare original male knight SPR resources"
+      - name: "V96 | Prepare original male knight SPR resources"
         shell: bash
         run: |
           set -euo pipefail
-          bash /tmp/v95/sprites.sh 2>&1 | tee reports/V95-sprites.log
-          test -s /tmp/v95-extract.sh
+          bash /tmp/v96/sprites.sh 2>&1 | tee reports/V96-sprites.log
+          test -s /tmp/v96-extract.sh
 
-      - name: "V95 | Repair original ZIP central records before SPR lookup"
+      - name: "V96 | Repair original ZIP central records before SPR lookup"
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/v95-zip-repair.py <<'PY'
+          cat > /tmp/v96-zip-repair.py <<'PY'
           import ast
           import re
           import subprocess
           from pathlib import Path
 
-          path=Path('/tmp/v95-extract.sh')
+          path=Path('/tmp/v96-extract.sh')
           assert path.is_file(), 'Original archive extractor was not generated'
           source=path.read_text(encoding='utf-8')
 
@@ -188,11 +188,11 @@ jobs:
           assert source.count("bank='Sprite'")==1
           assert source.count('sources=extract_selected(source_bank,needed)')==1
           m=re.search(
-              r"(?ms)^cat > /tmp/v95-extract\.py <<'PY'\n(.*?)\nPY$",
+              r"(?ms)^cat > /tmp/v96-extract\.py <<'PY'\n(.*?)\nPY$",
               source
           )
           assert m,'Generated ZIP extractor source not found'
-          ast.parse(m.group(1),filename='/tmp/v95-extract.py')
+          ast.parse(m.group(1),filename='/tmp/v96-extract.py')
           path.write_text(source,encoding='utf-8')
           subprocess.run(['bash','-n',str(path)],check=True)
 
@@ -202,44 +202,44 @@ jobs:
           records=[b'packed tile index bytes']
           assert isinstance(records[0],bytes)
           assert next(r for r in zip_records if r['name'].endswith('Sprite.pak'))
-          print('V95: ZIP directory dictionaries are independent of tile index bytes.',flush=True)
-          print('V95: genuine original Sprite.pak lookup repaired before download.',flush=True)
+          print('V96: ZIP directory dictionaries are independent of tile index bytes.',flush=True)
+          print('V96: genuine original Sprite.pak lookup repaired before download.',flush=True)
           PY
-          python3 -m py_compile /tmp/v95-zip-repair.py
-          python3 -u /tmp/v95-zip-repair.py \
-            2>&1 | tee reports/V95-zip-repair.log
-          test -s /tmp/v95-extract.sh
+          python3 -m py_compile /tmp/v96-zip-repair.py
+          python3 -u /tmp/v96-zip-repair.py \
+            2>&1 | tee reports/V96-zip-repair.log
+          test -s /tmp/v96-extract.sh
 
-      - name: "V95 | Wire original C++ actor and keyboard movement"
+      - name: "V96 | Wire original C++ actor and keyboard movement"
         shell: bash
         run: |
           set -euo pipefail
-          bash /tmp/v95/wire.sh 2>&1 | tee reports/V95-wiring.log
-          test -s /tmp/v95-native.py
+          bash /tmp/v96/wire.sh 2>&1 | tee reports/V96-wiring.log
+          test -s /tmp/v96-native.py
 
-      - name: "V95 | Separate offline entry from native actor patch"
+      - name: "V96 | Separate offline entry from native actor patch"
         shell: bash
         run: |
           set -euo pipefail
-          bash /tmp/v95/separate.sh 2>&1 | tee reports/V95-separation.log
-          test -s /tmp/v95-actor.py
-          test ! -e /tmp/v95-native.py
-          grep -Fq '/tmp/v95-actor.py' /tmp/v95-build.sh
+          bash /tmp/v96/separate.sh 2>&1 | tee reports/V96-separation.log
+          test -s /tmp/v96-actor.py
+          test ! -e /tmp/v96-native.py
+          grep -Fq '/tmp/v96-actor.py' /tmp/v96-build.sh
 
-      - name: "V95 | Fix original C++ sprite_data shadowing before native build"
+      - name: "V96 | Fix original C++ sprite_data shadowing before native build"
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/v95-fix-actor.py <<'PY'
+          cat > /tmp/v96-fix-actor.py <<'PY'
           import ast
           import subprocess
           from pathlib import Path
 
-          actor=Path('/tmp/v95-actor.py')
-          assert actor.is_file(),'V95 actor injection script not generated'
+          actor=Path('/tmp/v96-actor.py')
+          assert actor.is_file(),'V96 actor injection script not generated'
           code=actor.read_text(encoding='utf-8')
-          before='sprite_data.override(v95actor,v95def);'
-          after='this->sprite_data.override(v95actor,v95def);'
+          before='sprite_data.override(v96actor,v96def);'
+          after='this->sprite_data.override(v96actor,v96def);'
           assert code.count(before)==1,('V93 C++ compiler failure site',code.count(before))
           code=code.replace(before,after,1)
           assert code.count(after)==1
@@ -251,90 +251,126 @@ jobs:
           cpp=Path('upstream-l1j/src/sdl_user.cpp').read_text(encoding='utf-8')
           assert 'server_resource<sprite_definition> sprite_data;' in header
           assert 'unsigned char *sprite_data;' in cpp
-          assert 'this->sprite_data.override(v95actor,v95def);' in code
-          print('V95: original C++ sprite resource is now accessed via this->.',flush=True)
+          assert 'this->sprite_data.override(v96actor,v96def);' in code
+          print('V96: original C++ sprite resource is now accessed via this->.',flush=True)
           PY
-          python3 -m py_compile /tmp/v95-fix-actor.py
-          python3 -u /tmp/v95-fix-actor.py 2>&1 | tee reports/V95-fix-actor.log
-          grep -Fq 'this->sprite_data.override(v95actor,v95def);' /tmp/v95-actor.py
+          python3 -m py_compile /tmp/v96-fix-actor.py
+          python3 -u /tmp/v96-fix-actor.py 2>&1 | tee reports/V96-fix-actor.log
+          grep -Fq 'this->sprite_data.override(v96actor,v96def);' /tmp/v96-actor.py
 
-      - name: "V95 | Run actual final Python generator before archive downloads"
+      - name: "V96 | Accept two SDL tile compositor anchors in the generated bridge"
         shell: bash
         run: |
           set -euo pipefail
-          test -s /tmp/v95-outer-stages.py
-          bash /tmp/v95/runner.sh 2>&1 | tee reports/V95-runner-preflight.log
-          test -s /tmp/v95-run.py
-          test -s /tmp/v95-actor.py
-          python3 -m py_compile /tmp/v95-run.py /tmp/v95-actor.py
-          grep -Fq 'final generated Python syntax passed' reports/V95-runner-preflight.log
-          echo 'V95: real generated runner syntax verified.'
+          cat > /tmp/v96-fix-compositor.py <<'PY'
+          import ast
+          import subprocess
+          from pathlib import Path
 
-      - name: "V95 | Extract authentic map and SPR then build native client"
+          bridge=Path('/tmp/v96-sdl-bridge.py')
+          assert bridge.is_file(), 'Original SDL bridge must exist after actor wiring'
+          code=bridge.read_text(encoding='utf-8')
+
+          # V95's actual JS contained TWO copies of the original 24x24
+          # compositor anchor. The renderer already uses replace(...,1),
+          # so it injects only a single composed-buffer presentation hook.
+          check="assert part.count(needle)==1,("
+          fixed="assert part.count(needle) in (1,2),("
+          assert code.count(check)==1, ('SDL compositor assertion',code.count(check))
+          assert code.count("'Original tile compositor missing'")==1
+          assert code.count("part=part.replace(needle,native+needle,1)")==1
+          assert code.count("needle='if (srcData.width===24 && srcData.height===24 &&'")==1
+          code=code.replace(check,fixed,1)
+          ast.parse(code,filename=str(bridge))
+          bridge.write_text(code,encoding='utf-8')
+          subprocess.run(['python3','-m','py_compile',str(bridge)],check=True)
+          print('V96: SDL original tile anchor count allows the verified 2 occurrences.',flush=True)
+          print('V96: only the first anchor receives the composed buffer hook.',flush=True)
+          PY
+          python3 -m py_compile /tmp/v96-fix-compositor.py
+          python3 -u /tmp/v96-fix-compositor.py \
+            2>&1 | tee reports/V96-compositor-fix.log
+          test -s /tmp/v96-sdl-bridge.py
+
+      - name: "V96 | Run actual final Python generator before archive downloads"
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s /tmp/v96-outer-stages.py
+          bash /tmp/v96/runner.sh 2>&1 | tee reports/V96-runner-preflight.log
+          test -s /tmp/v96-run.py
+          test -s /tmp/v96-actor.py
+          python3 -m py_compile /tmp/v96-run.py /tmp/v96-actor.py
+          grep -Fq 'final generated Python syntax passed' reports/V96-runner-preflight.log
+          echo 'V96: real generated runner syntax verified.'
+
+      - name: "V96 | Extract authentic map and SPR then build native client"
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          bash /tmp/v95/build.sh 2>&1 | tee reports/V95-build-and-browser.log
+          bash /tmp/v96/build.sh 2>&1 | tee reports/V96-build-and-browser.log
 
-      - name: "V95 | Require actual SPR pixels and player movement"
+      - name: "V96 | Require actual SPR pixels and player movement"
         shell: bash
         run: |
           set -euo pipefail
-          bash /tmp/v95/smoke.sh 2>&1 | tee reports/V95-native-player-test.log
+          bash /tmp/v96/smoke.sh 2>&1 | tee reports/V96-native-player-test.log
 
-      - name: "V95 | Save all generated build scripts"
+      - name: "V96 | Save all generated build scripts"
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          if test -s /tmp/v95/preserve.sh; then
-            bash /tmp/v95/preserve.sh
+          if test -s /tmp/v96/preserve.sh; then
+            bash /tmp/v96/preserve.sh
           fi
           mkdir -p reports
-          for file in /tmp/v95-stages.py /tmp/v95-outer-stages.py \
-                      /tmp/v95-loader.py /tmp/v95-zip-repair.py \
-                      /tmp/v95-extract.sh /tmp/v95-extract.py \
-                      /tmp/v95-actor.py /tmp/v95-fix-actor.py; do
+          for file in /tmp/v96-stages.py /tmp/v96-outer-stages.py \
+                      /tmp/v96-loader.py /tmp/v96-zip-repair.py \
+                      /tmp/v96-extract.sh /tmp/v96-extract.py \
+                      /tmp/v96-actor.py /tmp/v96-fix-actor.py \
+                      /tmp/v96-sdl-bridge.py /tmp/v96-fix-compositor.py \
+                      /tmp/v96-run.py /tmp/v96-build.sh; do
             if test -s "$file"; then
-              cp "$file" "reports/V95-generated-$(basename "$file")"
+              cp "$file" "reports/V96-generated-$(basename "$file")"
             fi
           done
 
-      - name: "V95 | Upload diagnostics regardless of outcome"
+      - name: "V96 | Upload diagnostics regardless of outcome"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V95-Native-Player
+          name: Sanctuary-game2-V96-Native-Player
           path: |
-            reports/V95-*.log
-            reports/V95-*.json
-            reports/V95-*.png
-            reports/V95-*.txt
-            reports/V95-generated-*
-            assets/v95/v95-player-sprites.json
+            reports/V96-*.log
+            reports/V96-*.json
+            reports/V96-*.png
+            reports/V96-*.txt
+            reports/V96-generated-*
+            assets/v96/v96-player-sprites.json
           retention-days: 30
           if-no-files-found: warn
 
-      - name: "V95 | Publish only verified original sprite and movement"
+      - name: "V96 | Publish only verified original sprite and movement"
         shell: bash
         run: |
           set -euo pipefail
-          bash /tmp/v95/publish.sh 2>&1 | tee reports/V95-deploy.log
+          bash /tmp/v96/publish.sh 2>&1 | tee reports/V96-deploy.log
 
-      - name: "V95 | Report actual validation scope"
+      - name: "V96 | Report actual validation scope"
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          if test -s /tmp/v95/report.sh; then
-            bash /tmp/v95/report.sh
+          if test -s /tmp/v96/report.sh; then
+            bash /tmp/v96/report.sh
           fi
           {
             echo 'V93 generated the final runner and extracted original Tile.pak and SPR resources.'
-            echo 'V93 C++ compile stopped because a local sprite_data byte pointer hid its class member.'
-            echo 'V95 preserves V93 archive extraction and qualifies this->sprite_data in the actor patch.'
+            echo 'V95 compiled and linked native WebAssembly; SDL bridge duplicate-anchor assertion failed.'
+            echo 'V96 preserves V95 native compile path and handles two original SDL tile anchors.'
             echo 'Original SDL sprite pixels and keyboard movement remain required for deployment.'
-            echo 'Unverified: full native compilation, authentic original character animation and collision.'
+            echo 'Unverified: real browser rendering, authentic character animation and collision.'
           } >> "$GITHUB_STEP_SUMMARY"
