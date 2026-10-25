@@ -1,45 +1,45 @@
 # FILE: .github/workflows/build-web.yml
-# VERSION: V88
-# V87 run 40156525035: actual original SPR extraction succeeded.
-# The generated /tmp/v87-run.py failed because V84 native hook used
-# excessive indentation relative to the existing map source patch.
-# Correct hook indentation and precompile the final runner before archive extraction.
-name: "build-web.yml | V88 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V88 | Sanctuary game2 GitHub Pages"
+# VERSION: V89
+# V88 failed because the V87 bootstrap was not executed to create v88-execute.py.
+# Restore the V87 successful chain via V86 bootstrap -> V85 execute -> V83 native.
+# Keep V87's proven 1.89GB Sprite.pak streaming extraction and ZIP records fix.
+# Fix the V84 native hook indentation and precompile the generated runner
+# before downloading any archive volumes. Preserve last working Pages on failure.
+name: "build-web.yml | V89 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V89 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - .github/workflows/build-web.yml
+    paths: [.github/workflows/build-web.yml]
 
 permissions:
   contents: write
 
 concurrency:
-  group: game2-v88-native-player
+  group: game2-v89-native-player
   cancel-in-progress: false
 
 jobs:
-  original_client_v88:
-    name: "build-web.yml | V88 | Restore original client and clean game display"
+  original_client_v89:
+    name: "build-web.yml | V89 | Restore original client and clean game display"
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
-      - name: "V88 | Checkout complete game2 history"
+      - name: "V89 | Checkout complete game2 history"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: "V88 | Preserve last GitHub Pages deployment"
+      - name: "V89 | Preserve last GitHub Pages deployment"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
 
-      - name: "V88 | Checkout pinned L1J C++ client adapter"
+      - name: "V89 | Checkout pinned L1J C++ client adapter"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -47,189 +47,269 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V88 | Set up verified Emscripten compiler"
+      - name: "V89 | Set up Emscripten"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V88 | Load complete V87 pipeline and syntax-check stages"
+      - name: "V89 | Restore complete V87 working stage chain"
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install --quiet 'PyYAML==6.0.2' 'Pillow==11.3.0'
           mkdir -p reports
-          cat > /tmp/v88-stages.py <<'PY'
+          cat > /tmp/v89-stages.py <<'PY'
+          import ast
+          import re
           import subprocess
           import sys
           from pathlib import Path
           import yaml
 
-          PIN='88f7c1c372eb8876826e68c2eef3a4dd97817034'
+          V86='5b927fc55b87e70c8e22a18ebea62b6387525448'
           raw=subprocess.check_output(
-              ['git','show',PIN+':.github/workflows/build-web.yml'],
+              ['git','show',V86+':.github/workflows/build-web.yml'],
               text=True
           )
           prior=yaml.safe_load(raw)
-          assert prior['name']=='build-web.yml | V87 | Sanctuary game2 GitHub Pages'
-          steps=prior['jobs']['original_client_v87']['steps']
+          assert prior['name']=='build-web.yml | V86 | Sanctuary game2 GitHub Pages'
+          steps=prior['jobs']['original_client_v86']['steps']
           scripts={s['name']:s['run'] for s in steps if 'run' in s}
-          stages={
-              'bootstrap':'V87 | Load exact V86 pipeline and validate script structure',
-              'restore':'V87 | Restore V85 native build and browser stages',
-              'map':'V87 | Restore native map, SDL and chat cleanup',
-              'sprites':'V87 | Prepare indexed original male knight SPR',
-              'slice':'V87 | Repair V86 ZIP central records and SPR slicing',
-              'wire':'V87 | Connect original C++ player and keyboard movement',
-              'build':'V87 | Extract original map and SPR then compile native client',
-              'smoke':'V87 | Require original SPR pixels and real directional movement',
-              'publish':'V87 | Publish only when original character and movement pass'
+          names={
+              'bootstrap':'V86 | Restore exact V85 staged build and preflight',
+              'restore':'V86 | Restore proven V83 map and SDL source',
+              'sprites':'V86 | Prepare original SPR extraction',
+              'slice':'V86 | Fix correct Sprite.idx and streaming PAK extraction',
+              'wire':'V86 | Connect original C++ character and movement',
+              'build':'V86 | Extract original SPR and compile native game',
+              'smoke':'V86 | Verify real sprite visibility and movement',
+              'publish':'V86 | Deploy only original sprite pixels plus movement'
           }
-          assert all(name in scripts for name in stages.values())
+          assert all(n in scripts for n in names.values())
 
-          def source(which):
-              assert which in stages,which
-              return scripts[stages[which]].replace('V87','V88').replace('v87','v88')
+          def source(phase):
+              assert phase in names,phase
+              return scripts[names[phase]].replace('V86','V89').replace('v86','v89')
+
+          def repair_zip_records():
+              path=Path('/tmp/v89-extract.sh')
+              script=path.read_text()
+              marker='assert len(records)==nitems,(len(records),nitems)'
+              assert script.count(marker)==1
+              script=script.replace(marker,marker+'\nzip_records=tuple(records)',1)
+              pattern=(
+                  r"r for r in records(?=\n[ \t]*if r\['name'\]"
+                  r"\.lower\(\)\.endswith\()"
+              )
+              assert len(re.findall(pattern,script))==1
+              script=re.sub(pattern,'r for r in zip_records',script,count=1)
+              assert script.index('zip_records=tuple(records)') < script.index('compact=bytearray()')
+              assert script.count('r for r in zip_records')==1
+              assert script.count("bank='Sprite'")==1
+              assert script.count('sources=extract_selected(source_bank,needed)')==1
+              m=re.search(
+                  r"(?ms)^cat > /tmp/v89-extract\.py <<'PY'\n(.*?)\nPY$",
+                  script
+              )
+              assert m,'Original ZIP extractor is missing'
+              ast.parse(m.group(1),filename='/tmp/v89-extract.py')
+              path.write_text(script)
+              subprocess.run(['bash','-n',str(path)],check=True)
+              print('V89: original ZIP dictionary records preserved.',flush=True)
 
           if len(sys.argv)!=2:
-              raise SystemExit('V88 stage required')
+              raise SystemExit('Usage: v89-stages.py preflight|repair|stage')
           phase=sys.argv[1]
           if phase=='preflight':
-              for key in stages:
-                  subprocess.run(['bash','-n'],input=source(key),text=True,check=True)
-                  print('V88 verified stage:',key,flush=True)
+              for name in names:
+                  subprocess.run(['bash','-n'],input=source(name),text=True,check=True)
+                  print('V89 stage syntax:',name,'OK',flush=True)
+          elif phase=='repair':
+              repair_zip_records()
           else:
-              print('V88 executing:',phase,flush=True)
+              print('V89 executing:',phase,flush=True)
               subprocess.run(
                   ['bash','-e','-o','pipefail','-c',source(phase)],
                   check=True
               )
-              print('V88 completed:',phase,flush=True)
+              print('V89 completed:',phase,flush=True)
           PY
-          python3 -m py_compile /tmp/v88-stages.py
-          python3 -u /tmp/v88-stages.py preflight \
-            2>&1 | tee reports/V88-preflight.log
+          python3 -m py_compile /tmp/v89-stages.py
+          python3 -u /tmp/v89-stages.py preflight \
+            2>&1 | tee reports/V89-stage-preflight.log
 
-      - name: "V88 | Restore verified V85 compiler and test scripts"
+      - name: "V89 | Execute V85 bootstrap to create real stage runner"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v88-stages.py bootstrap \
-            2>&1 | tee reports/V88-bootstrap.log
+          python3 -u /tmp/v89-stages.py bootstrap \
+            2>&1 | tee reports/V89-bootstrap.log
+          test -s /tmp/v89-execute.py
+          python3 -m py_compile /tmp/v89-execute.py
+          echo 'V89: actual V85 stage runner created and compiled.'
 
-      - name: "V88 | Restore C++ native map and SDL scripts"
+      - name: "V89 | Restore V83 map and native build scripts"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v88-stages.py restore \
-            2>&1 | tee reports/V88-restore.log
-          python3 -u /tmp/v88-stages.py map \
-            2>&1 | tee reports/V88-map-setup.log
+          python3 -u /tmp/v89-stages.py restore \
+            2>&1 | tee reports/V89-restore.log
+          test -s /tmp/v89-extract.sh
+          test -s /tmp/v89-build.sh
+          bash -n /tmp/v89-extract.sh /tmp/v89-build.sh
 
-      - name: "V88 | Prepare verified original knight SPRs"
+      - name: "V89 | Prepare original male-knight sprite bank"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v88-stages.py sprites \
-            2>&1 | tee reports/V88-sprites-preparation.log
-          python3 -u /tmp/v88-stages.py slice \
-            2>&1 | tee reports/V88-sprite-index.log
+          python3 -u /tmp/v89-stages.py sprites \
+            2>&1 | tee reports/V89-sprite-preparation.log
 
-      - name: "V88 | Wire original C++ character and movement"
+      - name: "V89 | Preserve ZIP central records and indexed Sprite.pak slicing"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v88-stages.py wire \
-            2>&1 | tee reports/V88-player-wiring.log
+          python3 -u /tmp/v89-stages.py slice \
+            2>&1 | tee reports/V89-slice-setup.log
+          python3 -u /tmp/v89-stages.py repair \
+            2>&1 | tee reports/V89-archive-repair.log
 
-      - name: "V88 | Fix generated native runner indentation and test before download"
+      - name: "V89 | Wire original C++ actor and keyboard movement"
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/v88-fix-runner.py <<'PY'
+          python3 -u /tmp/v89-stages.py wire \
+            2>&1 | tee reports/V89-player-wiring.log
+
+      - name: "V89 | Fix native hook and precompile final runner before ZIP downloads"
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/v89-preflight.py <<'PY'
+          import ast
+          import re
+          import subprocess
           from pathlib import Path
-          import re,subprocess
 
-          p=Path('/tmp/v88-build.sh')
-          lines=p.read_text(encoding='utf-8').splitlines()
-          mapping="subprocess.run(['python3','/tmp/v88-map-patch.py'],check=True)"
-          native="subprocess.run(['python3','/tmp/v88-native.py'],check=True)"
-          a=[i for i,s in enumerate(lines) if s.strip()==mapping]
-          b=[i for i,s in enumerate(lines) if s.strip()==native]
-          assert len(a)==1 and len(b)==1,('C++ hook anchors',a,b)
-          assert b[0]==a[0]+1,('Expected adjacent native hook',a,b)
-          original=re.match(r'^[ \t]*',lines[b[0]]).group()
-          correct=re.match(r'^[ \t]*',lines[a[0]]).group()
-          assert len(original)>len(correct),('Unexpected indentation',len(original),len(correct))
-          lines[b[0]]=correct+native
-          script='\n'.join(lines)+'\n'
+          # V87 failed because this nested insertion had 18 spaces where
+          # the existing map patch invocation uses 8 spaces.
+          path=Path('/tmp/v89-build.sh')
+          lines=path.read_text().splitlines()
+          map_call="subprocess.run(['python3','/tmp/v89-map-patch.py'],check=True)"
+          actor_call="subprocess.run(['python3','/tmp/v89-native.py'],check=True)"
+          m=[i for i,line in enumerate(lines) if line.strip()==map_call]
+          n=[i for i,line in enumerate(lines) if line.strip()==actor_call]
+          assert len(m)==1 and len(n)==1,('Native hook count',m,n)
+          assert n[0]==m[0]+1,('Native hook no longer follows map patch',m,n)
+          prefix=lines[m[0]][:len(lines[m[0]])-len(lines[m[0]].lstrip())]
+          old_indent=len(lines[n[0]])-len(lines[n[0]].lstrip())
+          lines[n[0]]=prefix+actor_call
+          path.write_text('\n'.join(lines)+'\n')
+          subprocess.run(['bash','-n',str(path)],check=True)
+          print('V89: native hook indentation',old_indent,'=>',len(prefix),flush=True)
 
-          runner="subprocess.run(['python3','-u',str(script)],check=True)"
-          assert script.count(runner)==1,('Driver launch anchor',script.count(runner))
-          before=(
-              "if __import__('os').environ.get('V88_RUNNER_PREFLIGHT')=='1':\n"
-              "    print('V88: final generated runner syntax verified',flush=True)\n"
-              "    raise SystemExit(0)\n"
+          # V83 already uses the desired flex-start CSS. V84 incorrectly
+          # asserts the obsolete flex-center CSS is still present.
+          executor=Path('/tmp/v89-execute.py')
+          code=executor.read_text()
+          match=re.search(r"(?m)^([ \t]*)if which=='smoke':\s*$",code)
+          assert match,'Cannot locate V85 builder prepare() branching'
+          indentation=match.group(1)
+          fix=(
+              indentation+"if which=='build':\n"
+              +indentation+"    css='assert html.count(old)==1'\n"
+              +indentation+"    assert script.count(css)==1\n"
+              +indentation+"    script=script.replace(css,\n"
+              +indentation+"        'assert html.count(old)==1 or html.count(new)==1',1)\n"
           )
-          script=script.replace(runner,before+runner,1)
-          p.write_text(script,encoding='utf-8')
-          subprocess.run(['bash','-n',str(p)],check=True)
-          print('V88 native hook indentation:',len(original),'to',len(correct),flush=True)
+          code=code[:match.start()]+fix+code[match.start():]
+          ast.parse(code,filename=str(executor))
+          executor.write_text(code)
+          subprocess.run(['python3','-m','py_compile',str(executor)],check=True)
+          print('V89: CSS assertion now supports already-correct V83 alignment.',flush=True)
+
+          # Build shell embeds the actual Python driver. Extract that source
+          # and run it ONLY up to generating and compiling the final run.py.
+          script=path.read_text()
+          match=re.search(
+              r"(?ms)^cat > /tmp/v89-driver\.py <<'PY'\n(.*?)\nPY$",
+              script
+          )
+          assert match,'Actual V89 builder driver not found'
+          driver=match.group(1)
+          ast.parse(driver,filename='/tmp/v89-driver.py')
+          invoke="subprocess.run(['python3','-u',str(script)],check=True)"
+          match_lines=[line for line in driver.splitlines() if line.strip()==invoke]
+          assert len(match_lines)==1,('Final runner invocation changed',match_lines)
+          original_line=match_lines[0]
+          prefix=original_line[:len(original_line)-len(original_line.lstrip())]
+          stop=(
+              prefix+"print('V89: final generated Python syntax passed',flush=True)\n"
+              +prefix+'raise SystemExit(0)'
+          )
+          driver=driver.replace(original_line,stop,1)
+          ast.parse(driver,filename='/tmp/v89-preflight-driver.py')
+          test_driver=Path('/tmp/v89-preflight-driver.py')
+          test_driver.write_text(driver+'\n')
+          subprocess.run(['python3','-u',str(test_driver)],check=True)
+          generated=Path('/tmp/v89-run.py')
+          assert generated.is_file(),'Final client runner was not generated'
+          subprocess.run(['python3','-m','py_compile',str(generated)],check=True)
+          print('V89: all actual nested Python validated before 1.89GB source extraction.',flush=True)
           PY
-          python3 /tmp/v88-fix-runner.py 2>&1 | tee reports/V88-runner-fix.log
+          python3 -m py_compile /tmp/v89-preflight.py
+          python3 -u /tmp/v89-preflight.py \
+            2>&1 | tee reports/V89-final-runner-preflight.log
 
-          trap 'if test -f /tmp/v88-run.py; then cp /tmp/v88-run.py reports/V88-generated-run.py; fi; if test -f /tmp/v88-driver.py; then cp /tmp/v88-driver.py reports/V88-driver.py; fi' EXIT
-          V88_RUNNER_PREFLIGHT=1 bash /tmp/v88-build.sh \
-            2>&1 | tee reports/V88-runner-preflight.log
-          python3 -m py_compile /tmp/v88-run.py
-
-      - name: "V88 | Extract source SPR and compile native client"
+      - name: "V89 | Extract original map and SPR then compile native client"
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 -u /tmp/v88-stages.py build \
-            2>&1 | tee reports/V88-build-and-browser.log
+          python3 -u /tmp/v89-stages.py build \
+            2>&1 | tee reports/V89-build-and-browser.log
 
-      - name: "V88 | Verify sprite visibility and real player movement"
+      - name: "V89 | Require original sprite pixels and actual player movement"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v88-stages.py smoke \
-            2>&1 | tee reports/V88-native-player-test.log
+          python3 -u /tmp/v89-stages.py smoke \
+            2>&1 | tee reports/V89-native-player-test.log
 
-      - name: "V88 | Upload diagnostics on all outcomes"
+      - name: "V89 | Preserve failure and runtime diagnostics"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V88-Native-Player
+          name: Sanctuary-game2-V89-Native-Player
           path: |
-            reports/V88-*.log
-            reports/V88-*.json
-            reports/V88-*.png
-            reports/V88-*.txt
-            reports/V88-*.py
-            assets/v88/v88-player-sprites.json
+            reports/V89-*.log
+            reports/V89-*.json
+            reports/V89-*.png
+            reports/V89-*.txt
+            reports/V89-*.py
+            assets/v89/v89-player-sprites.json
           retention-days: 30
           if-no-files-found: warn
 
-      - name: "V88 | Deploy only actual SPR pixels and movement"
+      - name: "V89 | Publish only after real sprite and movement tests pass"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v88-stages.py publish \
-            2>&1 | tee reports/V88-publish.log
+          python3 -u /tmp/v89-stages.py publish \
+            2>&1 | tee reports/V89-deploy.log
 
-      - name: "V88 | Report validated scope"
+      - name: "V89 | Record exact verified scope"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V88 | Sanctuary game2 GitHub Pages'
-            echo 'V87 extracted the original male-knight SPR bank successfully.'
-            echo 'V87 failed because the generated native runner had unexpected indentation.'
-            echo 'V88 fixes C++ native hook indentation to match the existing map patch.'
-            echo 'V88 compiles the final generated runner before downloading the source archive.'
-            echo 'Original SDL sprite pixels and keyboard movement remain required to publish.'
-            echo 'This is the existing L1J C++ adapter using Sanctuary assets.'
+            echo '# build-web.yml | V89 | Sanctuary game2 GitHub Pages'
+            echo 'V88 failed at bootstrap: v88-execute.py was never generated.'
+            echo 'V89 calls the real V86 -> V85 bootstrap and asserts its output exists.'
+            echo 'V87 successfully extracted the original male-knight SPR bank.'
+            echo 'V89 preserves V87 ZIP record repair and adds runner syntax preflight.'
+            echo 'Only actual SDL sprite pixels and movement can authorize deployment.'
+            echo 'L1J C++ adapter using original Sanctuary resources; not original executable.'
+            echo 'Original collision and start location remain unverified.'
           } >> "$GITHUB_STEP_SUMMARY"
