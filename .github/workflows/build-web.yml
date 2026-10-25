@@ -1,44 +1,45 @@
 # FILE: .github/workflows/build-web.yml
-# VERSION: V86
-# BASE: V85 pinned commit 955980d2f6222a87795648dc80cec2f0e2a586bc
-# Fix V85: 61-0/2/4/6.spr were sought only in hashed SpriteNN.idx.
-# Extract just indexed SPR byte ranges from the original split ZIP Sprite.pak.
-# No map-only or source-log-only success; only verified sprites and movement publish.
-name: "build-web.yml | V86 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V86 | Sanctuary game2 GitHub Pages"
+# VERSION: V87
+# V86 run 40126656999 failed in original ZIP lookup because records
+# had been overwritten by packed tile-index bytes.
+# Preserve the central-directory records independently before tile packing.
+# Reuse V86's unchanged resource, SDL, C++ and browser verification stages.
+name: "build-web.yml | V87 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V87 | Sanctuary game2 GitHub Pages"
 
 "on":
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [.github/workflows/build-web.yml]
+    paths:
+      - .github/workflows/build-web.yml
 
 permissions:
   contents: write
 
 concurrency:
-  group: game2-v86-native-player
+  group: game2-v87-native-player
   cancel-in-progress: false
 
 jobs:
-  original_client_v86:
-    name: "build-web.yml | V86 | Restore original client and clean game display"
+  original_client_v87:
+    name: "build-web.yml | V87 | Restore original client and clean game display"
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
-      - name: "V86 | Checkout full game2 history"
+      - name: "V87 | Checkout full game2 history"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: "V86 | Keep last GitHub Pages deployment"
+      - name: "V87 | Keep previous GitHub Pages deployment"
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: published
           fetch-depth: 1
 
-      - name: "V86 | Checkout pinned L1J C++ adapter"
+      - name: "V87 | Checkout pinned L1J C++ adapter"
         uses: actions/checkout@v4
         with:
           repository: uglyoldbob/l1j-client
@@ -46,223 +47,195 @@ jobs:
           path: upstream-l1j
           persist-credentials: false
 
-      - name: "V86 | Set up Emscripten"
+      - name: "V87 | Set up compatible Emscripten"
         uses: emscripten-core/setup-emsdk@v15
         with:
           version: '3.1.74'
 
-      - name: "V86 | Restore exact V85 staged build and preflight"
+      - name: "V87 | Load exact V86 pipeline and validate script structure"
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install --quiet 'PyYAML==6.0.2' 'Pillow==11.3.0'
           mkdir -p reports
-          cat > /tmp/v86-bootstrap.py <<'PY'
-          import subprocess,yaml
+          cat > /tmp/v87-stages.py <<'PY'
+          import ast
+          import re
+          import subprocess
+          import sys
+          import yaml
           from pathlib import Path
 
-          revision='955980d2f6222a87795648dc80cec2f0e2a586bc'
-          raw=subprocess.check_output(
-              ['git','show',revision+':.github/workflows/build-web.yml'],
+          REV='5b927fc55b87e70c8e22a18ebea62b6387525448'
+          SOURCE=subprocess.check_output(
+              ['git','show',REV+':.github/workflows/build-web.yml'],
               text=True
           )
-          workflow=yaml.safe_load(raw)
-          assert workflow['name']=='build-web.yml | V85 | Sanctuary game2 GitHub Pages'
-          steps=workflow['jobs']['original_client_v85']['steps']
-          title='V85 | Validate prior commits and prepare full build stages'
-          stage=next(s['run'] for s in steps if s.get('name')==title)
-          stage=stage.replace('V85','V86').replace('v85','v86')
-          subprocess.run(['bash','-n'],input=stage,text=True,check=True)
-          subprocess.run(['bash','-e','-o','pipefail','-c',stage],check=True)
-          assert Path('/tmp/v86-execute.py').is_file()
-          print('V86: V85 complete staged source recovered, versions aligned.')
+          workflow=yaml.safe_load(SOURCE)
+          assert workflow['name']=='build-web.yml | V86 | Sanctuary game2 GitHub Pages'
+          assert workflow['run-name']==workflow['name']
+          steps=workflow['jobs']['original_client_v86']['steps']
+          scripts={s['name']:s['run'] for s in steps if 'run' in s}
+          names={
+              'bootstrap':'V86 | Restore exact V85 staged build and preflight',
+              'restore':'V86 | Restore proven V83 map and SDL source',
+              'sprites':'V86 | Prepare original SPR extraction',
+              'slice':'V86 | Fix correct Sprite.idx and streaming PAK extraction',
+              'wire':'V86 | Connect original C++ character and movement',
+              'build':'V86 | Extract original SPR and compile native game',
+              'smoke':'V86 | Verify real sprite visibility and movement',
+              'publish':'V86 | Deploy only original sprite pixels plus movement'
+          }
+          assert all(n in scripts for n in names.values())
+
+          def versioned(stage):
+              script=scripts[names[stage]]
+              return script.replace('V86','V87').replace('v86','v87')
+
+          def repair_archive_lookup():
+              path=Path('/tmp/v87-extract.sh')
+              source=path.read_text(encoding='utf-8')
+              # The V71 source uses `records` for ZIP entries and later
+              # reassigns `records=[]` for packed tile index bytes.
+              # V86's late-injected sprite code therefore iterates bytes.
+              marker='assert len(records)==nitems,(len(records),nitems)'
+              assert source.count(marker)==1,('ZIP central list anchor',source.count(marker))
+              source=source.replace(
+                  marker,marker+'\nzip_records=tuple(records)',1
+              )
+              lookup=(
+                  r"r for r in records(?=\n[ \t]*if r\['name'\]"
+                  r"\.lower\(\)\.endswith\()"
+              )
+              assert len(re.findall(lookup,source))==1, 'SPR archive lookup must be unique'
+              source=re.sub(lookup,'r for r in zip_records',source,count=1)
+              assert source.index('zip_records=tuple(records)') < source.index('compact=bytearray()')
+              assert source.count('r for r in zip_records')==1
+              assert source.count("bank='Sprite'")==1
+              assert source.count('sources=extract_selected(source_bank,needed)')==1
+              match=re.search(
+                  r"(?ms)^cat > /tmp/v87-extract\.py <<'PY'\n(.*?)\nPY$",
+                  source
+              )
+              assert match,'Generated ZIP extractor heredoc was not found'
+              ast.parse(match.group(1),filename='/tmp/v87-extract.py')
+              path.write_text(source,encoding='utf-8')
+              subprocess.run(['bash','-n',str(path)],check=True)
+              # Verify the same type confusion cannot occur after tile packing.
+              zip_records=({'name':'Original/Sprite.pak'},)
+              tile_records=[b'packed tile index']
+              assert isinstance(tile_records[0],bytes)
+              assert next(r for r in zip_records if r['name'].lower().endswith('/sprite.pak'))
+              print('V87: central ZIP list preserved separately from tile index bytes.',flush=True)
+
+          if len(sys.argv)!=2:
+              raise SystemExit('Usage: v87-stages.py preflight|stage|repair')
+          phase=sys.argv[1]
+          if phase=='preflight':
+              for name in names:
+                  script=versioned(name)
+                  subprocess.run(['bash','-n'],input=script,text=True,check=True)
+                  print('V87 verified prior stage:',name,flush=True)
+          elif phase=='repair':
+              repair_archive_lookup()
+          elif phase in names:
+              print('V87 executing:',phase,flush=True)
+              subprocess.run(
+                  ['bash','-e','-o','pipefail','-c',versioned(phase)],
+                  check=True
+              )
+              print('V87 completed:',phase,flush=True)
+          else:
+              raise RuntimeError('Unknown V87 stage: '+phase)
           PY
-          python3 -m py_compile /tmp/v86-bootstrap.py
-          python3 -u /tmp/v86-bootstrap.py 2>&1 | tee reports/V86-bootstrap.log
+          python3 -m py_compile /tmp/v87-stages.py
+          python3 -u /tmp/v87-stages.py preflight \
+            2>&1 | tee reports/V87-stage-preflight.log
 
-      - name: "V86 | Restore proven V83 map and SDL source"
+      - name: "V87 | Restore V85 native build and browser stages"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v86-execute.py restore \
-            2>&1 | tee reports/V86-restore.log
+          python3 -u /tmp/v87-stages.py bootstrap \
+            2>&1 | tee reports/V87-bootstrap.log
 
-      - name: "V86 | Prepare original SPR extraction"
+      - name: "V87 | Restore native map, SDL and chat cleanup"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v86-execute.py sprites \
-            2>&1 | tee reports/V86-sprites-preparation.log
+          python3 -u /tmp/v87-stages.py restore \
+            2>&1 | tee reports/V87-restore.log
 
-      - name: "V86 | Fix correct Sprite.idx and streaming PAK extraction"
+      - name: "V87 | Prepare indexed original male knight SPR"
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/v86-slice-helper.py <<'PY'
-          import struct,zlib
+          python3 -u /tmp/v87-stages.py sprites \
+            2>&1 | tee reports/V87-sprite-preparation.log
 
-          def extract_selected(record, needed):
-              """Read exact indexed SPR spans; never allocate the whole 1.9GB PAK."""
-              d,o=record['disk'],record['offset']
-              header=fetch_bytes(d,o,30)
-              if header[:4]!=b'PK\x03\x04' and d==0 and o==0:
-                  o=4
-                  header=fetch_bytes(d,o,30)
-              if header[:4]!=b'PK\x03\x04':
-                  raise RuntimeError('Sprite.pak local ZIP header missing')
-              name_len,extra_len=struct.unpack_from('<HH',header,26)
-              sd,so=step(d,o,30+name_len+extra_len)
-              spans={
-                  name:(off,size) for name,(off,_raw,size) in needed.items()
-              }
-              for name,(off,size) in spans.items():
-                  if off<0 or size<=0 or off+size>record['uncompressed']:
-                      raise RuntimeError('Invalid SPR IDX range: '+name)
-
-              if record['method']==0:
-                  result={}
-                  for name,(off,size) in spans.items():
-                      disk,offset=step(sd,so,off)
-                      result[name]=fetch_bytes(disk,offset,size)
-                  return result
-
-              if record['method']!=8:
-                  raise RuntimeError('Unsupported Sprite.pak ZIP method: '+str(record['method']))
-
-              result={name:bytearray(size) for name,(_off,size) in spans.items()}
-              decompressor=zlib.decompressobj(-15)
-              zipped=0
-              unpacked=0
-              checksum=0
-              block_size=2*1024*1024
-
-              def accept(data):
-                  nonlocal unpacked,checksum
-                  if not data:
-                      return
-                  begin=unpacked
-                  end=begin+len(data)
-                  for name,(off,size) in spans.items():
-                      left=max(begin,off)
-                      right=min(end,off+size)
-                      if right>left:
-                          result[name][left-off:right-off]=data[left-begin:right-begin]
-                  checksum=zlib.crc32(data,checksum)
-                  unpacked=end
-
-              while zipped<record['compressed']:
-                  n=min(block_size,record['compressed']-zipped)
-                  disk,offset=step(sd,so,zipped)
-                  compressed=fetch_bytes(disk,offset,n)
-                  if len(compressed)!=n:
-                      raise RuntimeError('Truncated original Sprite.pak')
-                  accept(decompressor.decompress(compressed))
-                  zipped+=n
-              accept(decompressor.flush())
-              if not decompressor.eof:
-                  raise RuntimeError('Sprite.pak raw DEFLATE stream incomplete')
-              if unpacked!=record['uncompressed']:
-                  raise RuntimeError('Sprite.pak uncompressed size mismatch')
-              if (checksum&0xffffffff)!=record['crc']:
-                  raise RuntimeError('Sprite.pak CRC mismatch')
-              for name,(off,size) in spans.items():
-                  if len(result[name])!=size:
-                      raise RuntimeError('SPR extracted length mismatch: '+name)
-              print('V86: streamed original Sprite.pak bytes=',unpacked,flush=True)
-              return {name:bytes(value) for name,value in result.items()}
-          PY
-
-          python3 -m py_compile /tmp/v86-slice-helper.py
-
-          python3 - <<'PY'
-          from pathlib import Path
-          import ast,re,subprocess
-          p=Path('/tmp/v86-extract.sh')
-          script=p.read_text()
-
-          changes=[
-              ("bank='Sprite%02d'%(sum(name.encode('ascii')) & 15)",
-               "bank='Sprite'"),
-              ('complete=extract_record(source_bank)',
-               'sources=extract_selected(source_bank,needed)'),
-              ('offset+size<=len(complete)',
-               "offset+size<=source_bank['uncompressed']"),
-              ('raw=complete[offset:offset+size]',
-               'raw=sources[filename]'),
-              ('del complete','del sources'),
-              ("from pathlib import Path\n\nsource=Path('published')",
-               "from pathlib import Path\nexec(Path('/tmp/v86-slice-helper.py').read_text(),globals())\n\nsource=Path('published')")
-          ]
-          for before,after in changes:
-              count=script.count(before)
-              assert count==1,('V86 exact extractor anchor',before,count)
-              script=script.replace(before,after,1)
-
-          assert 'assert not missing[\'61\']' in script
-          m=re.search(
-              r"(?ms)^cat > /tmp/v86-extract\.py <<'PY'\n(.*?)\nPY$",
-              script
-          )
-          assert m,'V86 extractor heredoc not found'
-          ast.parse(m.group(1),filename='v86-real-extractor.py')
-          p.write_text(script)
-          subprocess.run(['bash','-n',str(p)],check=True)
-          print('V86: use original Sprite.idx / Sprite.pak; bounded ZIP extraction verified.')
-          PY
-
-      - name: "V86 | Connect original C++ character and movement"
+      - name: "V87 | Repair V86 ZIP central records and SPR slicing"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v86-execute.py wire \
-            2>&1 | tee reports/V86-native-wiring.log
+          python3 -u /tmp/v87-stages.py slice \
+            2>&1 | tee reports/V87-slice-setup.log
+          python3 -u /tmp/v87-stages.py repair \
+            2>&1 | tee reports/V87-archive-repair.log
 
-      - name: "V86 | Extract original SPR and compile native game"
+      - name: "V87 | Connect original C++ player and keyboard movement"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u /tmp/v87-stages.py wire \
+            2>&1 | tee reports/V87-player-wiring.log
+
+      - name: "V87 | Extract original map and SPR then compile native client"
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 -u /tmp/v86-execute.py build \
-            2>&1 | tee reports/V86-build-and-browser.log
+          python3 -u /tmp/v87-stages.py build \
+            2>&1 | tee reports/V87-build-and-browser.log
 
-      - name: "V86 | Verify real sprite visibility and movement"
+      - name: "V87 | Require original SPR pixels and real directional movement"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v86-execute.py smoke \
-            2>&1 | tee reports/V86-native-player-test.log
+          python3 -u /tmp/v87-stages.py smoke \
+            2>&1 | tee reports/V87-native-player-test.log
 
-      - name: "V86 | Preserve complete diagnostics on failure"
+      - name: "V87 | Preserve failure and sprite diagnostics"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Sanctuary-game2-V86-Native-Player
+          name: Sanctuary-game2-V87-Native-Player
           path: |
-            reports/V86-*.log
-            reports/V86-*.json
-            reports/V86-*.png
-            reports/V86-*.txt
-            assets/v86/v86-player-sprites.json
+            reports/V87-*.log
+            reports/V87-*.json
+            reports/V87-*.png
+            reports/V87-*.txt
+            assets/v87/v87-player-sprites.json
           retention-days: 30
           if-no-files-found: warn
 
-      - name: "V86 | Deploy only original sprite pixels plus movement"
+      - name: "V87 | Publish only when original character and movement pass"
         shell: bash
         run: |
           set -euo pipefail
-          python3 -u /tmp/v86-execute.py publish \
-            2>&1 | tee reports/V86-deploy.log
+          python3 -u /tmp/v87-stages.py publish \
+            2>&1 | tee reports/V87-deploy.log
 
-      - name: "V86 | Report validated scope"
+      - name: "V87 | State exact verified scope"
         if: always()
         shell: bash
         run: |
           {
-            echo '# build-web.yml | V86 | Sanctuary game2 GitHub Pages'
-            echo 'V85 failed before compilation: it did not inspect generic Sprite.idx.'
-            echo 'V86 tries original Sprite.idx and original Sprite.pak selective extraction.'
-            echo 'The runtime is the existing L1J C++ adapter, not the Sanctuary executable.'
-            echo 'Publishing requires native sprite pixels, real movement and browser checks.'
-            echo 'Original collision and all-class support remain unverified.'
+            echo '# build-web.yml | V87 | Sanctuary game2 GitHub Pages'
+            echo 'V86 failed on a Python TypeError after the original map and tile extraction.'
+            echo 'V87 captures ZIP central-directory dictionaries before tile IDX bytes reuse the records variable.'
+            echo 'Original Sprite.idx / Sprite.pak and native SDL pipeline remain in place.'
+            echo 'The adapter is L1J C++, not the proprietary Sanctuary executable.'
+            echo 'Real sprite visibility and player movement are mandatory deployment checks.'
+            echo 'Collision, original spawn location, and other classes are not verified.'
           } >> "$GITHUB_STEP_SUMMARY"
