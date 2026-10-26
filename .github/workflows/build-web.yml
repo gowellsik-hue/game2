@@ -1,851 +1,305 @@
 # FILE: .github/workflows/build-web.yml
-# VERSION: V100
-# V99 compiled WebAssembly and decoded authentic knight SPR frames.
-# Its Playwright smoke test failed at F9 because native SDL1 event layout
-# does not match Emscripten SDL2 event codes, keys, and offsets.
-# Convert the real event ABI; restore real SDL1 color-key transparency.
-# Do not invent images, simulate native movement, or bypass smoke tests.
-name: "build-web.yml | V100 | Sanctuary game2 GitHub Pages"
-run-name: "build-web.yml | V100 | Sanctuary game2 GitHub Pages"
-
-"on":
-  workflow_dispatch:
+# VERSION: V101
+# RESET: run and capture the actual unmodified Sanctuary Login.exe, NOT L1J.
+# GATE: native Win32 login pixels must be verified before any web-port claims.
+# KEEP: previous GitHub Pages deployment untouched; no HTML mock login.
+name: build-web.yml | V101 | Sanctuary game2 GitHub Pages
+run-name: build-web.yml | V101 | Sanctuary game2 GitHub Pages
+'on':
+  workflow_dispatch: null
   push:
-    branches: [main]
+    branches:
+    - main
     paths:
-      - .github/workflows/build-web.yml
-
+    - .github/workflows/build-web.yml
 permissions:
-  contents: write
-
+  contents: read
 concurrency:
-  group: game2-v100-native-player
+  group: game2-v101-original-native-login
   cancel-in-progress: false
-
 jobs:
-  original_client_v100:
-    name: "build-web.yml | V100 | Restore original client and clean game display"
-    runs-on: ubuntu-24.04
-    timeout-minutes: 180
+  original_windows_login_v101:
+    name: build-web.yml | V101 | Verify ORIGINAL Win32 login
+    runs-on: windows-2022
+    timeout-minutes: 90
     steps:
-      - name: "V100 | Checkout full game2 history"
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+    - name: V101 | Checkout workflow history
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: V101 | Set up native Windows Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+    - name: V101 | Extract original Sanctuary Windows login
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $archive = Join-Path $env:GITHUB_WORKSPACE 'work/archive'
+        $output = Join-Path $env:GITHUB_WORKSPACE 'work/original'
+        $reports = Join-Path $env:GITHUB_WORKSPACE 'reports'
+        New-Item -ItemType Directory -Force -Path $archive,$output,$reports | Out-Null
+        # The original V50 source archive was already verified by native Windows runs.
+        gh release download v1.0.0 -R gowellsik-hue/Game -p 'Sanctuary.of.Aden.-.Copy.*' -D $archive --clobber
+        if ($LASTEXITCODE -ne 0) { throw 'Original release download failed' }
+        if (@(Get-ChildItem -LiteralPath $archive -File).Count -ne 46) { throw 'Original archive must contain 46 volumes' }
+        $tool = Get-Command 7z.exe -ErrorAction SilentlyContinue
+        $seven = if ($tool) { $tool.Source } else { Join-Path $env:ProgramFiles '7-Zip/7z.exe' }
+        if (-not (Test-Path -LiteralPath $seven)) { throw 'Original archive extractor 7z.exe is unavailable' }
+        $zip = Join-Path $archive 'Sanctuary.of.Aden.-.Copy.zip'
+        # Read the real Win32 launchers, their dependencies and original small images;
+        # do not change original EXE bytes or inject a replacement login interface.
+        & $seven x $zip "-o$output" '-y' '-ir!*.exe' '-ir!*.bin' '-ir!*.dll' '-ir!*.ini' '-ir!*.cfg' '-ir!*.dat' '-ir!*.sys' '-ir!*.vxd' '-ir!*.png' '-ir!*.bmp' '-ir!*.jpg' '-ir!*.gif' '-ir!*.fnt' '-ir!*.tbl' '-ir!*.xml' 2>&1 |
+          Out-File -FilePath (Join-Path $reports 'V101-extract.txt') -Encoding utf8
+        if ($LASTEXITCODE -ne 0) { throw 'Original Sanctuary extraction failed' }
+        $root = Join-Path $output 'Sanctuary of Aden - Copy'
+        $expected = @{
+            'Login.exe' = '995a4752b7e2da7782a95445f2ce7b07ec5e19c72c4b0387c5373dd3f2d06741'
+            'Lineage.exe' = '2124b3da5f53123e0f94a85bd7f9edb2344925fdb4f53d0fc0653ea5c9241414'
+        }
+        foreach ($name in $expected.Keys) {
+            $path = Join-Path $root $name
+            if (-not (Test-Path -LiteralPath $path)) { throw "Missing ORIGINAL executable: $name" }
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+            if ($hash -ne $expected[$name]) { throw "Unmodified original SHA256 mismatch: $name" }
+            Write-Host "V101 original EXE verified $name $hash"
+        }
+        Write-Host 'V101: original archive and true Login.exe / Lineage.exe verified. No L1J adapter used.'
+    - name: V101 | Install screenshot verification dependency
+      shell: pwsh
+      run: |
+        python -m pip install --disable-pip-version-check 'Pillow==11.3.0'
+        if ($LASTEXITCODE -ne 0) { throw 'Pillow installation failed' }
+    - name: V101 | Capture and verify original Login.exe pixels
+      shell: pwsh
+      run: |
+        $ErrorActionPreference='Stop'
+        @'
+        import ctypes
+        from ctypes import wintypes
+        import hashlib
+        import json
+        import os
+        import struct
+        import subprocess
+        import time
+        from pathlib import Path
+        from PIL import Image, ImageGrab
 
-      - name: "V100 | Preserve previous GitHub Pages deployment"
-        uses: actions/checkout@v4
-        with:
-          ref: gh-pages
-          path: published
-          fetch-depth: 1
+        base = Path(os.environ['GITHUB_WORKSPACE'])
+        original = base / 'work' / 'original' / 'Sanctuary of Aden - Copy'
+        reports = base / 'reports'
+        reports.mkdir(exist_ok=True)
 
-      - name: "V100 | Checkout pinned L1J C++ adapter"
-        uses: actions/checkout@v4
-        with:
-          repository: uglyoldbob/l1j-client
-          ref: 83052f6b1c5bda59d4c4cbaf01aa2e72ea409853
-          path: upstream-l1j
-          persist-credentials: false
+        EXPECTED = {
+            'Login.exe': '995a4752b7e2da7782a95445f2ce7b07ec5e19c72c4b0387c5373dd3f2d06741',
+            'Lineage.exe': '2124b3da5f53123e0f94a85bd7f9edb2344925fdb4f53d0fc0653ea5c9241414',
+        }
 
-      - name: "V100 | Set up Emscripten"
-        uses: emscripten-core/setup-emsdk@v15
-        with:
-          version: '3.1.74'
+        U = ctypes.windll.user32
+        G = ctypes.windll.gdi32
+        HWND = wintypes.HWND
+        HDC = wintypes.HDC
+        CB = ctypes.WINFUNCTYPE(wintypes.BOOL, HWND, wintypes.LPARAM)
+        U.EnumWindows.argtypes = [CB, wintypes.LPARAM]
+        U.EnumWindows.restype = wintypes.BOOL
+        U.GetWindowThreadProcessId.argtypes = [HWND, ctypes.POINTER(wintypes.DWORD)]
+        U.GetWindowTextW.argtypes = [HWND, wintypes.LPWSTR, ctypes.c_int]
+        U.GetWindowTextW.restype = ctypes.c_int
+        U.GetClassNameW.argtypes = [HWND, wintypes.LPWSTR, ctypes.c_int]
+        U.IsWindowVisible.argtypes = [HWND]
+        U.GetWindowRect.argtypes = [HWND, ctypes.POINTER(wintypes.RECT)]
+        U.PrintWindow.argtypes = [HWND, HDC, wintypes.UINT]
+        U.PrintWindow.restype = wintypes.BOOL
+        U.GetWindowDC.argtypes = [HWND]
+        U.GetWindowDC.restype = HDC
+        U.ReleaseDC.argtypes = [HWND, HDC]
+        G.CreateCompatibleDC.argtypes = [HDC]
+        G.CreateCompatibleDC.restype = HDC
+        G.CreateCompatibleBitmap.argtypes = [HDC, ctypes.c_int, ctypes.c_int]
+        G.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+        G.SelectObject.argtypes = [HDC, wintypes.HANDLE]
+        G.SelectObject.restype = wintypes.HANDLE
+        G.DeleteObject.argtypes = [wintypes.HANDLE]
+        G.DeleteDC.argtypes = [HDC]
+        G.GetDIBits.argtypes = [HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT,
+                              ctypes.c_void_p, ctypes.c_void_p, wintypes.UINT]
 
-      - name: "V100 | Restore V90 stage definitions with separate runner dispatcher"
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m pip install --quiet 'PyYAML==6.0.2' 'Pillow==11.3.0'
-          mkdir -p reports /tmp/v100
-          cat > /tmp/v100-loader.py <<'PY'
-          import ast
-          import re
-          import subprocess
-          from pathlib import Path
-          import yaml
+        def windows_for_pid(pid):
+            found=[]
+            @CB
+            def each(hwnd, unused):
+                owner=wintypes.DWORD()
+                U.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+                if owner.value != pid:
+                    return True
+                title = ctypes.create_unicode_buffer(512)
+                cls = ctypes.create_unicode_buffer(256)
+                U.GetWindowTextW(hwnd,title,512)
+                U.GetClassNameW(hwnd,cls,256)
+                rect=wintypes.RECT()
+                U.GetWindowRect(hwnd, ctypes.byref(rect))
+                w=rect.right-rect.left
+                h=rect.bottom-rect.top
+                found.append({'hwnd':int(hwnd), 'title':title.value,
+                    'class':cls.value,'visible':bool(U.IsWindowVisible(hwnd)),
+                    'rect':[rect.left,rect.top,rect.right,rect.bottom],
+                    'w':w,'h':h})
+                return True
+            U.EnumWindows(each,0)
+            return found
 
-          PIN='9e78c0bc899fb3c30d24634294e1324a8b1e565c'
-          raw=subprocess.check_output(
-              ['git','show',PIN+':.github/workflows/build-web.yml'],text=True
-          )
-          previous=yaml.safe_load(raw)
-          assert previous['name']=='build-web.yml | V90 | Sanctuary game2 GitHub Pages'
-          original={s['name']:s['run'] for s in
-              previous['jobs']['original_client_v90']['steps'] if 'run' in s}
-          stages={
-              'prepare':'V90 | Recover verified V89 stage scripts',
-              'bootstrap':'V90 | Generate original stage executor',
-              'restore':'V90 | Restore source map and SDL pipeline',
-              'sprites':'V90 | Prepare genuine male knight SPR extraction',
-              'wire':'V90 | Create native actor implementation',
-              'separate':'V90 | Separate offline initialization from actor injection',
-              'runner':'V90 | Precompile actual generated native runner before resource download',
-              'build':'V90 | Extract real SPR and map and compile native client',
-              'smoke':'V90 | Verify real SPR pixels and directional movement',
-              'preserve':'V90 | Save generated sources and failure logs',
-              'publish':'V90 | Publish only after authentic player tests pass',
-              'report':'V90 | Record verified scope',
-          }
-          assert len(stages)==len(set(stages.values()))
-          assert all(name in original for name in stages.values())
-          root=Path('/tmp/v100')
-          for stage,title in stages.items():
-              source=original[title].replace('V90','V100').replace('v90','v100')
-              if stage=='prepare':
-                  old="if phase=='preflight':"
-                  assert source.count(old)==1,('V90 dispatcher',source.count(old))
-                  source=source.replace(old,"if phase=='check':",1)
-                  old='python3 -u /tmp/v100-stages.py preflight'
-                  assert source.count(old)==1,('Initial check command',source.count(old))
-                  source=source.replace(old,'python3 -u /tmp/v100-stages.py check',1)
-                  assert "if stage=='preflight':" in source
-              if stage=='runner':
-                  # /tmp/v100-stages.py is overwritten by the nested V89 bootstrap.
-                  # The saved outer dispatcher alone knows V89's real 'preflight'.
-                  old='python3 -u /tmp/v100-stages.py preflight'
-                  assert source.count(old)==1,('Real runner command',source.count(old))
-                  source=source.replace(
-                      old,'python3 -u /tmp/v100-outer-stages.py preflight',1
-                  )
-              matches=list(re.finditer(
-                  r"(?ms)^(?:cat >|cat >>) (/tmp/[\w-]+\.py) <<'PY'\n(.*?)\nPY$",
-                  source
-              ))
-              for match in matches:
-                  ast.parse(match.group(2),filename=match.group(1))
-              path=root/(stage+'.sh')
-              path.write_text(source,encoding='utf-8')
-              subprocess.run(['bash','-n',str(path)],check=True)
-              print('V100 verified:',stage,'Python:',len(matches),flush=True)
-          print('V100: saved outer executor will perform real preflight.',flush=True)
-          PY
-          python3 -m py_compile /tmp/v100-loader.py
-          python3 -u /tmp/v100-loader.py 2>&1 | tee reports/V100-loader.log
-          test -s /tmp/v100/runner.sh
-          test -s /tmp/v100/prepare.sh
-          grep -Fq '/tmp/v100-outer-stages.py preflight' /tmp/v100/runner.sh
+        def print_window(hwnd, w, h, flags):
+            if not (80<=w<=3000 and 60<=h<=3000): return None
+            dc=U.GetWindowDC(hwnd)
+            if not dc: return None
+            mem=G.CreateCompatibleDC(dc)
+            if not mem: U.ReleaseDC(hwnd,dc);return None
+            bmp=G.CreateCompatibleBitmap(dc,w,h)
+            old=G.SelectObject(mem,bmp)
+            try:
+                drawn=U.PrintWindow(hwnd,mem,flags)
+                if not drawn:return None
+                header=ctypes.create_string_buffer(struct.pack(
+                    '<IiiHHIIiiII',40,w,-h,1,32,0,0,0,0,0,0))
+                pixels=ctypes.create_string_buffer(w*h*4)
+                lines=G.GetDIBits(mem,bmp,0,h,pixels,header,0)
+                if lines!=h:return None
+                return Image.frombytes('RGB',(w,h),pixels.raw,'raw','BGRX',0,1)
+            finally:
+                G.SelectObject(mem,old)
+                G.DeleteObject(bmp)
+                G.DeleteDC(mem)
+                U.ReleaseDC(hwnd,dc)
 
-      - name: "V100 | Preserve outer dispatcher before nested bootstrap overwrites it"
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash /tmp/v100/prepare.sh 2>&1 | tee reports/V100-prepare.log
-          test -s /tmp/v100-stages.py
-          grep -Fq "if phase=='check':" /tmp/v100-stages.py
-          grep -Fq "'preflight':'V89 | Fix native hook" /tmp/v100-stages.py
-          cp /tmp/v100-stages.py /tmp/v100-outer-stages.py
-          python3 -m py_compile /tmp/v100-outer-stages.py
-          bash /tmp/v100/bootstrap.sh 2>&1 | tee reports/V100-bootstrap.log
-          test -s /tmp/v100-execute.py
-          test -s /tmp/v100-outer-stages.py
-          python3 -m py_compile /tmp/v100-execute.py
+        def metrics(image):
+            small=image.convert('RGB').resize((160,120))
+            pixels=list(small.getdata())
+            quant=len({(r//16,g//16,b//16) for r,g,b in pixels})
+            bright=sum(1 for r,g,b in pixels if max(r,g,b)>45)/len(pixels)
+            return {'colors_16':quant,'nonblack_fraction':round(bright,4),
+                    'width':image.width,'height':image.height}
 
-      - name: "V100 | Restore original map and SDL build scripts"
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash /tmp/v100/restore.sh 2>&1 | tee reports/V100-restore.log
-          test -s /tmp/v100-extract.sh
-          test -s /tmp/v100-build.sh
+        def captures(window, prefix):
+            w,h=window['w'],window['h']
+            hwnd=HWND(window['hwnd'])
+            output=[]
+            for flags in (2,0):
+                try:
+                    img=print_window(hwnd,w,h,flags)
+                    if img:output.append(('PrintWindow_'+str(flags),img))
+                except Exception as exc:
+                    print('V101 PrintWindow:',type(exc).__name__,str(exc)[:150],flush=True)
+            rect=window['rect']
+            try:
+                if rect[0]>=0 and rect[1]>=0:
+                    desktop=ImageGrab.grab(bbox=tuple(rect),all_screens=True)
+                    if desktop.size==(w,h):output.append(('DesktopCapture',desktop))
+            except Exception as exc:
+                print('V101 desktop capture unavailable:',str(exc)[:150],flush=True)
+            result=[]
+            for method,img in output:
+                score=metrics(img)
+                path=reports/(prefix+'-'+method+'.png')
+                img.save(path)
+                result.append({'method':method,'path':path.name,'metrics':score})
+            return result
 
-      - name: "V100 | Prepare original male knight SPR resources"
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash /tmp/v100/sprites.sh 2>&1 | tee reports/V100-sprites.log
-          test -s /tmp/v100-extract.sh
+        def run(name):
+            exe=original/name
+            assert exe.exists(),('Original executable missing',name)
+            sha=hashlib.sha256(exe.read_bytes()).hexdigest()
+            assert sha==EXPECTED[name],('Original binary was modified',name,sha)
+            entry={'executable':name,'sha256':sha,'original_binary_unchanged':True,
+                   'window_evidence':[],'captures':[],'native_original_login_verified':False}
+            print('V101 starting UNMODIFIED',name,flush=True)
+            process=subprocess.Popen([str(exe)],executable=str(exe),cwd=str(original),
+                                     stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL)
+            try:
+                start=time.monotonic()
+                candidates=[]
+                while time.monotonic()-start<20:
+                    candidates=windows_for_pid(process.pid)
+                    valid=[x for x in candidates if x['visible'] and x['w']>200 and x['h']>150]
+                    if valid:break
+                    if process.poll() is not None:break
+                    time.sleep(0.5)
+                entry['pid']=process.pid
+                entry['alive_when_probed']=process.poll() is None
+                entry['window_evidence']=[{k:v for k,v in x.items() if k!='hwnd'}
+                                          for x in candidates]
+                print('V101 native top-level windows:',[(x['title'],x['w'],x['h'])
+                        for x in candidates],flush=True)
+                valid=[x for x in candidates if x['visible'] and x['w']>200 and x['h']>150]
+                valid.sort(key=lambda x:(('Lineage' in x['title'] or 'Login' in x['title']),
+                                         x['w']*x['h']),reverse=True)
+                for idx,window in enumerate(valid[:3]):
+                    time.sleep(0.6)
+                    result=captures(window,name.replace('.exe','')+'-'+str(idx))
+                    for shot in result:shot['window_title']=window['title']
+                    entry['captures'].extend(result)
+                # Require a REAL visible window and native-pixel evidence; no HTML
+                # screenshots, substitute images, or title-only green check.
+                evidence=[x for x in entry['captures'] if
+                        x['metrics']['colors_16']>=12 and
+                        x['metrics']['nonblack_fraction']>=0.07]
+                entry['native_original_login_verified'] = (
+                    name=='Login.exe' and
+                    any('Lineage' in x['title'] or 'Login' in x['title']
+                        for x in valid) and bool(evidence))
+            finally:
+                if process.poll() is None:
+                    subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],
+                        timeout=25,check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            return entry
 
-      - name: "V100 | Repair original ZIP central records before SPR lookup"
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/v100-zip-repair.py <<'PY'
-          import ast
-          import re
-          import subprocess
-          from pathlib import Path
+        results=[]
+        for name in ('Login.exe','Lineage.exe'):
+            try:
+                results.append(run(name))
+            except Exception as exc:
+                results.append({'executable':name,'error':str(exc)})
+                print('V101 original-client failure:',name,repr(exc),flush=True)
 
-          path=Path('/tmp/v100-extract.sh')
-          assert path.is_file(), 'Original archive extractor was not generated'
-          source=path.read_text(encoding='utf-8')
-
-          # V92 used 'records' for the ZIP central-directory dictionaries,
-          # then reused it for packed tile index bytes. The subsequent SPR
-          # lookup must use the original dictionary records, never tile bytes.
-          anchor='assert len(records)==nitems,(len(records),nitems)'
-          assert source.count(anchor)==1, ('ZIP directory anchor',source.count(anchor))
-          source=source.replace(anchor,anchor+'\nzip_records=tuple(records)',1)
-          lookup=(
-              r"r for r in records(?=\n[ \t]*if r\['name'\]"
-              r"\.lower\(\)\.endswith\()"
-          )
-          matches=list(re.finditer(lookup,source))
-          assert len(matches)==1,('SPR lookup count',len(matches))
-          source=re.sub(lookup,'r for r in zip_records',source,count=1)
-
-          assert source.index('zip_records=tuple(records)') < source.index('compact=bytearray()')
-          assert source.count('r for r in zip_records')==1
-          assert source.count("bank='Sprite'")==1
-          assert source.count('sources=extract_selected(source_bank,needed)')==1
-          m=re.search(
-              r"(?ms)^cat > /tmp/v100-extract\.py <<'PY'\n(.*?)\nPY$",
-              source
-          )
-          assert m,'Generated ZIP extractor source not found'
-          ast.parse(m.group(1),filename='/tmp/v100-extract.py')
-          path.write_text(source,encoding='utf-8')
-          subprocess.run(['bash','-n',str(path)],check=True)
-
-          # Minimal regression check for the actual V92 error type.
-          records=[{'name':'Original/Sprite.pak'}]
-          zip_records=tuple(records)
-          records=[b'packed tile index bytes']
-          assert isinstance(records[0],bytes)
-          assert next(r for r in zip_records if r['name'].endswith('Sprite.pak'))
-          print('V100: ZIP directory dictionaries are independent of tile index bytes.',flush=True)
-          print('V100: genuine original Sprite.pak lookup repaired before download.',flush=True)
-          PY
-          python3 -m py_compile /tmp/v100-zip-repair.py
-          python3 -u /tmp/v100-zip-repair.py \
-            2>&1 | tee reports/V100-zip-repair.log
-          test -s /tmp/v100-extract.sh
-
-      - name: "V100 | Wire original C++ actor and keyboard movement"
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash /tmp/v100/wire.sh 2>&1 | tee reports/V100-wiring.log
-          test -s /tmp/v100-native.py
-
-      - name: "V100 | Separate offline entry from native actor patch"
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash /tmp/v100/separate.sh 2>&1 | tee reports/V100-separation.log
-          test -s /tmp/v100-actor.py
-          test ! -e /tmp/v100-native.py
-          grep -Fq '/tmp/v100-actor.py' /tmp/v100-build.sh
-
-      - name: "V100 | Fix original C++ sprite_data shadowing before native build"
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/v100-fix-actor.py <<'PY'
-          import ast
-          import subprocess
-          from pathlib import Path
-
-          actor=Path('/tmp/v100-actor.py')
-          assert actor.is_file(),'V100 actor injection script not generated'
-          code=actor.read_text(encoding='utf-8')
-          before='sprite_data.override(v100actor,v100def);'
-          after='this->sprite_data.override(v100actor,v100def);'
-          assert code.count(before)==1,('V93 C++ compiler failure site',code.count(before))
-          code=code.replace(before,after,1)
-          assert code.count(after)==1
-          ast.parse(code,filename=str(actor))
-          actor.write_text(code,encoding='utf-8')
-          subprocess.run(['python3','-m','py_compile',str(actor)],check=True)
-
-          header=Path('upstream-l1j/src/sdl_user.h').read_text(encoding='utf-8')
-          cpp=Path('upstream-l1j/src/sdl_user.cpp').read_text(encoding='utf-8')
-          assert 'server_resource<sprite_definition> sprite_data;' in header
-          assert 'unsigned char *sprite_data;' in cpp
-          assert 'this->sprite_data.override(v100actor,v100def);' in code
-          print('V100: original C++ sprite resource is now accessed via this->.',flush=True)
-          PY
-          python3 -m py_compile /tmp/v100-fix-actor.py
-          python3 -u /tmp/v100-fix-actor.py 2>&1 | tee reports/V100-fix-actor.log
-          grep -Fq 'this->sprite_data.override(v100actor,v100def);' /tmp/v100-actor.py
-
-      - name: "V100 | Instrument native original SPR loader before compiling"
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/v100-spr-diagnostics.py <<'PY'
-          from pathlib import Path
-          import subprocess
-
-          path=Path('upstream-l1j/src/widgets/sprite_motion.cpp')
-          source=path.read_text(encoding='utf-8')
-          start=source.index('void sprite_motion::load(int x, int y, char *filename, sdl_user *loader)')
-          finish=source.index('\n//arg2 + frames[frame_num]',start)
-          code=source[start:finish]
-
-          def replace_one(old,new):
-              global code
-              assert code.count(old)==1,('Original SPR decoder anchor',old,code.count(old))
-              code=code.replace(old,new,1)
-
-          replace_one(
-              '\twhile (SDL_mutexP(delay_mtx) == -1) {};',
-              r'''printf("V100_SPR stage=enter file=%s\n",filename);
-              fflush(stdout);
-              while (SDL_mutexP(delay_mtx) == -1) {};'''
-          )
-          replace_one(
-              '\tif (data == 0)\n\t\tdata = (char*)loader->getfiles->load_file(filename, &size, FILE_SPRITEPACK, 0);',
-              r'''printf("V100_SPR stage=checked_split file=%s found=%d\n",filename,data?1:0);
-              fflush(stdout);
-              if (data == 0)
-                  data = (char*)loader->getfiles->load_file(filename, &size, FILE_SPRITEPACK, 0);
-              printf("V100_SPR stage=checked_base file=%s found=%d\n",filename,data?1:0);
-              fflush(stdout);'''
-          )
-          replace_one(
-              '\tSDL_RWops *file = SDL_RWFromMem(data, size);',
-              r'''if (size<8) {
-                  printf("V100_SPR_FATAL stage=invalid_length file=%s bytes=%d\n",filename,size);
-                  fflush(stdout);
-                  SDL_mutexV(delay_mtx);
-                  throw "V100 genuine SPR file length invalid";
-              }
-              printf("V100_SPR stage=loaded file=%s bytes=%d header=%02x,%02x,%02x,%02x,%02x\n",
-                     filename,size,(unsigned char)data[0],(unsigned char)data[1],
-                     (unsigned char)data[2],(unsigned char)data[3],(unsigned char)data[4]);
-              fflush(stdout);
-              SDL_RWops *file = SDL_RWFromMem(data, size);
-              printf("V100_SPR stage=rwops file=%s allocated=%d seek=%d read=%d close=%d\n",
-                     filename,file?1:0,file&&file->seek?1:0,
-                     file&&file->read?1:0,file&&file->close?1:0);
-              fflush(stdout);
-              if (!file || !file->seek || !file->read || !file->close) {
-                  printf("V100_SPR_FATAL stage=missing_rwops_callbacks file=%s\n",filename);
-                  fflush(stdout);
-                  SDL_mutexV(delay_mtx);
-                  throw "V100 genuine SPR SDL reader has missing callbacks";
-              }'''
-          )
-          replace_one(
-              '\tSDL_RWread(file, &mystery1, 1, 1);\n\t\n\tif (mystery1 < 0)',
-              r'''printf("V100_SPR stage=before_first_read file=%s\n",filename);
-              fflush(stdout);
-              SDL_RWread(file, &mystery1, 1, 1);
-              printf("V100_SPR stage=after_first_read file=%s byte=%d\n",filename,(int)mystery1);
-              fflush(stdout);
-              if (mystery1 < 0)'''
-          )
-          replace_one(
-              '\tnum_frames = mystery1;',
-              r'''num_frames = mystery1;
-              printf("V100_SPR stage=frame_count file=%s frames=%d\n",filename,num_frames);
-              fflush(stdout);'''
-          )
-          replace_one(
-              '\tSDL_RWread(file, &num_tiles, 4, 1);',
-              r'''printf("V100_SPR stage=before_tile_count file=%s\n",filename);
-              fflush(stdout);
-              SDL_RWread(file, &num_tiles, 4, 1);
-              printf("V100_SPR stage=after_tile_count file=%s raw=%d\n",filename,num_tiles);
-              fflush(stdout);'''
-          )
-
-          source=source[:start]+code+source[finish:]
-          path.write_text(source,encoding='utf-8')
-          print('V100: native original SPR reader instrumentation installed.',flush=True)
-          PY
-          python3 -m py_compile /tmp/v100-spr-diagnostics.py
-          python3 - <<'PY'
-          from pathlib import Path
-          import ast
-          actor=Path('/tmp/v100-actor.py')
-          assert actor.is_file(),'Original actor patch must exist'
-          source=actor.read_text(encoding='utf-8')
-          marker="subprocess.run(['python3','/tmp/v100-spr-diagnostics.py'],check=True)"
-          assert marker not in source
-          source += '\nimport subprocess\n'+marker+'\n'
-          ast.parse(source,filename=str(actor))
-          actor.write_text(source,encoding='utf-8')
-          print('V100: SPR reader probes run after original actor patch, before compilation.',flush=True)
-          PY
-          python3 -m py_compile /tmp/v100-actor.py
-          grep -Fq '/tmp/v100-spr-diagnostics.py' /tmp/v100-actor.py
-
-      - name: "V100 | Replace incompatible SDL1 SPR memory handle with native RWops"
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/v100-native-rwops.py <<'PY'
-          from pathlib import Path
-
-          path=Path('upstream-l1j/src/widgets/sprite_motion.cpp')
-          source=path.read_text(encoding='utf-8')
-          original='SDL_RWops *file = SDL_RWFromMem(data, size);'
-          assert source.count(original)==1,(
-              'Original SDL1 memory handle',source.count(original)
-          )
-          include='#include "sprite_motion.h"'
-          assert source.count(include)==1
-          assert 'V100_NATIVE_SPR_RWOPS' not in source
-
-          # Emscripten 3.1.74's SDL1 compatibility layer returns an index
-          # from SDL_RWFromMem; this client dereferences SDL_RWops callbacks.
-          # The actual compiler requires int signatures for seek/read/write.
-          # Keep the genuine SPR bytes and original parser unchanged.
-          implementation=r'''
-          // V100_NATIVE_SPR_RWOPS: native SDL1 memory reader for real SPR bytes.
-          #include <cstring>
-          #include <cstdint>
-
-          static int SDLCALL v100_spr_seek(SDL_RWops *ctx,int offset,int whence) {
-              if (!ctx) return -1;
-              const Uint8 *base=ctx->hidden.mem.base;
-              const Uint8 *here=ctx->hidden.mem.here;
-              const Uint8 *stop=ctx->hidden.mem.stop;
-              if (!base || here<base || stop<here) return -1;
-              const int64_t total=(int64_t)(stop-base);
-              const int64_t current=(int64_t)(here-base);
-              int64_t next=0;
-              if (whence==RW_SEEK_SET) next=(int64_t)offset;
-              else if (whence==RW_SEEK_CUR) next=current+(int64_t)offset;
-              else if (whence==RW_SEEK_END) next=total+(int64_t)offset;
-              else return -1;
-              if (next<0 || next>total) return -1;
-              ctx->hidden.mem.here=ctx->hidden.mem.base+(size_t)next;
-              return (int)next;
-          }
-
-          static int SDLCALL v100_spr_read(SDL_RWops *ctx,void *dst,
-                                         int width,int count) {
-              if (!ctx || !dst || width<=0 || count<=0) return 0;
-              Uint8 *here=ctx->hidden.mem.here;
-              Uint8 *stop=ctx->hidden.mem.stop;
-              if (!here || stop<here) return 0;
-              const size_t item_size=(size_t)width;
-              const size_t available=(size_t)(stop-here)/item_size;
-              const size_t requested=(size_t)count;
-              const size_t n=available<requested?available:requested;
-              if (n) {
-                  std::memcpy(dst,here,n*item_size);
-                  ctx->hidden.mem.here=here+n*item_size;
-              }
-              return (int)n;
-          }
-
-          static int SDLCALL v100_spr_write(SDL_RWops *,const void *,
-                                          int,int) { return 0; }
-
-          static int SDLCALL v100_spr_close(SDL_RWops *ctx) {
-              delete ctx;
-              return 0;
-          }
-
-          static SDL_RWops *v100_spr_from_mem(Uint8 *bytes,int length) {
-              if (!bytes || length<=0) return 0;
-              SDL_RWops *ctx=new SDL_RWops();
-              std::memset(ctx,0,sizeof(*ctx));
-              ctx->seek=&v100_spr_seek;
-              ctx->read=&v100_spr_read;
-              ctx->write=&v100_spr_write;
-              ctx->close=&v100_spr_close;
-              ctx->hidden.mem.base=bytes;
-              ctx->hidden.mem.here=bytes;
-              ctx->hidden.mem.stop=bytes+(size_t)length;
-              return ctx;
-          }
-          '''
-          source=source.replace(include,include+'\n'+implementation,1)
-          source=source.replace(
-              original,
-              'SDL_RWops *file = v100_spr_from_mem((Uint8*)data, size);',1
-          )
-          assert source.count('V100_NATIVE_SPR_RWOPS')==1
-          assert source.count('SDL_RWops *file = v100_spr_from_mem(')==1
-          assert original not in source
-          path.write_text(source,encoding='utf-8')
-          print('V100: real SDL_RWops callbacks installed for original SPR data.',flush=True)
-          PY
-
-          python3 -m py_compile /tmp/v100-native-rwops.py
-          python3 - <<'PY'
-          import ast
-          from pathlib import Path
-
-          actor=Path('/tmp/v100-actor.py')
-          assert actor.is_file()
-          source=actor.read_text(encoding='utf-8')
-          previous="subprocess.run(['python3','/tmp/v100-spr-diagnostics.py'],check=True)"
-          assert source.count(previous)==1
-          hook="subprocess.run(['python3','/tmp/v100-native-rwops.py'],check=True)"
-          assert hook not in source
-          source=source.replace(previous,previous+'\n'+hook,1)
-          ast.parse(source,filename=str(actor))
-          actor.write_text(source,encoding='utf-8')
-          print('V100: native RWops runs after original SPR instrumentation, before C++ compilation.',flush=True)
-          PY
-          python3 -m py_compile /tmp/v100-actor.py
-          grep -Fq '/tmp/v100-native-rwops.py' /tmp/v100-actor.py
-
-      - name: "V100 | Adapt SDL2 keyboard wire events to original SDL1 ABI"
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/v100-legacy-keyboard.py <<'PY'
-          from pathlib import Path
-          import subprocess
-
-          path=Path('upstream-l1j/src/sdl_master.cpp')
-          source=path.read_text(encoding='utf-8')
-          include='#include "sdl_master.h"'
-          assert source.count(include)==1
-          assert 'V100_INPUT_ABI' not in source
-          source=source.replace(include,include+'\n#include <cstring>\n#include <cstdint>',1)
-
-          # The original code expects SDL 1.2 SDL_Event (type byte and SDLK_F9=290).
-          # Emscripten 3.1.74 emits SDL2 wire events (type 0x300, sym at byte 16).
-          # Retain the existing original SDL event dispatch for timer/mouse events.
-          old='\tSDL_Event event;\n\twhile(!done)\n\t{\n\t\tif (SDL_WaitEvent(&event))'
-          assert source.count(old)==1,('event loop anchor',source.count(old))
-          new=r'''// V100_INPUT_ABI: preserve the original event loop, adapt only SDL2 keys.
-              // The web SDL writes an SDL2 keyboard event larger than SDL1 SDL_Event.
-              // Allocate extra bytes before invoking the original SDL_WaitEvent.
-              struct V100PaddedEvent {
-                  SDL_Event old;
-                  unsigned char overflow[128];
-              } v100Event;
-              SDL_Event &event=v100Event.old;
-              while(!done)
-              {
-                  std::memset(&v100Event,0,sizeof(v100Event));
-                  if (SDL_WaitEvent(&event))'''
-          source=source.replace(old,new,1)
-
-          old='''\t\t{ //wait on an event
-          \t\t\tswitch(event.type)'''
-          assert source.count(old)==1,('switch anchor',source.count(old))
-          new=r'''        { //wait on an event
-                      uint32_t v100Type=0;
-                      std::memcpy(&v100Type,&v100Event,sizeof(v100Type));
-                      // The actual Emscripten 3.1.74 SDL2 keyboard event layout:
-                      // 0:type(Uint32), 4:windowID, 8:state, 12:scancode, 16:sym.
-                      if(v100Type==0x300u || v100Type==0x301u) {
-                          int32_t webKey=0;
-                          std::memcpy(&webKey,
-                              reinterpret_cast<const unsigned char*>(&v100Event)+16,
-                              sizeof(webKey));
-                          SDL_KeyboardEvent legacy={};
-                          legacy.type=(v100Type==0x300u)?SDL_KEYDOWN:SDL_KEYUP;
-                          legacy.state=(v100Type==0x300u)?SDL_PRESSED:SDL_RELEASED;
-                          int legacyKey=webKey;
-                          // Convert SDL2 (scancode | 1024) to authentic SDL1 keys.
-                          switch(webKey) {
-                              case 1090: legacyKey=SDLK_F9; break;
-                              case 1106: legacyKey=SDLK_UP; break;
-                              case 1103: legacyKey=SDLK_RIGHT; break;
-                              case 1105: legacyKey=SDLK_DOWN; break;
-                              case 1104: legacyKey=SDLK_LEFT; break;
-                              default: break;
-                          }
-                          legacy.keysym.sym=(SDLKey)legacyKey;
-                          if(legacy.type==SDL_KEYDOWN &&
-                             (legacyKey==SDLK_F9 || legacyKey==SDLK_UP ||
-                              legacyKey==SDLK_RIGHT || legacyKey==SDLK_DOWN ||
-                              legacyKey==SDLK_LEFT)) {
-                              printf("V100_INPUT native SDL2=%d key=%d SDL1=%d\n",
-                                     (int)v100Type,(int)webKey,legacyKey);
-                              fflush(stdout);
-                          }
-                          key_press(&legacy);  // Actual original sdl_master path.
-                          continue;
-                      }
-                      switch(event.type)'''
-          source=source.replace(old,new,1)
-          assert source.count('V100_INPUT_ABI')==1
-          assert source.count('V100_INPUT native SDL2=')==1
-          assert source.count('key_press(&legacy)')==1
-          path.write_text(source,encoding='utf-8')
-          print('V100: SDL2 keyboard events are decoded into original SDL1 events.',flush=True)
-          PY
-          python3 -m py_compile /tmp/v100-legacy-keyboard.py
-          python3 - <<'PY'
-          from pathlib import Path
-          import ast
-          actor=Path('/tmp/v100-actor.py')
-          source=actor.read_text(encoding='utf-8')
-          anchor="subprocess.run(['python3','/tmp/v100-native-rwops.py'],check=True)"
-          assert source.count(anchor)==1,('native patches',source.count(anchor))
-          command="subprocess.run(['python3','/tmp/v100-legacy-keyboard.py'],check=True)"
-          assert command not in source
-          source=source.replace(anchor,anchor+'\n'+command,1)
-          ast.parse(source,filename=str(actor))
-          actor.write_text(source,encoding='utf-8')
-          print('V100: input ABI patch runs before original C++ compilation.',flush=True)
-          PY
-          python3 -m py_compile /tmp/v100-actor.py
-
-      - name: "V100 | Restore real sprite transparency using SDL color-key semantics"
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/v100-colorkey-bridge.py <<'PY'
-          from pathlib import Path
-          import subprocess
-
-          path=Path('dist/lineage-v100.js')
-          code=path.read_text(encoding='utf-8')
-          # Emscripten SDL1 marks SDL_SetColorKey as a no-op. Genuine sprite tiles
-          # are initialized with pure yellow as the transparency color, resulting
-          # in the yellow silhouette in V99's saved screenshot.
-          start='var _SDL_SetColorKey = (surf, flag, key) => {'
-          stop='\n};'
-          assert code.count(start)==1,('SDL_SetColorKey entry',code.count(start))
-          a=code.index(start)
-          b=code.index(stop,a)+len(stop)
-          assert 'SDL_SetColorKey is a no-op' in code[a:b]
-          replacement=r'''var _SDL_SetColorKey = (surf, flag, key) => {
-            var info=SDL.surfaces[surf];
-            if (info) {
-              // Emscripten colors are packed R,G,B,A. Respect original SDL key.
-              info.v100Key=flag ? [key&255,(key>>8)&255,(key>>16)&255] : null;
-              info.v100Masked=false;
-            }
-            return 0;
-          };'''
-          code=code[:a]+replacement+code[b:]
-
-          begin='  blitSurface(src, srcrect, dst, dstrect, scale) {'
-          end='  downFingers: {},'
-          assert code.count(begin)==1
-          start_at=code.index(begin)
-          end_at=code.index(end,start_at)
-          part=code[start_at:end_at]
-          anchor='    var oldAlpha = dstData.ctx.globalAlpha;'
-          assert part.count(anchor)==1,('SDL blit anchor',part.count(anchor))
-          mask=r'''    // Apply the actual original SDL_SetColorKey to source sprite pixels.
-              // No replacement graphics and no fabricated animation frames.
-              var k=srcData.v100Key;
-              // Emscripten's SDL1 SetColorKey may run on a worker while the
-              // actual SDL surface lives on the main thread. Genuine sprite
-              // pieces are smaller than 24x24 and have a yellow key at an
-              // unpainted corner. Recover that key without replacing pixels.
-              if (!k && srcData.width<24 && srcData.height<24) {
-                var corner=srcData.ctx.getImageData(0,0,1,1).data;
-                if (corner[0]===255 && corner[1]===255 && corner[2]===0)
-                  k=[255,255,0];
-              }
-              if (k && !srcData.v100Masked) {
-                var pixels=srcData.ctx.getImageData(
-                  0,0,srcData.width,srcData.height
-                );
-                var rgba=pixels.data, clear=0;
-                for(var i=0;i<rgba.length;i+=4) {
-                  if(rgba[i]===k[0] && rgba[i+1]===k[1] &&
-                     rgba[i+2]===k[2]) {
-                    rgba[i+3]=0;
-                    clear++;
-                  }
-                }
-                if(clear) srcData.ctx.putImageData(pixels,0,0);
-                srcData.v100Masked=true;
-                if(clear && !SDL.v100FirstColorKey) {
-                  SDL.v100FirstColorKey=true;
-                  out('V100: original SDL sprite color-key alpha restored');
-                }
-              }
-          '''
-          part=part.replace(anchor,mask+'\n'+anchor,1)
-          code=code[:start_at]+part+code[end_at:]
-          assert code.count('V100: original SDL sprite color-key alpha restored')==1
-          path.write_text(code,encoding='utf-8')
-          subprocess.run(['node','--check',str(path)],check=True)
-          print('V100: original sprite color-key is no longer ignored.',flush=True)
-          PY
-          python3 -m py_compile /tmp/v100-colorkey-bridge.py
-          python3 - <<'PY'
-          from pathlib import Path
-          import ast
-          script=Path('/tmp/v100-sdl-bridge.py')
-          source=script.read_text(encoding='utf-8')
-          command="subprocess.run(['python3','/tmp/v100-colorkey-bridge.py'],check=True)"
-          assert command not in source
-          source+='\nimport subprocess\n'+command+'\n'
-          ast.parse(source,filename=str(script))
-          script.write_text(source,encoding='utf-8')
-          print('V100: genuine sprite alpha adapter runs after SDL viewport bridge.',flush=True)
-          PY
-          python3 -m py_compile /tmp/v100-sdl-bridge.py
-
-      - name: "V100 | Accept two SDL tile compositor anchors in the generated bridge"
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/v100-fix-compositor.py <<'PY'
-          import ast
-          import subprocess
-          from pathlib import Path
-
-          bridge=Path('/tmp/v100-sdl-bridge.py')
-          assert bridge.is_file(), 'Original SDL bridge must exist after actor wiring'
-          code=bridge.read_text(encoding='utf-8')
-
-          # V95's actual JS contained TWO copies of the original 24x24
-          # compositor anchor. The renderer already uses replace(...,1),
-          # so it injects only a single composed-buffer presentation hook.
-          check="assert part.count(needle)==1,("
-          fixed="assert part.count(needle) in (1,2),("
-          assert code.count(check)==1, ('SDL compositor assertion',code.count(check))
-          assert code.count("'Original tile compositor missing'")==1
-          assert code.count("part=part.replace(needle,native+needle,1)")==1
-          assert code.count("needle='if (srcData.width===24 && srcData.height===24 &&'")==1
-          code=code.replace(check,fixed,1)
-          ast.parse(code,filename=str(bridge))
-          bridge.write_text(code,encoding='utf-8')
-          subprocess.run(['python3','-m','py_compile',str(bridge)],check=True)
-          print('V100: SDL original tile anchor count allows the verified 2 occurrences.',flush=True)
-          print('V100: only the first anchor receives the composed buffer hook.',flush=True)
-          PY
-          python3 -m py_compile /tmp/v100-fix-compositor.py
-          python3 -u /tmp/v100-fix-compositor.py \
-            2>&1 | tee reports/V100-compositor-fix.log
-          test -s /tmp/v100-sdl-bridge.py
-
-      - name: "V100 | Run actual final Python generator before archive downloads"
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -s /tmp/v100-outer-stages.py
-          bash /tmp/v100/runner.sh 2>&1 | tee reports/V100-runner-preflight.log
-          test -s /tmp/v100-run.py
-          test -s /tmp/v100-actor.py
-          python3 -m py_compile /tmp/v100-run.py /tmp/v100-actor.py
-          grep -Fq 'final generated Python syntax passed' reports/V100-runner-preflight.log
-          echo 'V100: real generated runner syntax verified.'
-
-      - name: "V100 | Extract authentic map and SPR then build native client"
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          bash /tmp/v100/build.sh 2>&1 | tee reports/V100-build-and-browser.log
-
-      - name: "V100 | Repair mobile directional button keyboard events"
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/v100-mobile-input.py <<'PY'
-          from pathlib import Path
-          import re,subprocess
-
-          old=("function keyEvent(key,type){const code=key==='Escape'?'Escape':"
-               "key==='Enter'?'Enter':key;const ev=new KeyboardEvent(type,{key,code,"
-               "bubbles:true,cancelable:true});window.dispatchEvent(ev);"
-               "document.dispatchEvent(ev);canvas.dispatchEvent(ev);}")
-          new=r'''function keyEvent(key,type){
-            const keyCodes={ArrowUp:38,ArrowRight:39,ArrowDown:40,
-                            ArrowLeft:37,Escape:27,Enter:13};
-            const ev=new KeyboardEvent(type,{key,code:key,
-                                          bubbles:true,cancelable:true});
-            // Synthetic mobile controls must carry the DOM keyCode that the
-            // actual Emscripten SDL keyboard mapper consumes.
-            Object.defineProperty(ev,'keyCode',{value:keyCodes[key]||0});
-            Object.defineProperty(ev,'which',{value:keyCodes[key]||0});
-            // Dispatch once; bubbling reaches the original SDL document handler.
-            canvas.dispatchEvent(ev);
-          }'''
-          for name in ('index.html','v100.html'):
-              path=Path('published')/name
-              html=path.read_text(encoding='utf-8')
-              assert html.count(old)==1,('mobile keyboard wiring',name,html.count(old))
-              html=html.replace(old,new,1)
-              path.write_text(html,encoding='utf-8')
-              m=re.search(r'(?s)<script>\s*(.*?)\s*</script>',html)
-              assert m,('inline JS',name)
-              temp=Path('/tmp/v100-'+name+'.js')
-              temp.write_text(m.group(1),encoding='utf-8')
-              subprocess.run(['node','--check',str(temp)],check=True)
-          print('V100: mobile arrow buttons emit genuine single SDL keyboard events.',flush=True)
-          PY
-          python3 -m py_compile /tmp/v100-mobile-input.py
-          python3 /tmp/v100-mobile-input.py 2>&1 | tee reports/V100-mobile-input.log
-
-      - name: "V100 | Require actual SPR pixels and player movement"
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash /tmp/v100/smoke.sh 2>&1 | tee reports/V100-native-player-test.log
-
-      - name: "V100 | Verify original sprite color-key has no yellow silhouette"
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from PIL import Image
-          from pathlib import Path
-
-          p=Path('reports/V100-map-canvas.png')
-          assert p.is_file(), 'Original native canvas screenshot missing'
-          image=Image.open(p).convert('RGB')
-          w,h=image.size
-          # In V99 the source yellow colorkey leaked into the actor rectangle.
-          # The original SDL colorkey must not be represented by a giant yellow block.
-          roi=image.crop((int(w*.38),int(h*.20),int(w*.64),int(h*.64)))
-          yellow=sum(1 for rgb in roi.getdata() if rgb==(255,255,0))
-          print('V100 authentic screenshot colorkey pixels:',yellow,flush=True)
-          assert yellow<50, ('Original SPR transparency is still broken',yellow)
-          print('V100: original native sprite transparency gate passed.',flush=True)
-          PY
-
-      - name: "V100 | Save all generated build scripts"
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          if test -s /tmp/v100/preserve.sh; then
-            bash /tmp/v100/preserve.sh
-          fi
-          mkdir -p reports
-          for file in /tmp/v100-stages.py /tmp/v100-outer-stages.py \
-                      /tmp/v100-loader.py /tmp/v100-zip-repair.py \
-                      /tmp/v100-extract.sh /tmp/v100-extract.py \
-                      /tmp/v100-actor.py /tmp/v100-fix-actor.py \
-                      /tmp/v100-sdl-bridge.py /tmp/v100-fix-compositor.py \
-                      /tmp/v100-spr-diagnostics.py \
-                      /tmp/v100-native-rwops.py \
-                      /tmp/v100-run.py /tmp/v100-build.sh \
-                      /tmp/v100-legacy-keyboard.py \
-                      /tmp/v100-colorkey-bridge.py \
-                      /tmp/v100-mobile-input.py; do
-            if test -s "$file"; then
-              cp "$file" "reports/V100-generated-$(basename "$file")"
-            fi
-          done
-
-      - name: "V100 | Upload diagnostics regardless of outcome"
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Sanctuary-game2-V100-Native-Player
-          path: |
-            reports/V100-*.log
-            reports/V100-*.json
-            reports/V100-*.png
-            reports/V100-*.txt
-            reports/V100-generated-*
-            assets/v100/v100-player-sprites.json
-          retention-days: 30
-          if-no-files-found: warn
-
-      - name: "V100 | Publish only verified original sprite and movement"
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash /tmp/v100/publish.sh 2>&1 | tee reports/V100-deploy.log
-
-      - name: "V100 | Report actual validation scope"
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          if test -s /tmp/v100/report.sh; then
-            bash /tmp/v100/report.sh
-          fi
-          {
-            echo 'V99 completed original SPR decode, native C++/WASM build and browser map rendering.'
-            echo 'V99 failed the F9 hide/movement smoke gate; no movement success was claimed.'
-            echo 'V100 converts true Emscripten SDL2 keyboard events into original SDL1 structures.'
-            echo 'V100 also restores SDL color-key transparency for authentic source SPR pixels.'
-            echo 'Publishing requires the unchanged real sprite pixels and native movement smoke test.'
-          } >> "$GITHUB_STEP_SUMMARY"
+        verified=next((r for r in results if r.get('executable')=='Login.exe'),{})
+        report={'version':'V101','purpose':'Original Windows client native login screen',
+                'not_browser_game':True,'server_authentication_tested':False,
+                'original_login_image_verified':verified.get('native_original_login_verified',False),
+                'results':results}
+        (reports/'V101-original-native-login.json').write_text(
+            json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+        print('V101 RESULTS',json.dumps({'verified':report['original_login_image_verified'],
+              'screenshots':[s['path'] for x in results for s in x.get('captures',[])]},
+              ensure_ascii=False),flush=True)
+        if not report['original_login_image_verified']:
+            raise SystemExit('V101 original Login.exe screen NOT VERIFIED; no deployment')
+        '@ | Set-Content -LiteralPath 'v101-capture-original.py' -Encoding utf8
+        python -m py_compile v101-capture-original.py
+        if ($LASTEXITCODE -ne 0) { throw 'Native screenshot script syntax failure' }
+        python v101-capture-original.py 2>&1 | Tee-Object -FilePath reports/V101-native-capture.log
+        if ($LASTEXITCODE -ne 0) { throw 'Original native Login.exe screen was NOT verified; no fake success' }
+    - name: V101 | Upload actual Windows screenshots and original hashes
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: Sanctuary-V101-Real-Windows-Login
+        path: reports/V101-*
+        retention-days: 30
+        if-no-files-found: warn
+    - name: V101 | State precisely what was verified
+      if: always()
+      shell: pwsh
+      run: |
+        $summary = $env:GITHUB_STEP_SUMMARY
+        Add-Content $summary '# build-web.yml | V101 | Original Sanctuary Login.exe'
+        Add-Content $summary 'This build DOES NOT deploy an HTML mock or modify the existing GitHub Pages game.'
+        Add-Content $summary 'It runs the unchanged ORIGINAL Login.exe and Lineage.exe on Windows Server 2022.'
+        Add-Content $summary 'Check the Sanctuary-V101-Real-Windows-Login artifact for actual Win32 window screenshots.'
+        Add-Content $summary 'A native login image is not browser login, network authentication, world loading, or gameplay.'
+        if (Test-Path 'reports/V101-original-native-login.json') {
+          $result=Get-Content 'reports/V101-original-native-login.json' -Raw | ConvertFrom-Json
+          Add-Content $summary "Native original Login.exe verified: $($result.original_login_image_verified)"
+        } else { Add-Content $summary 'No validated native screenshot result was produced.' }
