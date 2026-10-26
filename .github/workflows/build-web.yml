@@ -1,10 +1,10 @@
 # FILE: .github/workflows/build-web.yml
-# VERSION: V101
+# VERSION: V102
 # RESET: run and capture the actual unmodified Sanctuary Login.exe, NOT L1J.
 # GATE: native Win32 login pixels must be verified before any web-port claims.
 # KEEP: previous GitHub Pages deployment untouched; no HTML mock login.
-name: build-web.yml | V101 | Sanctuary game2 GitHub Pages
-run-name: build-web.yml | V101 | Sanctuary game2 GitHub Pages
+name: build-web.yml | V102 | Sanctuary game2 GitHub Pages
+run-name: build-web.yml | V102 | Sanctuary game2 GitHub Pages
 'on':
   workflow_dispatch: null
   push:
@@ -15,23 +15,23 @@ run-name: build-web.yml | V101 | Sanctuary game2 GitHub Pages
 permissions:
   contents: read
 concurrency:
-  group: game2-v101-original-native-login
+  group: game2-v102-original-native-login
   cancel-in-progress: false
 jobs:
-  original_windows_login_v101:
-    name: build-web.yml | V101 | Verify ORIGINAL Win32 login
+  original_windows_login_v102:
+    name: build-web.yml | V102 | Verify ORIGINAL Win32 login
     runs-on: windows-2022
     timeout-minutes: 90
     steps:
-    - name: V101 | Checkout workflow history
+    - name: V102 | Checkout workflow history
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-    - name: V101 | Set up native Windows Python
+    - name: V102 | Set up native Windows Python
       uses: actions/setup-python@v6
       with:
         python-version: '3.12'
-    - name: V101 | Extract original Sanctuary Windows login
+    - name: V102 | Extract original Sanctuary Windows login
       shell: pwsh
       env:
         GH_TOKEN: ${{ github.token }}
@@ -52,7 +52,7 @@ jobs:
         # Read the real Win32 launchers, their dependencies and original small images;
         # do not change original EXE bytes or inject a replacement login interface.
         & $seven x $zip "-o$output" '-y' '-ir!*.exe' '-ir!*.bin' '-ir!*.dll' '-ir!*.ini' '-ir!*.cfg' '-ir!*.dat' '-ir!*.sys' '-ir!*.vxd' '-ir!*.png' '-ir!*.bmp' '-ir!*.jpg' '-ir!*.gif' '-ir!*.fnt' '-ir!*.tbl' '-ir!*.xml' 2>&1 |
-          Out-File -FilePath (Join-Path $reports 'V101-extract.txt') -Encoding utf8
+          Out-File -FilePath (Join-Path $reports 'V102-extract.txt') -Encoding utf8
         if ($LASTEXITCODE -ne 0) { throw 'Original Sanctuary extraction failed' }
         $root = Join-Path $output 'Sanctuary of Aden - Copy'
         $expected = @{
@@ -64,15 +64,15 @@ jobs:
             if (-not (Test-Path -LiteralPath $path)) { throw "Missing ORIGINAL executable: $name" }
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
             if ($hash -ne $expected[$name]) { throw "Unmodified original SHA256 mismatch: $name" }
-            Write-Host "V101 original EXE verified $name $hash"
+            Write-Host "V102 original EXE verified $name $hash"
         }
-        Write-Host 'V101: original archive and true Login.exe / Lineage.exe verified. No L1J adapter used.'
-    - name: V101 | Install screenshot verification dependency
+        Write-Host 'V102: original archive and true Login.exe / Lineage.exe verified. No L1J adapter used.'
+    - name: V102 | Install screenshot verification dependency
       shell: pwsh
       run: |
         python -m pip install --disable-pip-version-check 'Pillow==11.3.0'
         if ($LASTEXITCODE -ne 0) { throw 'Pillow installation failed' }
-    - name: V101 | Capture and verify original Login.exe pixels
+    - name: V102 | Capture and verify original Login.exe pixels
       shell: pwsh
       run: |
         $ErrorActionPreference='Stop'
@@ -191,18 +191,18 @@ jobs:
                     img=print_window(hwnd,w,h,flags)
                     if img:output.append(('PrintWindow_'+str(flags),img))
                 except Exception as exc:
-                    print('V101 PrintWindow:',type(exc).__name__,str(exc)[:150],flush=True)
+                    print('V102 PrintWindow:',type(exc).__name__,str(exc)[:150],flush=True)
             rect=window['rect']
             try:
                 if rect[0]>=0 and rect[1]>=0:
                     desktop=ImageGrab.grab(bbox=tuple(rect),all_screens=True)
                     if desktop.size==(w,h):output.append(('DesktopCapture',desktop))
             except Exception as exc:
-                print('V101 desktop capture unavailable:',str(exc)[:150],flush=True)
+                print('V102 desktop capture unavailable:',str(exc)[:150],flush=True)
             result=[]
             for method,img in output:
                 score=metrics(img)
-                path=reports/(prefix+'-'+method+'.png')
+                path=reports/('V102-'+prefix+'-'+method+'.png')
                 img.save(path)
                 result.append({'method':method,'path':path.name,'metrics':score})
             return result
@@ -214,7 +214,7 @@ jobs:
             assert sha==EXPECTED[name],('Original binary was modified',name,sha)
             entry={'executable':name,'sha256':sha,'original_binary_unchanged':True,
                    'window_evidence':[],'captures':[],'native_original_login_verified':False}
-            print('V101 starting UNMODIFIED',name,flush=True)
+            print('V102 starting UNMODIFIED',name,flush=True)
             process=subprocess.Popen([str(exe)],executable=str(exe),cwd=str(original),
                                      stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
                                      stderr=subprocess.DEVNULL)
@@ -231,7 +231,7 @@ jobs:
                 entry['alive_when_probed']=process.poll() is None
                 entry['window_evidence']=[{k:v for k,v in x.items() if k!='hwnd'}
                                           for x in candidates]
-                print('V101 native top-level windows:',[(x['title'],x['w'],x['h'])
+                print('V102 native top-level windows:',[(x['title'],x['w'],x['h'])
                         for x in candidates],flush=True)
                 valid=[x for x in candidates if x['visible'] and x['w']>200 and x['h']>150]
                 valid.sort(key=lambda x:(('Lineage' in x['title'] or 'Login' in x['title']),
@@ -262,44 +262,70 @@ jobs:
                 results.append(run(name))
             except Exception as exc:
                 results.append({'executable':name,'error':str(exc)})
-                print('V101 original-client failure:',name,repr(exc),flush=True)
+                print('V102 original-client failure:',name,repr(exc),flush=True)
 
         verified=next((r for r in results if r.get('executable')=='Login.exe'),{})
-        report={'version':'V101','purpose':'Original Windows client native login screen',
+        report={'version':'V102','purpose':'Original Windows client native login screen',
                 'not_browser_game':True,'server_authentication_tested':False,
                 'original_login_image_verified':verified.get('native_original_login_verified',False),
                 'results':results}
-        (reports/'V101-original-native-login.json').write_text(
+        (reports/'V102-original-native-login.json').write_text(
             json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
-        print('V101 RESULTS',json.dumps({'verified':report['original_login_image_verified'],
+        # Actual PNGs must be present in the exact Actions upload glob.
+        # V101 created screenshots named Login-*.png and uploaded only V101-*.
+        # The 1.9 KB V101 artifact consequently contained NO images.
+        shots=[reports/s['path'] for x in results for s in x.get('captures',[])]
+        login_shots=[p for p in shots if p.name.startswith('V102-Login-')]
+        assert len(login_shots)>=2, ('Native Login screenshots were not captured',shots)
+        for picture in shots:
+            assert picture.is_file() and picture.stat().st_size>2000, ('Missing PNG',str(picture))
+            with Image.open(picture) as img:
+                img.verify()
+        assert all(p.match('V102-*.png') for p in shots)
+        print('V102 actual screenshot files in upload glob:',
+              [(p.name,p.stat().st_size) for p in shots],flush=True)
+        print('V102 RESULTS',json.dumps({'verified':report['original_login_image_verified'],
               'screenshots':[s['path'] for x in results for s in x.get('captures',[])]},
               ensure_ascii=False),flush=True)
         if not report['original_login_image_verified']:
-            raise SystemExit('V101 original Login.exe screen NOT VERIFIED; no deployment')
-        '@ | Set-Content -LiteralPath 'v101-capture-original.py' -Encoding utf8
-        python -m py_compile v101-capture-original.py
+            raise SystemExit('V102 original Login.exe screen NOT VERIFIED; no deployment')
+        '@ | Set-Content -LiteralPath 'v102-capture-original.py' -Encoding utf8
+        python -m py_compile v102-capture-original.py
         if ($LASTEXITCODE -ne 0) { throw 'Native screenshot script syntax failure' }
-        python v101-capture-original.py 2>&1 | Tee-Object -FilePath reports/V101-native-capture.log
+        python v102-capture-original.py 2>&1 | Tee-Object -FilePath reports/V102-native-capture.log
         if ($LASTEXITCODE -ne 0) { throw 'Original native Login.exe screen was NOT verified; no fake success' }
-    - name: V101 | Upload actual Windows screenshots and original hashes
+    - name: V102 | Confirm the login PNG files match the upload path
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $pngs = @(Get-ChildItem -Path 'reports/V102-Login-*.png' -File -ErrorAction SilentlyContinue)
+        if ($pngs.Count -lt 2) { throw 'V102 native login captures missing: refuse screenshot-only success' }
+        $all = @(Get-ChildItem -Path 'reports/V102-*.png' -File -ErrorAction SilentlyContinue)
+        foreach ($png in $all) {
+          if ($png.Length -le 2000) { throw "V102 screenshot is empty: $($png.Name)" }
+          Write-Host "V102 screenshot included in artifact: $($png.Name) ($($png.Length) bytes)"
+        }
+        Write-Host "V102: $($all.Count) original Windows screenshots will be uploaded"
+    - name: V102 | Upload actual Windows screenshots and original hashes
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: Sanctuary-V101-Real-Windows-Login
-        path: reports/V101-*
+        name: Sanctuary-V102-Real-Windows-Login
+        path: reports/V102-*
         retention-days: 30
         if-no-files-found: warn
-    - name: V101 | State precisely what was verified
+    - name: V102 | State precisely what was verified
       if: always()
       shell: pwsh
       run: |
         $summary = $env:GITHUB_STEP_SUMMARY
-        Add-Content $summary '# build-web.yml | V101 | Original Sanctuary Login.exe'
+        Add-Content $summary '# build-web.yml | V102 | Original Sanctuary Login.exe'
         Add-Content $summary 'This build DOES NOT deploy an HTML mock or modify the existing GitHub Pages game.'
+        Add-Content $summary 'V101 mistakenly omitted images from its upload artifact. V102 includes V102-Login-*.png.'
         Add-Content $summary 'It runs the unchanged ORIGINAL Login.exe and Lineage.exe on Windows Server 2022.'
-        Add-Content $summary 'Check the Sanctuary-V101-Real-Windows-Login artifact for actual Win32 window screenshots.'
+        Add-Content $summary 'Download Sanctuary-V102-Real-Windows-Login artifact for the original Win32 window PNG files.'
         Add-Content $summary 'A native login image is not browser login, network authentication, world loading, or gameplay.'
-        if (Test-Path 'reports/V101-original-native-login.json') {
-          $result=Get-Content 'reports/V101-original-native-login.json' -Raw | ConvertFrom-Json
-          Add-Content $summary "Native original Login.exe verified: $($result.original_login_image_verified)"
+        if (Test-Path 'reports/V102-original-native-login.json') {
+          $result=Get-Content 'reports/V102-original-native-login.json' -Raw | ConvertFrom-Json
+          Add-Content $summary "Native original Login.exe window and pixels verified: $($result.original_login_image_verified)"
         } else { Add-Content $summary 'No validated native screenshot result was produced.' }
