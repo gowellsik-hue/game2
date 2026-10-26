@@ -1,10 +1,11 @@
 # FILE: .github/workflows/build-web.yml
-# VERSION: V102
+# VERSION: V103
 # RESET: run and capture the actual unmodified Sanctuary Login.exe, NOT L1J.
-# GATE: native Win32 login pixels must be verified before any web-port claims.
+# GATE: verify real Login.exe pixels; small Lineage.exe error-dialog PNGs
+# are diagnostics, not grounds to fail the login screenshot check.
 # KEEP: previous GitHub Pages deployment untouched; no HTML mock login.
-name: build-web.yml | V102 | Sanctuary game2 GitHub Pages
-run-name: build-web.yml | V102 | Sanctuary game2 GitHub Pages
+name: build-web.yml | V103 | Sanctuary game2 GitHub Pages
+run-name: build-web.yml | V103 | Sanctuary game2 GitHub Pages
 'on':
   workflow_dispatch: null
   push:
@@ -15,23 +16,25 @@ run-name: build-web.yml | V102 | Sanctuary game2 GitHub Pages
 permissions:
   contents: read
 concurrency:
-  group: game2-v102-original-native-login
+  group: game2-v103-original-native-login
   cancel-in-progress: false
 jobs:
-  original_windows_login_v102:
-    name: build-web.yml | V102 | Verify ORIGINAL Win32 login
+  original_windows_login_v103:
+    name: build-web.yml | V103 | Verify ORIGINAL Win32 login
     runs-on: windows-2022
     timeout-minutes: 90
     steps:
-    - name: V102 | Checkout workflow history
+    - name: V103 | Checkout workflow history
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-    - name: V102 | Set up native Windows Python
+
+    - name: V103 | Set up native Windows Python
       uses: actions/setup-python@v6
       with:
         python-version: '3.12'
-    - name: V102 | Extract original Sanctuary Windows login
+
+    - name: V103 | Extract original Sanctuary Windows login
       shell: pwsh
       env:
         GH_TOKEN: ${{ github.token }}
@@ -41,38 +44,64 @@ jobs:
         $output = Join-Path $env:GITHUB_WORKSPACE 'work/original'
         $reports = Join-Path $env:GITHUB_WORKSPACE 'reports'
         New-Item -ItemType Directory -Force -Path $archive,$output,$reports | Out-Null
-        # The original V50 source archive was already verified by native Windows runs.
+
         gh release download v1.0.0 -R gowellsik-hue/Game -p 'Sanctuary.of.Aden.-.Copy.*' -D $archive --clobber
-        if ($LASTEXITCODE -ne 0) { throw 'Original release download failed' }
-        if (@(Get-ChildItem -LiteralPath $archive -File).Count -ne 46) { throw 'Original archive must contain 46 volumes' }
+        if ($LASTEXITCODE -ne 0) {
+          throw 'Original release download failed'
+        }
+
+        if (@(Get-ChildItem -LiteralPath $archive -File).Count -ne 46) {
+          throw 'Original archive must contain 46 volumes'
+        }
+
         $tool = Get-Command 7z.exe -ErrorAction SilentlyContinue
-        $seven = if ($tool) { $tool.Source } else { Join-Path $env:ProgramFiles '7-Zip/7z.exe' }
-        if (-not (Test-Path -LiteralPath $seven)) { throw 'Original archive extractor 7z.exe is unavailable' }
+        $seven = if ($tool) {
+          $tool.Source
+        } else {
+          Join-Path $env:ProgramFiles '7-Zip/7z.exe'
+        }
+
+        if (-not (Test-Path -LiteralPath $seven)) {
+          throw 'Original archive extractor 7z.exe is unavailable'
+        }
+
         $zip = Join-Path $archive 'Sanctuary.of.Aden.-.Copy.zip'
-        # Read the real Win32 launchers, their dependencies and original small images;
-        # do not change original EXE bytes or inject a replacement login interface.
         & $seven x $zip "-o$output" '-y' '-ir!*.exe' '-ir!*.bin' '-ir!*.dll' '-ir!*.ini' '-ir!*.cfg' '-ir!*.dat' '-ir!*.sys' '-ir!*.vxd' '-ir!*.png' '-ir!*.bmp' '-ir!*.jpg' '-ir!*.gif' '-ir!*.fnt' '-ir!*.tbl' '-ir!*.xml' 2>&1 |
-          Out-File -FilePath (Join-Path $reports 'V102-extract.txt') -Encoding utf8
-        if ($LASTEXITCODE -ne 0) { throw 'Original Sanctuary extraction failed' }
+          Out-File -FilePath (Join-Path $reports 'V103-extract.txt') -Encoding utf8
+
+        if ($LASTEXITCODE -ne 0) {
+          throw 'Original Sanctuary extraction failed'
+        }
+
         $root = Join-Path $output 'Sanctuary of Aden - Copy'
         $expected = @{
-            'Login.exe' = '995a4752b7e2da7782a95445f2ce7b07ec5e19c72c4b0387c5373dd3f2d06741'
-            'Lineage.exe' = '2124b3da5f53123e0f94a85bd7f9edb2344925fdb4f53d0fc0653ea5c9241414'
+          'Login.exe' = '995a4752b7e2da7782a95445f2ce7b07ec5e19c72c4b0387c5373dd3f2d06741'
+          'Lineage.exe' = '2124b3da5f53123e0f94a85bd7f9edb2344925fdb4f53d0fc0653ea5c9241414'
         }
+
         foreach ($name in $expected.Keys) {
-            $path = Join-Path $root $name
-            if (-not (Test-Path -LiteralPath $path)) { throw "Missing ORIGINAL executable: $name" }
-            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
-            if ($hash -ne $expected[$name]) { throw "Unmodified original SHA256 mismatch: $name" }
-            Write-Host "V102 original EXE verified $name $hash"
+          $path = Join-Path $root $name
+          if (-not (Test-Path -LiteralPath $path)) {
+            throw "Missing ORIGINAL executable: $name"
+          }
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+          if ($hash -ne $expected[$name]) {
+            throw "Unmodified original SHA256 mismatch: $name"
+          }
+          Write-Host "V103 original EXE verified $name $hash"
         }
-        Write-Host 'V102: original archive and true Login.exe / Lineage.exe verified. No L1J adapter used.'
-    - name: V102 | Install screenshot verification dependency
+
+        Write-Host 'V103: original Login.exe / Lineage.exe verified. No L1J adapter used.'
+
+    - name: V103 | Install screenshot verification dependency
       shell: pwsh
       run: |
         python -m pip install --disable-pip-version-check 'Pillow==11.3.0'
-        if ($LASTEXITCODE -ne 0) { throw 'Pillow installation failed' }
-    - name: V102 | Capture and verify original Login.exe pixels
+        if ($LASTEXITCODE -ne 0) {
+          throw 'Pillow installation failed'
+        }
+
+    - name: V103 | Capture and verify original Login.exe pixels
       shell: pwsh
       run: |
         $ErrorActionPreference='Stop'
@@ -103,14 +132,23 @@ jobs:
         HWND = wintypes.HWND
         HDC = wintypes.HDC
         CB = ctypes.WINFUNCTYPE(wintypes.BOOL, HWND, wintypes.LPARAM)
+
         U.EnumWindows.argtypes = [CB, wintypes.LPARAM]
         U.EnumWindows.restype = wintypes.BOOL
-        U.GetWindowThreadProcessId.argtypes = [HWND, ctypes.POINTER(wintypes.DWORD)]
-        U.GetWindowTextW.argtypes = [HWND, wintypes.LPWSTR, ctypes.c_int]
+        U.GetWindowThreadProcessId.argtypes = [
+            HWND, ctypes.POINTER(wintypes.DWORD)
+        ]
+        U.GetWindowTextW.argtypes = [
+            HWND, wintypes.LPWSTR, ctypes.c_int
+        ]
         U.GetWindowTextW.restype = ctypes.c_int
-        U.GetClassNameW.argtypes = [HWND, wintypes.LPWSTR, ctypes.c_int]
+        U.GetClassNameW.argtypes = [
+            HWND, wintypes.LPWSTR, ctypes.c_int
+        ]
         U.IsWindowVisible.argtypes = [HWND]
-        U.GetWindowRect.argtypes = [HWND, ctypes.POINTER(wintypes.RECT)]
+        U.GetWindowRect.argtypes = [
+            HWND, ctypes.POINTER(wintypes.RECT)
+        ]
         U.PrintWindow.argtypes = [HWND, HDC, wintypes.UINT]
         U.PrintWindow.restype = wintypes.BOOL
         U.GetWindowDC.argtypes = [HWND]
@@ -118,214 +156,527 @@ jobs:
         U.ReleaseDC.argtypes = [HWND, HDC]
         G.CreateCompatibleDC.argtypes = [HDC]
         G.CreateCompatibleDC.restype = HDC
-        G.CreateCompatibleBitmap.argtypes = [HDC, ctypes.c_int, ctypes.c_int]
+        G.CreateCompatibleBitmap.argtypes = [
+            HDC, ctypes.c_int, ctypes.c_int
+        ]
         G.CreateCompatibleBitmap.restype = wintypes.HBITMAP
         G.SelectObject.argtypes = [HDC, wintypes.HANDLE]
         G.SelectObject.restype = wintypes.HANDLE
         G.DeleteObject.argtypes = [wintypes.HANDLE]
         G.DeleteDC.argtypes = [HDC]
-        G.GetDIBits.argtypes = [HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT,
-                              ctypes.c_void_p, ctypes.c_void_p, wintypes.UINT]
+        G.GetDIBits.argtypes = [
+            HDC,
+            wintypes.HBITMAP,
+            wintypes.UINT,
+            wintypes.UINT,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            wintypes.UINT
+        ]
 
         def windows_for_pid(pid):
-            found=[]
+            found = []
+
             @CB
             def each(hwnd, unused):
-                owner=wintypes.DWORD()
-                U.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+                owner = wintypes.DWORD()
+                U.GetWindowThreadProcessId(
+                    hwnd, ctypes.byref(owner)
+                )
                 if owner.value != pid:
                     return True
+
                 title = ctypes.create_unicode_buffer(512)
                 cls = ctypes.create_unicode_buffer(256)
-                U.GetWindowTextW(hwnd,title,512)
-                U.GetClassNameW(hwnd,cls,256)
-                rect=wintypes.RECT()
+                U.GetWindowTextW(hwnd, title, 512)
+                U.GetClassNameW(hwnd, cls, 256)
+
+                rect = wintypes.RECT()
                 U.GetWindowRect(hwnd, ctypes.byref(rect))
-                w=rect.right-rect.left
-                h=rect.bottom-rect.top
-                found.append({'hwnd':int(hwnd), 'title':title.value,
-                    'class':cls.value,'visible':bool(U.IsWindowVisible(hwnd)),
-                    'rect':[rect.left,rect.top,rect.right,rect.bottom],
-                    'w':w,'h':h})
+                w = rect.right - rect.left
+                h = rect.bottom - rect.top
+
+                found.append({
+                    'hwnd': int(hwnd),
+                    'title': title.value,
+                    'class': cls.value,
+                    'visible': bool(U.IsWindowVisible(hwnd)),
+                    'rect': [
+                        rect.left,
+                        rect.top,
+                        rect.right,
+                        rect.bottom
+                    ],
+                    'w': w,
+                    'h': h
+                })
                 return True
-            U.EnumWindows(each,0)
+
+            U.EnumWindows(each, 0)
             return found
 
         def print_window(hwnd, w, h, flags):
-            if not (80<=w<=3000 and 60<=h<=3000): return None
-            dc=U.GetWindowDC(hwnd)
-            if not dc: return None
-            mem=G.CreateCompatibleDC(dc)
-            if not mem: U.ReleaseDC(hwnd,dc);return None
-            bmp=G.CreateCompatibleBitmap(dc,w,h)
-            old=G.SelectObject(mem,bmp)
+            if not (80 <= w <= 3000 and 60 <= h <= 3000):
+                return None
+
+            dc = U.GetWindowDC(hwnd)
+            if not dc:
+                return None
+
+            mem = G.CreateCompatibleDC(dc)
+            if not mem:
+                U.ReleaseDC(hwnd, dc)
+                return None
+
+            bmp = G.CreateCompatibleBitmap(dc, w, h)
+            old = G.SelectObject(mem, bmp)
+
             try:
-                drawn=U.PrintWindow(hwnd,mem,flags)
-                if not drawn:return None
-                header=ctypes.create_string_buffer(struct.pack(
-                    '<IiiHHIIiiII',40,w,-h,1,32,0,0,0,0,0,0))
-                pixels=ctypes.create_string_buffer(w*h*4)
-                lines=G.GetDIBits(mem,bmp,0,h,pixels,header,0)
-                if lines!=h:return None
-                return Image.frombytes('RGB',(w,h),pixels.raw,'raw','BGRX',0,1)
+                drawn = U.PrintWindow(hwnd, mem, flags)
+                if not drawn:
+                    return None
+
+                header = ctypes.create_string_buffer(
+                    struct.pack(
+                        '<IiiHHIIiiII',
+                        40, w, -h, 1, 32, 0, 0, 0, 0, 0, 0
+                    )
+                )
+                pixels = ctypes.create_string_buffer(w * h * 4)
+
+                lines = G.GetDIBits(
+                    mem, bmp, 0, h, pixels, header, 0
+                )
+                if lines != h:
+                    return None
+
+                return Image.frombytes(
+                    'RGB',
+                    (w, h),
+                    pixels.raw,
+                    'raw',
+                    'BGRX',
+                    0,
+                    1
+                )
+
             finally:
-                G.SelectObject(mem,old)
+                G.SelectObject(mem, old)
                 G.DeleteObject(bmp)
                 G.DeleteDC(mem)
-                U.ReleaseDC(hwnd,dc)
+                U.ReleaseDC(hwnd, dc)
 
         def metrics(image):
-            small=image.convert('RGB').resize((160,120))
-            pixels=list(small.getdata())
-            quant=len({(r//16,g//16,b//16) for r,g,b in pixels})
-            bright=sum(1 for r,g,b in pixels if max(r,g,b)>45)/len(pixels)
-            return {'colors_16':quant,'nonblack_fraction':round(bright,4),
-                    'width':image.width,'height':image.height}
+            small = image.convert('RGB').resize((160, 120))
+            pixels = list(small.getdata())
+
+            quant = len({
+                (r // 16, g // 16, b // 16)
+                for r, g, b in pixels
+            })
+            bright = sum(
+                1 for r, g, b in pixels
+                if max(r, g, b) > 45
+            ) / len(pixels)
+
+            return {
+                'colors_16': quant,
+                'nonblack_fraction': round(bright, 4),
+                'width': image.width,
+                'height': image.height
+            }
 
         def captures(window, prefix):
-            w,h=window['w'],window['h']
-            hwnd=HWND(window['hwnd'])
-            output=[]
-            for flags in (2,0):
+            w, h = window['w'], window['h']
+            hwnd = HWND(window['hwnd'])
+            output = []
+
+            for flags in (2, 0):
                 try:
-                    img=print_window(hwnd,w,h,flags)
-                    if img:output.append(('PrintWindow_'+str(flags),img))
+                    img = print_window(hwnd, w, h, flags)
+                    if img:
+                        output.append((
+                            'PrintWindow_' + str(flags), img
+                        ))
                 except Exception as exc:
-                    print('V102 PrintWindow:',type(exc).__name__,str(exc)[:150],flush=True)
-            rect=window['rect']
+                    print(
+                        'V103 PrintWindow:',
+                        type(exc).__name__,
+                        str(exc)[:150],
+                        flush=True
+                    )
+
+            rect = window['rect']
+
             try:
-                if rect[0]>=0 and rect[1]>=0:
-                    desktop=ImageGrab.grab(bbox=tuple(rect),all_screens=True)
-                    if desktop.size==(w,h):output.append(('DesktopCapture',desktop))
+                if rect[0] >= 0 and rect[1] >= 0:
+                    desktop = ImageGrab.grab(
+                        bbox=tuple(rect),
+                        all_screens=True
+                    )
+                    if desktop.size == (w, h):
+                        output.append((
+                            'DesktopCapture', desktop
+                        ))
             except Exception as exc:
-                print('V102 desktop capture unavailable:',str(exc)[:150],flush=True)
-            result=[]
-            for method,img in output:
-                score=metrics(img)
-                path=reports/('V102-'+prefix+'-'+method+'.png')
+                print(
+                    'V103 desktop capture unavailable:',
+                    str(exc)[:150],
+                    flush=True
+                )
+
+            result = []
+
+            for method, img in output:
+                score = metrics(img)
+                path = reports / (
+                    'V103-' + prefix + '-' + method + '.png'
+                )
                 img.save(path)
-                result.append({'method':method,'path':path.name,'metrics':score})
+
+                result.append({
+                    'method': method,
+                    'path': path.name,
+                    'metrics': score
+                })
+
             return result
 
         def run(name):
-            exe=original/name
-            assert exe.exists(),('Original executable missing',name)
-            sha=hashlib.sha256(exe.read_bytes()).hexdigest()
-            assert sha==EXPECTED[name],('Original binary was modified',name,sha)
-            entry={'executable':name,'sha256':sha,'original_binary_unchanged':True,
-                   'window_evidence':[],'captures':[],'native_original_login_verified':False}
-            print('V102 starting UNMODIFIED',name,flush=True)
-            process=subprocess.Popen([str(exe)],executable=str(exe),cwd=str(original),
-                                     stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
-                                     stderr=subprocess.DEVNULL)
+            exe = original / name
+            assert exe.exists(), (
+                'Original executable missing', name
+            )
+
+            sha = hashlib.sha256(
+                exe.read_bytes()
+            ).hexdigest()
+
+            assert sha == EXPECTED[name], (
+                'Original binary was modified', name, sha
+            )
+
+            entry = {
+                'executable': name,
+                'sha256': sha,
+                'original_binary_unchanged': True,
+                'window_evidence': [],
+                'captures': [],
+                'native_original_login_verified': False
+            }
+
+            print(
+                'V103 starting UNMODIFIED',
+                name,
+                flush=True
+            )
+
+            process = subprocess.Popen(
+                [str(exe)],
+                executable=str(exe),
+                cwd=str(original),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+
             try:
-                start=time.monotonic()
-                candidates=[]
-                while time.monotonic()-start<20:
-                    candidates=windows_for_pid(process.pid)
-                    valid=[x for x in candidates if x['visible'] and x['w']>200 and x['h']>150]
-                    if valid:break
-                    if process.poll() is not None:break
+                start = time.monotonic()
+                candidates = []
+
+                while time.monotonic() - start < 20:
+                    candidates = windows_for_pid(process.pid)
+                    valid = [
+                        x for x in candidates
+                        if x['visible']
+                        and x['w'] > 200
+                        and x['h'] > 150
+                    ]
+
+                    if valid:
+                        break
+
+                    if process.poll() is not None:
+                        break
+
                     time.sleep(0.5)
-                entry['pid']=process.pid
-                entry['alive_when_probed']=process.poll() is None
-                entry['window_evidence']=[{k:v for k,v in x.items() if k!='hwnd'}
-                                          for x in candidates]
-                print('V102 native top-level windows:',[(x['title'],x['w'],x['h'])
-                        for x in candidates],flush=True)
-                valid=[x for x in candidates if x['visible'] and x['w']>200 and x['h']>150]
-                valid.sort(key=lambda x:(('Lineage' in x['title'] or 'Login' in x['title']),
-                                         x['w']*x['h']),reverse=True)
-                for idx,window in enumerate(valid[:3]):
+
+                entry['pid'] = process.pid
+                entry['alive_when_probed'] = (
+                    process.poll() is None
+                )
+                entry['window_evidence'] = [
+                    {
+                        k: v for k, v in x.items()
+                        if k != 'hwnd'
+                    }
+                    for x in candidates
+                ]
+
+                print(
+                    'V103 native top-level windows:',
+                    [
+                        (x['title'], x['w'], x['h'])
+                        for x in candidates
+                    ],
+                    flush=True
+                )
+
+                valid = [
+                    x for x in candidates
+                    if x['visible']
+                    and x['w'] > 200
+                    and x['h'] > 150
+                ]
+
+                valid.sort(
+                    key=lambda x: (
+                        (
+                            'Lineage' in x['title']
+                            or 'Login' in x['title']
+                        ),
+                        x['w'] * x['h']
+                    ),
+                    reverse=True
+                )
+
+                for idx, window in enumerate(valid[:3]):
                     time.sleep(0.6)
-                    result=captures(window,name.replace('.exe','')+'-'+str(idx))
-                    for shot in result:shot['window_title']=window['title']
+                    result = captures(
+                        window,
+                        name.replace('.exe', '')
+                        + '-' + str(idx)
+                    )
+
+                    for shot in result:
+                        shot['window_title'] = window['title']
+
                     entry['captures'].extend(result)
-                # Require a REAL visible window and native-pixel evidence; no HTML
-                # screenshots, substitute images, or title-only green check.
-                evidence=[x for x in entry['captures'] if
-                        x['metrics']['colors_16']>=12 and
-                        x['metrics']['nonblack_fraction']>=0.07]
+
+                evidence = [
+                    x for x in entry['captures']
+                    if x['metrics']['colors_16'] >= 12
+                    and x['metrics']['nonblack_fraction'] >= 0.07
+                ]
+
                 entry['native_original_login_verified'] = (
-                    name=='Login.exe' and
-                    any('Lineage' in x['title'] or 'Login' in x['title']
-                        for x in valid) and bool(evidence))
+                    name == 'Login.exe'
+                    and any(
+                        'Lineage' in x['title']
+                        or 'Login' in x['title']
+                        for x in valid
+                    )
+                    and bool(evidence)
+                )
+
             finally:
                 if process.poll() is None:
-                    subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],
-                        timeout=25,check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                    subprocess.run(
+                        [
+                            'taskkill',
+                            '/PID',
+                            str(process.pid),
+                            '/T',
+                            '/F'
+                        ],
+                        timeout=25,
+                        check=False,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+
             return entry
 
-        results=[]
-        for name in ('Login.exe','Lineage.exe'):
+        results = []
+
+        for name in ('Login.exe', 'Lineage.exe'):
             try:
                 results.append(run(name))
             except Exception as exc:
-                results.append({'executable':name,'error':str(exc)})
-                print('V102 original-client failure:',name,repr(exc),flush=True)
+                results.append({
+                    'executable': name,
+                    'error': str(exc)
+                })
+                print(
+                    'V103 original-client failure:',
+                    name,
+                    repr(exc),
+                    flush=True
+                )
 
-        verified=next((r for r in results if r.get('executable')=='Login.exe'),{})
-        report={'version':'V102','purpose':'Original Windows client native login screen',
-                'not_browser_game':True,'server_authentication_tested':False,
-                'original_login_image_verified':verified.get('native_original_login_verified',False),
-                'results':results}
-        (reports/'V102-original-native-login.json').write_text(
-            json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
-        # Actual PNGs must be present in the exact Actions upload glob.
-        # V101 created screenshots named Login-*.png and uploaded only V101-*.
-        # The 1.9 KB V101 artifact consequently contained NO images.
-        shots=[reports/s['path'] for x in results for s in x.get('captures',[])]
-        login_shots=[p for p in shots if p.name.startswith('V102-Login-')]
-        assert len(login_shots)>=2, ('Native Login screenshots were not captured',shots)
+        verified = next(
+            (
+                r for r in results
+                if r.get('executable') == 'Login.exe'
+            ),
+            {}
+        )
+
+        report = {
+            'version': 'V103',
+            'purpose': 'Original Windows client native login screen',
+            'not_browser_game': True,
+            'server_authentication_tested': False,
+            'original_login_image_verified': verified.get(
+                'native_original_login_verified', False
+            ),
+            'results': results
+        }
+
+        (
+            reports / 'V103-original-native-login.json'
+        ).write_text(
+            json.dumps(
+                report,
+                ensure_ascii=False,
+                indent=2
+            ),
+            encoding='utf-8'
+        )
+
+        shots = [
+            reports / s['path']
+            for x in results
+            for s in x.get('captures', [])
+        ]
+
+        login_shots = [
+            p for p in shots
+            if p.name.startswith('V103-Login-')
+        ]
+
+        assert len(login_shots) >= 2, (
+            'Native Login screenshots were not captured',
+            shots
+        )
+
+        # Only Login.exe screenshots are required proof.
+        # Small Lineage.exe error-dialog PNGs remain diagnostics.
         for picture in shots:
-            assert picture.is_file() and picture.stat().st_size>2000, ('Missing PNG',str(picture))
+            assert picture.is_file() and picture.stat().st_size > 0, (
+                'Missing PNG', str(picture)
+            )
+
             with Image.open(picture) as img:
                 img.verify()
-        assert all(p.match('V102-*.png') for p in shots)
-        print('V102 actual screenshot files in upload glob:',
-              [(p.name,p.stat().st_size) for p in shots],flush=True)
-        print('V102 RESULTS',json.dumps({'verified':report['original_login_image_verified'],
-              'screenshots':[s['path'] for x in results for s in x.get('captures',[])]},
-              ensure_ascii=False),flush=True)
+
+            if picture in login_shots:
+                assert picture.stat().st_size > 2000, (
+                    'Original Login.exe PNG too small',
+                    str(picture)
+                )
+
+        assert all(
+            p.match('V103-*.png')
+            for p in shots
+        )
+
+        print(
+            'V103 actual screenshot files in upload glob:',
+            [
+                (p.name, p.stat().st_size)
+                for p in shots
+            ],
+            flush=True
+        )
+
+        print(
+            'V103 RESULTS',
+            json.dumps(
+                {
+                    'verified': report[
+                        'original_login_image_verified'
+                    ],
+                    'screenshots': [
+                        s['path']
+                        for x in results
+                        for s in x.get('captures', [])
+                    ]
+                },
+                ensure_ascii=False
+            ),
+            flush=True
+        )
+
         if not report['original_login_image_verified']:
-            raise SystemExit('V102 original Login.exe screen NOT VERIFIED; no deployment')
-        '@ | Set-Content -LiteralPath 'v102-capture-original.py' -Encoding utf8
-        python -m py_compile v102-capture-original.py
-        if ($LASTEXITCODE -ne 0) { throw 'Native screenshot script syntax failure' }
-        python v102-capture-original.py 2>&1 | Tee-Object -FilePath reports/V102-native-capture.log
-        if ($LASTEXITCODE -ne 0) { throw 'Original native Login.exe screen was NOT verified; no fake success' }
-    - name: V102 | Confirm the login PNG files match the upload path
+            raise SystemExit(
+                'V103 original Login.exe screen NOT VERIFIED; no deployment'
+            )
+
+        '@ | Set-Content -LiteralPath 'v103-capture-original.py' -Encoding utf8
+
+        python -m py_compile v103-capture-original.py
+
+        if ($LASTEXITCODE -ne 0) {
+          throw 'Native screenshot script syntax failure'
+        }
+
+        python v103-capture-original.py 2>&1 |
+          Tee-Object -FilePath reports/V103-native-capture.log
+
+        if ($LASTEXITCODE -ne 0) {
+          throw 'Original native Login.exe screen was NOT verified'
+        }
+
+    - name: V103 | Confirm the login PNG files match the upload path
       shell: pwsh
       run: |
         $ErrorActionPreference = 'Stop'
-        $pngs = @(Get-ChildItem -Path 'reports/V102-Login-*.png' -File -ErrorAction SilentlyContinue)
-        if ($pngs.Count -lt 2) { throw 'V102 native login captures missing: refuse screenshot-only success' }
-        $all = @(Get-ChildItem -Path 'reports/V102-*.png' -File -ErrorAction SilentlyContinue)
-        foreach ($png in $all) {
-          if ($png.Length -le 2000) { throw "V102 screenshot is empty: $($png.Name)" }
-          Write-Host "V102 screenshot included in artifact: $($png.Name) ($($png.Length) bytes)"
+
+        $pngs = @(
+          Get-ChildItem -Path 'reports/V103-Login-*.png' -File -ErrorAction SilentlyContinue
+        )
+
+        if ($pngs.Count -lt 2) {
+          throw 'V103 native Login.exe screenshots missing'
         }
-        Write-Host "V102: $($all.Count) original Windows screenshots will be uploaded"
-    - name: V102 | Upload actual Windows screenshots and original hashes
+
+        $all = @(
+          Get-ChildItem -Path 'reports/V103-*.png' -File -ErrorAction SilentlyContinue
+        )
+
+        foreach ($png in $all) {
+          if ($png.Length -le 0) {
+            throw "V103 screenshot is empty: $($png.Name)"
+          }
+
+          if ($png.Name -like 'V103-Login-*.png' -and $png.Length -le 2000) {
+            throw "V103 original Login.exe screenshot is too small: $($png.Name)"
+          }
+
+          Write-Host "V103 screenshot included in artifact: $($png.Name) ($($png.Length) bytes)"
+        }
+
+        Write-Host "V103: $($all.Count) original Windows screenshots will be uploaded"
+
+    - name: V103 | Upload actual Windows screenshots and original hashes
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: Sanctuary-V102-Real-Windows-Login
-        path: reports/V102-*
+        name: Sanctuary-V103-Real-Windows-Login
+        path: reports/V103-*
         retention-days: 30
         if-no-files-found: warn
-    - name: V102 | State precisely what was verified
+
+    - name: V103 | State precisely what was verified
       if: always()
       shell: pwsh
       run: |
         $summary = $env:GITHUB_STEP_SUMMARY
-        Add-Content $summary '# build-web.yml | V102 | Original Sanctuary Login.exe'
+
+        Add-Content $summary '# build-web.yml | V103 | Original Sanctuary Login.exe'
         Add-Content $summary 'This build DOES NOT deploy an HTML mock or modify the existing GitHub Pages game.'
-        Add-Content $summary 'V101 mistakenly omitted images from its upload artifact. V102 includes V102-Login-*.png.'
+        Add-Content $summary 'V101 mistakenly omitted images from its upload artifact. V103 includes V103-Login-*.png.'
         Add-Content $summary 'It runs the unchanged ORIGINAL Login.exe and Lineage.exe on Windows Server 2022.'
-        Add-Content $summary 'Download Sanctuary-V102-Real-Windows-Login artifact for the original Win32 window PNG files.'
-        Add-Content $summary 'A native login image is not browser login, network authentication, world loading, or gameplay.'
-        if (Test-Path 'reports/V102-original-native-login.json') {
-          $result=Get-Content 'reports/V102-original-native-login.json' -Raw | ConvertFrom-Json
+        Add-Content $summary 'Download Sanctuary-V103-Real-Windows-Login artifact for the original Win32 window PNG files.'
+        Add-Content $summary 'Login.exe currently shows the original Lineage 1 Reborn server-selection screen, not an account sign-in form.'
+        Add-Content $summary 'A native launcher image is not browser login, network authentication, world loading, or gameplay.'
+
+        if (Test-Path 'reports/V103-original-native-login.json') {
+          $result = Get-Content 'reports/V103-original-native-login.json' -Raw |
+            ConvertFrom-Json
+
           Add-Content $summary "Native original Login.exe window and pixels verified: $($result.original_login_image_verified)"
-        } else { Add-Content $summary 'No validated native screenshot result was produced.' }
+        } else {
+          Add-Content $summary 'No validated native screenshot result was produced.'
+        }
