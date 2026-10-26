@@ -1,682 +1,405 @@
 # FILE: .github/workflows/build-web.yml
-# VERSION: V103
-# RESET: run and capture the actual unmodified Sanctuary Login.exe, NOT L1J.
-# GATE: verify real Login.exe pixels; small Lineage.exe error-dialog PNGs
-# are diagnostics, not grounds to fail the login screenshot check.
-# KEEP: previous GitHub Pages deployment untouched; no HTML mock login.
-name: build-web.yml | V103 | Sanctuary game2 GitHub Pages
-run-name: build-web.yml | V103 | Sanctuary game2 GitHub Pages
-'on':
-  workflow_dispatch: null
+# VERSION: V104
+# PURPOSE: Actual unmodified Sanctuary Login.exe in the browser, not an image or L1J.
+# FIX: V50 used the stripped Boxedwine filesystem lacking oledlg/dbghelp/wineboot.
+# NEW ROOT: Official published Wine 11 web filesystem v17, SHA-256 pinned.
+# GATE: Verify genuine emulator canvas against V103 native Win32 capture,
+#       then perform actual pointer interaction and report its observed outcome.
+# DEPLOY: Only on genuine login screen verification, preserving older Pages files.
+name: "build-web.yml | V104 | Sanctuary game2 GitHub Pages"
+run-name: "build-web.yml | V104 | Sanctuary game2 GitHub Pages"
+
+"on":
+  workflow_dispatch:
   push:
-    branches:
-    - main
+    branches: [main]
     paths:
-    - .github/workflows/build-web.yml
+      - .github/workflows/build-web.yml
+
 permissions:
-  contents: read
+  contents: write
+
 concurrency:
-  group: game2-v103-original-native-login
+  group: game2-v104-real-windows-web
   cancel-in-progress: false
+
 jobs:
-  original_windows_login_v103:
-    name: build-web.yml | V103 | Verify ORIGINAL Win32 login
-    runs-on: windows-2022
+  original_browser_v104:
+    name: "build-web.yml | V104 | Real original Login.exe in Boxedwine"
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
-    - name: V103 | Checkout workflow history
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: "V104 | Checkout game2 and preserve published Pages"
+        uses: actions/checkout@v4
 
-    - name: V103 | Set up native Windows Python
-      uses: actions/setup-python@v6
-      with:
-        python-version: '3.12'
+      - name: "V104 | Install ZIP, verification and browser tools"
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq p7zip-full unzip zip
+          python3 -m pip install --quiet 'playwright==1.56.0' 'opencv-python-headless==4.11.0.86' 'Pillow==11.3.0'
+          python3 -m playwright install --with-deps chromium
+          mkdir -p work/archive work/official work/original reports site/v104
 
-    - name: V103 | Extract original Sanctuary Windows login
-      shell: pwsh
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: |
-        $ErrorActionPreference = 'Stop'
-        $archive = Join-Path $env:GITHUB_WORKSPACE 'work/archive'
-        $output = Join-Path $env:GITHUB_WORKSPACE 'work/original'
-        $reports = Join-Path $env:GITHUB_WORKSPACE 'reports'
-        New-Item -ItemType Directory -Force -Path $archive,$output,$reports | Out-Null
+      - name: "V104 | Restore official unmodified Boxedwine 26R1 web emulator"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download 26R1.0 -R danoon2/Boxedwine \
+            -p 'Boxedwine26R1Web.zip' -D work --clobber
+          test "$(stat -c %s work/Boxedwine26R1Web.zip)" -eq 122244710
+          unzip -q work/Boxedwine26R1Web.zip -d work/official
+          mapfile -t matches < <(find work/official -type f -name 'boxedwine.html' | sort)
+          test "${#matches[@]}" -ge 1
+          found=''
+          for item in "${matches[@]}"; do
+            base="$(dirname "$item")"
+            if test -s "$base/boxedwine.js" && test -s "$base/boxedwine.wasm" \
+              && test -s "$base/boxedwine-shell.js" && test -s "$base/boxedwine.css"; then
+              found="$base"
+              break
+            fi
+          done
+          test -n "$found" || { echo 'Official release has no matching web runtime quartet' >&2; exit 1; }
+          for name in boxedwine.html boxedwine.js boxedwine.wasm boxedwine-shell.js boxedwine.css; do
+            cp "$found/$name" "site/v104/$name"
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          file=Path('site/v104/boxedwine-shell.js')
+          source=file.read_text(encoding='utf-8')
+          # Do not reuse V50's persisted/partially initialized Wine prefix.
+          old='Config.storageMode = STORAGE_INDEXED_DB;'
+          assert source.count(old)==1,('Boxedwine storage anchor changed',source.count(old))
+          source=source.replace(old,'Config.storageMode = STORAGE_MEMORY;',1)
+          old='Config.persist_d_drive = true;'
+          assert source.count(old)==1
+          source=source.replace(old,'Config.persist_d_drive = false;',1)
+          file.write_text(source,encoding='utf-8')
+          print('V104: official Boxedwine runtime, isolated fresh guest filesystem.')
+          PY
+          node --check site/v104/boxedwine-shell.js
+          sha256sum site/v104/boxedwine.wasm > reports/V104-emulator-sha256.txt
 
-        gh release download v1.0.0 -R gowellsik-hue/Game -p 'Sanctuary.of.Aden.-.Copy.*' -D $archive --clobber
-        if ($LASTEXITCODE -ne 0) {
-          throw 'Original release download failed'
-        }
+      - name: "V104 | Replace stripped Wine root with full published Wine 11 web root"
+        shell: bash
+        run: |
+          set -euo pipefail
+          # v17 is the published full web runtime. The former 49 MB demo root
+          # lacks DLLs required by the original Sanctuary Login.exe.
+          curl --fail --location --retry 3 --connect-timeout 30 --max-time 400 \
+            --output site/v104/boxedwine.zip \
+            'https://boxedwine.org/v2/17/TinyCore15Wine11.0-web.zip'
+          test "$(stat -c %s site/v104/boxedwine.zip)" -eq 99486076
+          echo '262671189dddccac04c537715fd5030f23ac08a5bc6742d15206004eeeb9f29d  site/v104/boxedwine.zip' | sha256sum -c
+          python3 - <<'PY'
+          import json, zipfile
+          from pathlib import Path
+          archive=Path('site/v104/boxedwine.zip')
+          with zipfile.ZipFile(archive) as z:
+              assert z.testzip() is None,'Wine root CRC mismatch'
+              names=[i.filename.lower() for i in z.infolist() if not i.is_dir()]
+          required=['oledlg.dll','dbghelp.dll','wineboot.exe','shell32.dll']
+          found={n:[p for p in names if p.endswith('/'+n)] for n in required}
+          Path('reports/V104-wine-root-audit.json').write_text(
+              json.dumps({'source':'Boxedwine Wine 11 web v17','files':len(names),
+                          'dependencies':found},indent=2),encoding='utf-8')
+          for name,locations in found.items():
+              print('V104 Wine dependency',name,locations[:4],flush=True)
+              assert locations,'Full Wine web root lacks '+name
+          assert any(p.endswith('/bin/wine') for p in names),'Wine executable absent'
+          print('V104: missing Wine DLL and wineboot errors from V50 checked before browser run.')
+          PY
+          sha256sum site/v104/boxedwine.zip >> reports/V104-emulator-sha256.txt
 
-        if (@(Get-ChildItem -LiteralPath $archive -File).Count -ne 46) {
-          throw 'Original archive must contain 46 volumes'
-        }
-
-        $tool = Get-Command 7z.exe -ErrorAction SilentlyContinue
-        $seven = if ($tool) {
-          $tool.Source
-        } else {
-          Join-Path $env:ProgramFiles '7-Zip/7z.exe'
-        }
-
-        if (-not (Test-Path -LiteralPath $seven)) {
-          throw 'Original archive extractor 7z.exe is unavailable'
-        }
-
-        $zip = Join-Path $archive 'Sanctuary.of.Aden.-.Copy.zip'
-        & $seven x $zip "-o$output" '-y' '-ir!*.exe' '-ir!*.bin' '-ir!*.dll' '-ir!*.ini' '-ir!*.cfg' '-ir!*.dat' '-ir!*.sys' '-ir!*.vxd' '-ir!*.png' '-ir!*.bmp' '-ir!*.jpg' '-ir!*.gif' '-ir!*.fnt' '-ir!*.tbl' '-ir!*.xml' 2>&1 |
-          Out-File -FilePath (Join-Path $reports 'V103-extract.txt') -Encoding utf8
-
-        if ($LASTEXITCODE -ne 0) {
-          throw 'Original Sanctuary extraction failed'
-        }
-
-        $root = Join-Path $output 'Sanctuary of Aden - Copy'
-        $expected = @{
-          'Login.exe' = '995a4752b7e2da7782a95445f2ce7b07ec5e19c72c4b0387c5373dd3f2d06741'
-          'Lineage.exe' = '2124b3da5f53123e0f94a85bd7f9edb2344925fdb4f53d0fc0653ea5c9241414'
-        }
-
-        foreach ($name in $expected.Keys) {
-          $path = Join-Path $root $name
-          if (-not (Test-Path -LiteralPath $path)) {
-            throw "Missing ORIGINAL executable: $name"
+      - name: "V104 | Extract unchanged Sanctuary startup files from all 46 original volumes"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download v1.0.0 -R gowellsik-hue/Game \
+            -p 'Sanctuary.of.Aden.-.Copy.*' -D work/archive --clobber
+          test "$(find work/archive -maxdepth 1 -type f | wc -l)" -eq 46
+          7z x work/archive/Sanctuary.of.Aden.-.Copy.zip \
+            -owork/original -y '-ir!*.exe' '-ir!*.bin' '-ir!*.dll' \
+            '-ir!*.ini' '-ir!*.cfg' '-ir!*.dat' '-ir!*.sys' '-ir!*.vxd' \
+            '-ir!*.png' '-ir!*.bmp' '-ir!*.jpg' '-ir!*.gif' \
+            '-ir!*.fnt' '-ir!*.tbl' '-ir!*.xml' \
+            > reports/V104-extract.log
+          python3 - <<'PY'
+          import hashlib,json,zipfile
+          from pathlib import Path
+          root=Path('work/original/Sanctuary of Aden - Copy')
+          required={
+              'Login.exe':'995a4752b7e2da7782a95445f2ce7b07ec5e19c72c4b0387c5373dd3f2d06741',
+              'Lineage.exe':'2124b3da5f53123e0f94a85bd7f9edb2344925fdb4f53d0fc0653ea5c9241414',
+              'lin.bin':'0d40fdf84d19e0ecc043766455fb9c5a215a5c39bbac858ca602f0bf5259f19e',
           }
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
-          if ($hash -ne $expected[$name]) {
-            throw "Unmodified original SHA256 mismatch: $name"
-          }
-          Write-Host "V103 original EXE verified $name $hash"
-        }
-
-        Write-Host 'V103: original Login.exe / Lineage.exe verified. No L1J adapter used.'
-
-    - name: V103 | Install screenshot verification dependency
-      shell: pwsh
-      run: |
-        python -m pip install --disable-pip-version-check 'Pillow==11.3.0'
-        if ($LASTEXITCODE -ne 0) {
-          throw 'Pillow installation failed'
-        }
-
-    - name: V103 | Capture and verify original Login.exe pixels
-      shell: pwsh
-      run: |
-        $ErrorActionPreference='Stop'
-        @'
-        import ctypes
-        from ctypes import wintypes
-        import hashlib
-        import json
-        import os
-        import struct
-        import subprocess
-        import time
-        from pathlib import Path
-        from PIL import Image, ImageGrab
-
-        base = Path(os.environ['GITHUB_WORKSPACE'])
-        original = base / 'work' / 'original' / 'Sanctuary of Aden - Copy'
-        reports = base / 'reports'
-        reports.mkdir(exist_ok=True)
-
-        EXPECTED = {
-            'Login.exe': '995a4752b7e2da7782a95445f2ce7b07ec5e19c72c4b0387c5373dd3f2d06741',
-            'Lineage.exe': '2124b3da5f53123e0f94a85bd7f9edb2344925fdb4f53d0fc0653ea5c9241414',
-        }
-
-        U = ctypes.windll.user32
-        G = ctypes.windll.gdi32
-        HWND = wintypes.HWND
-        HDC = wintypes.HDC
-        CB = ctypes.WINFUNCTYPE(wintypes.BOOL, HWND, wintypes.LPARAM)
-
-        U.EnumWindows.argtypes = [CB, wintypes.LPARAM]
-        U.EnumWindows.restype = wintypes.BOOL
-        U.GetWindowThreadProcessId.argtypes = [
-            HWND, ctypes.POINTER(wintypes.DWORD)
-        ]
-        U.GetWindowTextW.argtypes = [
-            HWND, wintypes.LPWSTR, ctypes.c_int
-        ]
-        U.GetWindowTextW.restype = ctypes.c_int
-        U.GetClassNameW.argtypes = [
-            HWND, wintypes.LPWSTR, ctypes.c_int
-        ]
-        U.IsWindowVisible.argtypes = [HWND]
-        U.GetWindowRect.argtypes = [
-            HWND, ctypes.POINTER(wintypes.RECT)
-        ]
-        U.PrintWindow.argtypes = [HWND, HDC, wintypes.UINT]
-        U.PrintWindow.restype = wintypes.BOOL
-        U.GetWindowDC.argtypes = [HWND]
-        U.GetWindowDC.restype = HDC
-        U.ReleaseDC.argtypes = [HWND, HDC]
-        G.CreateCompatibleDC.argtypes = [HDC]
-        G.CreateCompatibleDC.restype = HDC
-        G.CreateCompatibleBitmap.argtypes = [
-            HDC, ctypes.c_int, ctypes.c_int
-        ]
-        G.CreateCompatibleBitmap.restype = wintypes.HBITMAP
-        G.SelectObject.argtypes = [HDC, wintypes.HANDLE]
-        G.SelectObject.restype = wintypes.HANDLE
-        G.DeleteObject.argtypes = [wintypes.HANDLE]
-        G.DeleteDC.argtypes = [HDC]
-        G.GetDIBits.argtypes = [
-            HDC,
-            wintypes.HBITMAP,
-            wintypes.UINT,
-            wintypes.UINT,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-            wintypes.UINT
-        ]
-
-        def windows_for_pid(pid):
-            found = []
-
-            @CB
-            def each(hwnd, unused):
-                owner = wintypes.DWORD()
-                U.GetWindowThreadProcessId(
-                    hwnd, ctypes.byref(owner)
-                )
-                if owner.value != pid:
-                    return True
-
-                title = ctypes.create_unicode_buffer(512)
-                cls = ctypes.create_unicode_buffer(256)
-                U.GetWindowTextW(hwnd, title, 512)
-                U.GetClassNameW(hwnd, cls, 256)
-
-                rect = wintypes.RECT()
-                U.GetWindowRect(hwnd, ctypes.byref(rect))
-                w = rect.right - rect.left
-                h = rect.bottom - rect.top
-
-                found.append({
-                    'hwnd': int(hwnd),
-                    'title': title.value,
-                    'class': cls.value,
-                    'visible': bool(U.IsWindowVisible(hwnd)),
-                    'rect': [
-                        rect.left,
-                        rect.top,
-                        rect.right,
-                        rect.bottom
-                    ],
-                    'w': w,
-                    'h': h
-                })
-                return True
-
-            U.EnumWindows(each, 0)
-            return found
-
-        def print_window(hwnd, w, h, flags):
-            if not (80 <= w <= 3000 and 60 <= h <= 3000):
-                return None
-
-            dc = U.GetWindowDC(hwnd)
-            if not dc:
-                return None
-
-            mem = G.CreateCompatibleDC(dc)
-            if not mem:
-                U.ReleaseDC(hwnd, dc)
-                return None
-
-            bmp = G.CreateCompatibleBitmap(dc, w, h)
-            old = G.SelectObject(mem, bmp)
-
-            try:
-                drawn = U.PrintWindow(hwnd, mem, flags)
-                if not drawn:
-                    return None
-
-                header = ctypes.create_string_buffer(
-                    struct.pack(
-                        '<IiiHHIIiiII',
-                        40, w, -h, 1, 32, 0, 0, 0, 0, 0, 0
-                    )
-                )
-                pixels = ctypes.create_string_buffer(w * h * 4)
-
-                lines = G.GetDIBits(
-                    mem, bmp, 0, h, pixels, header, 0
-                )
-                if lines != h:
-                    return None
-
-                return Image.frombytes(
-                    'RGB',
-                    (w, h),
-                    pixels.raw,
-                    'raw',
-                    'BGRX',
-                    0,
-                    1
-                )
-
-            finally:
-                G.SelectObject(mem, old)
-                G.DeleteObject(bmp)
-                G.DeleteDC(mem)
-                U.ReleaseDC(hwnd, dc)
-
-        def metrics(image):
-            small = image.convert('RGB').resize((160, 120))
-            pixels = list(small.getdata())
-
-            quant = len({
-                (r // 16, g // 16, b // 16)
-                for r, g, b in pixels
-            })
-            bright = sum(
-                1 for r, g, b in pixels
-                if max(r, g, b) > 45
-            ) / len(pixels)
-
-            return {
-                'colors_16': quant,
-                'nonblack_fraction': round(bright, 4),
-                'width': image.width,
-                'height': image.height
-            }
-
-        def captures(window, prefix):
-            w, h = window['w'], window['h']
-            hwnd = HWND(window['hwnd'])
-            output = []
-
-            for flags in (2, 0):
-                try:
-                    img = print_window(hwnd, w, h, flags)
-                    if img:
-                        output.append((
-                            'PrintWindow_' + str(flags), img
-                        ))
-                except Exception as exc:
-                    print(
-                        'V103 PrintWindow:',
-                        type(exc).__name__,
-                        str(exc)[:150],
-                        flush=True
-                    )
-
-            rect = window['rect']
-
-            try:
-                if rect[0] >= 0 and rect[1] >= 0:
-                    desktop = ImageGrab.grab(
-                        bbox=tuple(rect),
-                        all_screens=True
-                    )
-                    if desktop.size == (w, h):
-                        output.append((
-                            'DesktopCapture', desktop
-                        ))
-            except Exception as exc:
-                print(
-                    'V103 desktop capture unavailable:',
-                    str(exc)[:150],
-                    flush=True
-                )
-
-            result = []
-
-            for method, img in output:
-                score = metrics(img)
-                path = reports / (
-                    'V103-' + prefix + '-' + method + '.png'
-                )
-                img.save(path)
-
-                result.append({
-                    'method': method,
-                    'path': path.name,
-                    'metrics': score
-                })
-
-            return result
-
-        def run(name):
-            exe = original / name
-            assert exe.exists(), (
-                'Original executable missing', name
-            )
-
-            sha = hashlib.sha256(
-                exe.read_bytes()
-            ).hexdigest()
-
-            assert sha == EXPECTED[name], (
-                'Original binary was modified', name, sha
-            )
-
-            entry = {
-                'executable': name,
-                'sha256': sha,
-                'original_binary_unchanged': True,
-                'window_evidence': [],
-                'captures': [],
-                'native_original_login_verified': False
-            }
-
-            print(
-                'V103 starting UNMODIFIED',
-                name,
-                flush=True
-            )
-
-            process = subprocess.Popen(
-                [str(exe)],
-                executable=str(exe),
-                cwd=str(original),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-
-            try:
-                start = time.monotonic()
-                candidates = []
-
-                while time.monotonic() - start < 20:
-                    candidates = windows_for_pid(process.pid)
-                    valid = [
-                        x for x in candidates
-                        if x['visible']
-                        and x['w'] > 200
-                        and x['h'] > 150
-                    ]
-
-                    if valid:
-                        break
-
-                    if process.poll() is not None:
-                        break
-
-                    time.sleep(0.5)
-
-                entry['pid'] = process.pid
-                entry['alive_when_probed'] = (
-                    process.poll() is None
-                )
-                entry['window_evidence'] = [
-                    {
-                        k: v for k, v in x.items()
-                        if k != 'hwnd'
-                    }
-                    for x in candidates
-                ]
-
-                print(
-                    'V103 native top-level windows:',
-                    [
-                        (x['title'], x['w'], x['h'])
-                        for x in candidates
-                    ],
-                    flush=True
-                )
-
-                valid = [
-                    x for x in candidates
-                    if x['visible']
-                    and x['w'] > 200
-                    and x['h'] > 150
-                ]
-
-                valid.sort(
-                    key=lambda x: (
-                        (
-                            'Lineage' in x['title']
-                            or 'Login' in x['title']
-                        ),
-                        x['w'] * x['h']
-                    ),
-                    reverse=True
-                )
-
-                for idx, window in enumerate(valid[:3]):
-                    time.sleep(0.6)
-                    result = captures(
-                        window,
-                        name.replace('.exe', '')
-                        + '-' + str(idx)
-                    )
-
-                    for shot in result:
-                        shot['window_title'] = window['title']
-
-                    entry['captures'].extend(result)
-
-                evidence = [
-                    x for x in entry['captures']
-                    if x['metrics']['colors_16'] >= 12
-                    and x['metrics']['nonblack_fraction'] >= 0.07
-                ]
-
-                entry['native_original_login_verified'] = (
-                    name == 'Login.exe'
-                    and any(
-                        'Lineage' in x['title']
-                        or 'Login' in x['title']
-                        for x in valid
-                    )
-                    and bool(evidence)
-                )
-
-            finally:
-                if process.poll() is None:
-                    subprocess.run(
-                        [
-                            'taskkill',
-                            '/PID',
-                            str(process.pid),
-                            '/T',
-                            '/F'
-                        ],
-                        timeout=25,
-                        check=False,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL
-                    )
-
-            return entry
-
-        results = []
-
-        for name in ('Login.exe', 'Lineage.exe'):
-            try:
-                results.append(run(name))
-            except Exception as exc:
-                results.append({
-                    'executable': name,
-                    'error': str(exc)
-                })
-                print(
-                    'V103 original-client failure:',
-                    name,
-                    repr(exc),
-                    flush=True
-                )
-
-        verified = next(
-            (
-                r for r in results
-                if r.get('executable') == 'Login.exe'
-            ),
-            {}
-        )
-
-        report = {
-            'version': 'V103',
-            'purpose': 'Original Windows client native login screen',
-            'not_browser_game': True,
-            'server_authentication_tested': False,
-            'original_login_image_verified': verified.get(
-                'native_original_login_verified', False
-            ),
-            'results': results
-        }
-
-        (
-            reports / 'V103-original-native-login.json'
-        ).write_text(
-            json.dumps(
-                report,
-                ensure_ascii=False,
-                indent=2
-            ),
-            encoding='utf-8'
-        )
-
-        shots = [
-            reports / s['path']
-            for x in results
-            for s in x.get('captures', [])
-        ]
-
-        login_shots = [
-            p for p in shots
-            if p.name.startswith('V103-Login-')
-        ]
-
-        assert len(login_shots) >= 2, (
-            'Native Login screenshots were not captured',
-            shots
-        )
-
-        # Only Login.exe screenshots are required proof.
-        # Small Lineage.exe error-dialog PNGs remain diagnostics.
-        for picture in shots:
-            assert picture.is_file() and picture.stat().st_size > 0, (
-                'Missing PNG', str(picture)
-            )
-
-            with Image.open(picture) as img:
-                img.verify()
-
-            if picture in login_shots:
-                assert picture.stat().st_size > 2000, (
-                    'Original Login.exe PNG too small',
-                    str(picture)
-                )
-
-        assert all(
-            p.match('V103-*.png')
-            for p in shots
-        )
-
-        print(
-            'V103 actual screenshot files in upload glob:',
-            [
-                (p.name, p.stat().st_size)
-                for p in shots
-            ],
-            flush=True
-        )
-
-        print(
-            'V103 RESULTS',
-            json.dumps(
-                {
-                    'verified': report[
-                        'original_login_image_verified'
-                    ],
-                    'screenshots': [
-                        s['path']
-                        for x in results
-                        for s in x.get('captures', [])
-                    ]
-                },
-                ensure_ascii=False
-            ),
-            flush=True
-        )
-
-        if not report['original_login_image_verified']:
-            raise SystemExit(
-                'V103 original Login.exe screen NOT VERIFIED; no deployment'
-            )
-
-        '@ | Set-Content -LiteralPath 'v103-capture-original.py' -Encoding utf8
-
-        python -m py_compile v103-capture-original.py
-
-        if ($LASTEXITCODE -ne 0) {
-          throw 'Native screenshot script syntax failure'
-        }
-
-        python v103-capture-original.py 2>&1 |
-          Tee-Object -FilePath reports/V103-native-capture.log
-
-        if ($LASTEXITCODE -ne 0) {
-          throw 'Original native Login.exe screen was NOT verified'
-        }
-
-    - name: V103 | Confirm the login PNG files match the upload path
-      shell: pwsh
-      run: |
-        $ErrorActionPreference = 'Stop'
-
-        $pngs = @(
-          Get-ChildItem -Path 'reports/V103-Login-*.png' -File -ErrorAction SilentlyContinue
-        )
-
-        if ($pngs.Count -lt 2) {
-          throw 'V103 native Login.exe screenshots missing'
-        }
-
-        $all = @(
-          Get-ChildItem -Path 'reports/V103-*.png' -File -ErrorAction SilentlyContinue
-        )
-
-        foreach ($png in $all) {
-          if ($png.Length -le 0) {
-            throw "V103 screenshot is empty: $($png.Name)"
-          }
-
-          if ($png.Name -like 'V103-Login-*.png' -and $png.Length -le 2000) {
-            throw "V103 original Login.exe screenshot is too small: $($png.Name)"
-          }
-
-          Write-Host "V103 screenshot included in artifact: $($png.Name) ($($png.Length) bytes)"
-        }
-
-        Write-Host "V103: $($all.Count) original Windows screenshots will be uploaded"
-
-    - name: V103 | Upload actual Windows screenshots and original hashes
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: Sanctuary-V103-Real-Windows-Login
-        path: reports/V103-*
-        retention-days: 30
-        if-no-files-found: warn
-
-    - name: V103 | State precisely what was verified
-      if: always()
-      shell: pwsh
-      run: |
-        $summary = $env:GITHUB_STEP_SUMMARY
-
-        Add-Content $summary '# build-web.yml | V103 | Original Sanctuary Login.exe'
-        Add-Content $summary 'This build DOES NOT deploy an HTML mock or modify the existing GitHub Pages game.'
-        Add-Content $summary 'V101 mistakenly omitted images from its upload artifact. V103 includes V103-Login-*.png.'
-        Add-Content $summary 'It runs the unchanged ORIGINAL Login.exe and Lineage.exe on Windows Server 2022.'
-        Add-Content $summary 'Download Sanctuary-V103-Real-Windows-Login artifact for the original Win32 window PNG files.'
-        Add-Content $summary 'Login.exe currently shows the original Lineage 1 Reborn server-selection screen, not an account sign-in form.'
-        Add-Content $summary 'A native launcher image is not browser login, network authentication, world loading, or gameplay.'
-
-        if (Test-Path 'reports/V103-original-native-login.json') {
-          $result = Get-Content 'reports/V103-original-native-login.json' -Raw |
-            ConvertFrom-Json
-
-          Add-Content $summary "Native original Login.exe window and pixels verified: $($result.original_login_image_verified)"
-        } else {
-          Add-Content $summary 'No validated native screenshot result was produced.'
-        }
+          for name,sha in required.items():
+              path=root/name
+              assert path.is_file(),'Missing unmodified original '+name
+              actual=hashlib.sha256(path.read_bytes()).hexdigest()
+              assert actual==sha,(name,actual,sha)
+          files=sorted(p for p in root.rglob('*') if p.is_file())
+          manifest={'source':'gowellsik-hue/Game release v1.0.0 original 46 ZIP volumes',
+                    'verified_original_hashes':required,'file_count':len(files),
+                    'total_bytes':sum(p.stat().st_size for p in files)}
+          archive=Path('site/v104/sanctuary-v104.zip')
+          with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED,compresslevel=6,allowZip64=False) as z:
+              for file in files:
+                  # Exact original bytes, preserved paths and names, no substitute UI.
+                  z.write(file,file.relative_to(root).as_posix())
+          with zipfile.ZipFile(archive) as z:
+              assert z.testzip() is None
+              assert all(n in z.namelist() for n in required)
+          # GitHub Pages limits a single published file to 100 MiB.
+          assert archive.stat().st_size < 100_000_000,(
+              'Unmodified startup archive exceeds Pages per-file limit',archive.stat().st_size)
+          manifest['packaged_bytes']=archive.stat().st_size
+          Path('reports/V104-original-files.json').write_text(json.dumps(manifest,indent=2))
+          print('V104: verified original Windows files:',manifest,flush=True)
+          PY
+          sha256sum site/v104/sanctuary-v104.zip > reports/V104-original-sha256.txt
+
+      - name: "V104 | Prepare genuine Login.exe browser entry point"
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This page only launches the official Boxedwine emulator. It never
+          # draws or simulates a login screen, world or character.
+          cat > site/v104/index.html <<'HTML'
+          <!doctype html>
+          <html lang="ko"><head><meta charset="utf-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>Sanctuary | Original Login.exe | V104</title>
+          <meta http-equiv="refresh" content="0;url=./boxedwine.html?app=sanctuary-v104&amp;p=Login.exe&amp;auto=true&amp;sound=false&amp;disableHideCursor=true">
+          </head><body><a href="./boxedwine.html?app=sanctuary-v104&amp;p=Login.exe&amp;auto=true&amp;sound=false&amp;disableHideCursor=true">Original Login.exe</a></body></html>
+          HTML
+          cat > site/index.html <<'HTML'
+          <!doctype html><html lang="ko"><head><meta charset="utf-8">
+          <meta http-equiv="refresh" content="0;url=./v104/"></head>
+          <body><a href="./v104/">Original Sanctuary Login.exe</a></body></html>
+          HTML
+          touch site/.nojekyll site/v104/.nojekyll
+          test -s site/v104/boxedwine.wasm
+          test -s site/v104/boxedwine.zip
+          test -s site/v104/sanctuary-v104.zip
+
+      - name: "V104 | Restore V103 native screenshot for authentic pixel comparison"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download 40268037307 -R gowellsik-hue/game2 \
+            -n Sanctuary-V103-Real-Windows-Login -D reports/native-reference
+          test -s reports/native-reference/V103-Login-0-DesktopCapture.png
+          python3 - <<'PY'
+          from PIL import Image
+          p='reports/native-reference/V103-Login-0-DesktopCapture.png'
+          with Image.open(p) as im:
+              im.verify()
+          with Image.open(p) as im:
+              assert im.size==(692,460),('Original login reference changed',im.size)
+          print('V104: original Win32 Login.exe reference is 692x460.',flush=True)
+          PY
+
+      - name: "V104 | Test actual Windows login pixels and mouse interaction in Chromium"
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > work/v104-browser-test.py <<'PY'
+          import asyncio
+          import json
+          import time
+          from pathlib import Path
+          import cv2
+          import numpy as np
+          from playwright.async_api import async_playwright
+
+          report=Path('reports')
+          original=cv2.imread(str(report/'native-reference/V103-Login-0-DesktopCapture.png'))
+          assert original is not None and original.shape[:2]==(460,692)
+          sift=cv2.SIFT_create(nfeatures=1800)
+          ref_kp,ref_des=sift.detectAndCompute(cv2.cvtColor(original,cv2.COLOR_BGR2GRAY),None)
+          assert ref_des is not None and len(ref_kp)>25
+
+          def match_original(image):
+              # Match actual emulator-canvas pixels, not a background image or HTML mock.
+              if image is None or min(image.shape[:2])<200:
+                  return None
+              kp,des=sift.detectAndCompute(cv2.cvtColor(image,cv2.COLOR_BGR2GRAY),None)
+              if des is None or len(kp)<12:return None
+              pairs=cv2.BFMatcher(cv2.NORM_L2).knnMatch(ref_des,des,k=2)
+              good=[m for m,n in pairs if m.distance<0.72*n.distance]
+              if len(good)<15:return None
+              src=np.float32([ref_kp[m.queryIdx].pt for m in good]).reshape(-1,1,2)
+              dst=np.float32([kp[m.trainIdx].pt for m in good]).reshape(-1,1,2)
+              H,mask=cv2.findHomography(src,dst,cv2.RANSAC,5.0)
+              if H is None or mask is None:return None
+              count=int(mask.sum())
+              if count<12:return None
+              corners=np.float32([[[0,0]],[[692,0]],[[692,460]],[[0,460]]])
+              projected=cv2.perspectiveTransform(corners,H).reshape(4,2)
+              area=abs(float(cv2.contourArea(projected.astype(np.float32))))
+              if not 0.18*692*460<area<2.1*692*460:return None
+              center=cv2.perspectiveTransform(np.float32([[[225,135]]]),H)[0,0]
+              x,y=float(center[0]),float(center[1])
+              if not (0<x<image.shape[1] and 0<y<image.shape[0]):return None
+              return {'inliers':count,'matches':len(good),'projected_area':area,
+                      'server_click_canvas':[round(x,1),round(y,1)]}
+
+          async def main():
+              evidence={'version':'V104','engine':'Official Boxedwine 26R1.0',
+                        'wine_root':'Published full Wine 11 web v17',
+                        'program':'Unmodified Sanctuary Login.exe',
+                        'original_login_pixels_verified':False,
+                        'mouse_input_sent_to_real_canvas':False,
+                        'post_click_transition_verified':False,
+                        'console':[],'errors':[]}
+              async with async_playwright() as pw:
+                  browser=await pw.chromium.launch(headless=True,args=[
+                      '--no-sandbox','--disable-dev-shm-usage','--enable-webgl',
+                      '--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader'])
+                  page=await browser.new_page(viewport={'width':1100,'height':850},device_scale_factor=1)
+                  def log(txt):
+                      if len(evidence['console'])<500:evidence['console'].append(str(txt)[:500])
+                  page.on('console',lambda msg:log(msg.text))
+                  page.on('pageerror',lambda err:evidence['errors'].append(str(err)[:500]))
+                  page.on('requestfailed',lambda req:evidence['errors'].append('request failed '+req.url))
+                  page.on('response',lambda res:evidence['errors'].append('HTTP '+str(res.status)+' '+res.url)
+                          if res.status>=400 else None)
+                  try:
+                      url='http://127.0.0.1:8765/v104/boxedwine.html?app=sanctuary-v104&p=Login.exe&auto=true&sound=false&disableHideCursor=true'
+                      await page.goto(url,wait_until='domcontentloaded',timeout=40000)
+                      box=page.locator('#canvas')
+                      await box.wait_for(state='visible',timeout=30000)
+                      start=time.monotonic()
+                      located=None
+                      while time.monotonic()-start<125:
+                          await asyncio.sleep(4)
+                          await box.screenshot(path=str(report/'V104-emulator-canvas.png'),timeout=20000)
+                          image=cv2.imread(str(report/'V104-emulator-canvas.png'))
+                          located=match_original(image)
+                          if located:break
+                          output=await page.locator('#output').input_value(timeout=3000)
+                          if 'oledlg.dll' in output.lower() and 'not found' in output.lower():
+                              break
+                      evidence['emulator_output']=await page.locator('#output').input_value(timeout=5000)
+                      evidence['login_image_match']=located
+                      evidence['original_login_pixels_verified']=bool(located)
+                      await page.screenshot(path=str(report/'V104-browser-before-click.png'),full_page=True)
+                      if not located:
+                          raise AssertionError('Real Login.exe pixels NOT found in Boxedwine canvas; refusing deployment')
+                      bad=['library oledlg.dll','library dbghelp.dll','wineboot c0000135','importing dlls for']
+                      low=evidence['emulator_output'].lower()
+                      assert not any(x in low for x in bad),'Broken Wine imports still present'
+                      # Measure genuine idle animation first. Ordinary redraws
+                      # must not be mistaken for a server-button response.
+                      previous=cv2.imread(str(report/'V104-emulator-canvas.png'))
+                      await asyncio.sleep(2)
+                      await box.screenshot(path=str(report/'V104-idle-canvas.png'),timeout=20000)
+                      idle_image=cv2.imread(str(report/'V104-idle-canvas.png'))
+                      idle_delta=float(np.mean(cv2.absdiff(previous,idle_image)))
+                      evidence['idle_canvas_mean_delta']=round(idle_delta,3)
+                      coords=located['server_click_canvas']
+                      rect=await box.bounding_box()
+                      assert rect is not None
+                      # Coordinates derive from genuine Win32 UI features.
+                      await page.mouse.dblclick(rect['x']+coords[0],rect['y']+coords[1],delay=130)
+                      evidence['mouse_input_sent_to_real_canvas']=True
+                      changes=[]
+                      for delay in [2,4,6,8]:
+                          await asyncio.sleep(delay)
+                          await box.screenshot(path=str(report/'V104-emulator-after-click.png'),timeout=20000)
+                          newer=cv2.imread(str(report/'V104-emulator-after-click.png'))
+                          if newer is not None and newer.shape==idle_image.shape:
+                              changed=float(np.mean(cv2.absdiff(idle_image,newer)))
+                              changes.append(round(changed,3))
+                      evidence['post_click_canvas_mean_delta']=changes
+                      threshold=max(3.0,idle_delta*1.8+1.5)
+                      evidence['server_click_delta_threshold']=round(threshold,3)
+                      evidence['post_click_transition_verified']=bool(changes and max(changes)>threshold)
+                      evidence['emulator_output_after_click']=await page.locator('#output').input_value(timeout=5000)
+                      await page.screenshot(path=str(report/'V104-browser-after-click.png'),full_page=True)
+                      # No authentication is claimed. This verifies the original
+                      # server-list interaction produced a real rendering response.
+                      assert evidence['post_click_transition_verified'],(
+                          'Server selection produced no observable UI response',changes)
+                  finally:
+                      (report/'V104-browser.json').write_text(json.dumps(evidence,indent=2,ensure_ascii=False),encoding='utf-8')
+                      await browser.close()
+              print('V104 verified actual original browser login and click:',
+                    evidence['login_image_match'],evidence['post_click_canvas_mean_delta'],flush=True)
+
+          asyncio.run(main())
+          PY
+          python3 -m py_compile work/v104-browser-test.py
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory site \
+            > reports/V104-http.log 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          for i in $(seq 1 40); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8765/v104/boxedwine.html; then break; fi
+            sleep 1
+          done
+          curl -fsS -o /dev/null http://127.0.0.1:8765/v104/boxedwine.html
+          python3 -u work/v104-browser-test.py 2>&1 | tee reports/V104-browser-test.log
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          e=json.loads(Path('reports/V104-browser.json').read_text(encoding='utf-8'))
+          assert e['original_login_pixels_verified']
+          assert e['mouse_input_sent_to_real_canvas']
+          assert e['post_click_transition_verified']
+          assert Path('reports/V104-browser-after-click.png').stat().st_size>15000
+          print('V104 strict original browser login gate passed')
+          PY
+
+      - name: "V104 | Upload evidence even if the browser cannot run original Login.exe"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sanctuary-V104-Original-Browser-Login
+          path: |
+            reports/V104-*
+            reports/native-reference/V103-Login-0-DesktopCapture.png
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: "V104 | Deploy only the actually verified original browser login"
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          publish_branch: gh-pages
+          keep_files: true
+          force_orphan: false
+          enable_jekyll: false
+
+      - name: "V104 | Report what really works"
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '# build-web.yml | V104 | Original Sanctuary Windows Login.exe in browser'
+            echo 'This workflow does not use L1J or a hand-drawn substitute login.'
+            echo 'Wine root: Boxedwine published full Wine 11 web v17, hash verified.'
+            echo 'Original EXEs: unchanged release v1.0.0 SHA-256 verified.'
+            if test -s reports/V104-browser.json; then
+              python3 - <<'PY'
+          import json,os
+          e=json.load(open('reports/V104-browser.json'))
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              for key in ['original_login_pixels_verified','mouse_input_sent_to_real_canvas',
+                          'post_click_transition_verified']:
+                  f.write(f'- {key}: {e.get(key)}\n')
+          PY
+            fi
+            echo 'Actual server authentication, account creation and game world loading are NOT verified.'
+            echo 'If this build fails, GitHub Pages remains on the previous build.'
+          } >> "$GITHUB_STEP_SUMMARY"
