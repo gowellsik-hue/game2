@@ -1,5 +1,5 @@
 # FILE: .github/workflows/pages.yml
-# VERSION: V13
+# VERSION: V14
 # GENERATOR: HWPX Generator v0.20
 
 name: Deploy HWPX Generator to Pages
@@ -7,11 +7,11 @@ name: Deploy HWPX Generator to Pages
 "on":
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
       - .github/workflows/pages.yml
-      - HWPX_Generator_GitHub_v0.20.zip
+      - HWPX_Generator_GitHub_v0.17.zip
+      - kfe-generic-base.hwpx
 
 permissions:
   contents: read
@@ -24,39 +24,111 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy V13 / Generator v0.20
+    name: V14 / HWPX v0.20
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Checkout
+      - name: Checkout V14
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Build site V13
+      - name: Build V14 / HWPX v0.20
         shell: bash
         run: |
           set -euo pipefail
+          echo "===== V14 / HWPX v0.20 ====="
 
-          test -s HWPX_Generator_GitHub_v0.20.zip
+          test -s HWPX_Generator_GitHub_v0.17.zip || {
+            echo "::error::V14: v0.17 ZIP missing"
+            exit 1
+          }
 
-          rm -rf site
-          mkdir -p site/vendor
-          unzip -q HWPX_Generator_GitHub_v0.20.zip -d site
+          test -s kfe-generic-base.hwpx || {
+            echo "::error::V14: kfe-generic-base.hwpx missing"
+            exit 1
+          }
+
+          echo "c7518eaf74ecb6d30da55339ea5344a2fba32e71c9ebdb084c94cdb73ae40624  kfe-generic-base.hwpx" | sha256sum -c -
+          unzip -tq kfe-generic-base.hwpx >/dev/null
+
+          rm -rf work site
+          mkdir -p work site/vendor
+
+          unzip -q HWPX_Generator_GitHub_v0.17.zip -d work
+          cp kfe-generic-base.hwpx /tmp/kfe-generic-base.hwpx
+
+          export PATCH_SHA="7a07c19e8729be225d42e7e7c344e92c2dc46726"
+          git cat-file -e "${PATCH_SHA}^{commit}"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import os,re,subprocess,textwrap
+
+          s=subprocess.check_output(
+              ['git','show',f"{os.environ['PATCH_SHA']}:.github/workflows/pages.yml"],
+              text=True,
+              encoding='utf-8'
+          )
+
+          m=re.search(
+              r"cat > /tmp/patch_v019\.py <<'PY'\s*\n(.*?)\n\s*PY\s*\n\s*python3 /tmp/patch_v019\.py",
+              s,
+              re.S
+          )
+
+          if not m:
+              raise SystemExit('V14: fixed v0.19 patch not found')
+
+          Path('/tmp/patch_v019.py').write_text(
+              textwrap.dedent(m.group(1)),
+              encoding='utf-8'
+          )
+          PY
+
+          python3 -m py_compile /tmp/patch_v019.py
+          python3 /tmp/patch_v019.py
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('work/index.html')
+          s=p.read_text(encoding='utf-8')
+
+          s=s.replace(
+              'HWPX 생성기 v0.19 · GitHub Pages',
+              'HWPX 생성기 v0.20 · Workflow V14 · GitHub Pages'
+          )
+
+          s=s.replace(
+              'HWPX 생성기 v0.19</h1>',
+              'HWPX 생성기 v0.20</h1>'
+          )
+
+          badge='<div id="buildVersion" style="position:fixed;top:8px;left:8px;z-index:99999;background:#111;color:#fff;border:2px solid #fff;border-radius:6px;padding:8px 12px;font:700 14px/1.2 Arial,sans-serif;box-shadow:0 2px 8px #0006">V14 · HWPX v0.20</div>'
+
+          if '<body>' not in s:
+              raise SystemExit('V14: body tag not found')
+
+          p.write_text(
+              s.replace('<body>','<body>'+badge,1),
+              encoding='utf-8'
+          )
+          PY
+
+          grep -q "V14 · HWPX v0.20" work/index.html
+          grep -q "HWPX 생성기 v0.20" work/index.html
+          grep -q "GENERIC_TEMPLATE_B64" work/index.html
+
+          cp work/index.html site/index.html
+          test ! -s work/README.md || cp work/README.md site/README.md
+          test ! -s work/NOTICE.md || cp work/NOTICE.md site/NOTICE.md
           touch site/.nojekyll
-
-          test -s site/index.html
-          test -s site/templates/kfe-generic-base.hwpx
-          grep -q "HWPX 생성기 v0.20" site/index.html
-          grep -q "Workflow V13" site/index.html
-
-      - name: Download HWPX PDF renderer
-        shell: bash
-        run: |
-          set -euo pipefail
 
           curl -L --fail --retry 3 --retry-delay 2 \
             -o site/vendor/rhwptopdf.umd.js \
@@ -69,6 +141,8 @@ jobs:
           test -s site/vendor/rhwptopdf.umd.js
           test -s site/vendor/rhwptopdf.umd_bg.wasm
 
+          echo "===== V14 BUILD OK / HWPX v0.20 ====="
+
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
@@ -77,18 +151,14 @@ jobs:
         with:
           path: ./site
 
-      - name: Deploy HWPX Generator to Pages
+      - name: Deploy V14 / HWPX v0.20
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Report deployment
+      - name: Report V14
         if: always()
         shell: bash
         run: |
-          {
-            echo "## Deploy HWPX Generator to Pages"
-            echo "- Workflow: V13"
-            echo "- Generator: v0.20"
-            echo "- Package: HWPX_Generator_GitHub_v0.20.zip"
-            echo "- URL: ${{ steps.deployment.outputs.page_url }}"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "# V14 / HWPX v0.20" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Page badge: V14 · HWPX v0.20" >> "$GITHUB_STEP_SUMMARY"
+          echo "- URL: ${{ steps.deployment.outputs.page_url }}" >> "$GITHUB_STEP_SUMMARY"
