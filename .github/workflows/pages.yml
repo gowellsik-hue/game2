@@ -1,5 +1,5 @@
 # FILE: .github/workflows/pages.yml
-# VERSION: V10
+# VERSION: V11
 # PURPOSE: Deploy HWPX Generator to Pages
 # GENERATOR: HWPX Generator v0.19
 # GENERIC BASE: user-provided 한글 양식.hwpx
@@ -55,1615 +55,185 @@ jobs:
 
           rm -rf work site
           mkdir -p work site/vendor
+
           unzip -q HWPX_Generator_GitHub_v0.17.zip -d work
+
           test -s work/index.html
 
-      - name: Restore generic base HWPX from V9 snapshot
+      - name: Restore generic base and v0.19 patch
         shell: bash
         run: |
           set -euo pipefail
 
-          V9_SHA="abebecfa6937467d035be82b9566b90996330d48"
+          export V9_SHA="abebecfa6937467d035be82b9566b90996330d48"
+          export V10_SHA="7a07c19e8729be225d42e7e7c344e92c2dc46726"
 
           git cat-file -e "${V9_SHA}^{commit}"
-          git show "${V9_SHA}:.github/workflows/pages.yml" > /tmp/pages-v9.yml
-          test -s /tmp/pages-v9.yml
+          git cat-file -e "${V10_SHA}^{commit}"
 
-          awk '
-            /<<.GENERIC_HWPX_B64./ {inside=1; next}
-            inside && /^[[:space:]]*GENERIC_HWPX_B64[[:space:]]*$/ {inside=0; exit}
-            inside {sub(/^[[:space:]]+/, ""); print}
-          ' /tmp/pages-v9.yml > /tmp/kfe-generic-base.hwpx.b64
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64
+          import io
+          import os
+          import re
+          import subprocess
+          import textwrap
+          import zipfile
 
-          test -s /tmp/kfe-generic-base.hwpx.b64
+          v9_sha = os.environ["V9_SHA"]
+          v10_sha = os.environ["V10_SHA"]
 
-          tr -d '\n\r ' < /tmp/kfe-generic-base.hwpx.b64 \
-            | base64 --decode \
-            > /tmp/kfe-generic-base.hwpx
+          def read_workflow(sha):
+              return subprocess.check_output(
+                  [
+                      "git",
+                      "show",
+                      f"{sha}:.github/workflows/pages.yml",
+                  ],
+                  text=True,
+                  encoding="utf-8",
+              )
+
+          v9 = read_workflow(v9_sha)
+
+          base_match = re.search(
+              r"<<'GENERIC_HWPX_B64'\s*\n"
+              r"(.*?)"
+              r"\n\s*GENERIC_HWPX_B64\s*$",
+              v9,
+              re.S | re.M,
+          )
+
+          if not base_match:
+              raise SystemExit(
+                  "ERROR: V9 generic HWPX base64 block not found."
+              )
+
+          encoded = "".join(
+              line.strip()
+              for line in base_match.group(1).splitlines()
+              if line.strip()
+          )
+
+          try:
+              hwpx = base64.b64decode(
+                  encoded,
+                  validate=True,
+              )
+          except Exception as exc:
+              raise SystemExit(
+                  f"ERROR: generic HWPX base64 decode failed: {exc}"
+              )
+
+          if not hwpx.startswith(b"PK"):
+              raise SystemExit(
+                  "ERROR: restored generic HWPX is not a ZIP/HWPX file."
+              )
+
+          try:
+              with zipfile.ZipFile(io.BytesIO(hwpx), "r") as zf:
+                  required = {
+                      "mimetype",
+                      "Contents/header.xml",
+                      "Contents/section0.xml",
+                  }
+
+                  names = set(zf.namelist())
+
+                  missing = required - names
+
+                  if missing:
+                      raise RuntimeError(
+                          "missing HWPX entries: "
+                          + ", ".join(sorted(missing))
+                      )
+
+                  bad = zf.testzip()
+
+                  if bad:
+                      raise RuntimeError(
+                          f"corrupt ZIP entry: {bad}"
+                      )
+
+          except Exception as exc:
+              raise SystemExit(
+                  f"ERROR: generic HWPX validation failed: {exc}"
+              )
+
+          Path(
+              "/tmp/kfe-generic-base.hwpx"
+          ).write_bytes(hwpx)
+
+          v10 = read_workflow(v10_sha)
+
+          patch_match = re.search(
+              r"cat > /tmp/patch_v019\.py <<'PY'\s*\n"
+              r"(.*?)"
+              r"\n\s*PY\s*\n"
+              r"\s*python3 /tmp/patch_v019\.py",
+              v10,
+              re.S,
+          )
+
+          if not patch_match:
+              raise SystemExit(
+                  "ERROR: V10 v0.19 patch script not found."
+              )
+
+          patch = textwrap.dedent(
+              patch_match.group(1)
+          )
+
+          if "GENERIC_TEMPLATE_B64" not in patch:
+              raise SystemExit(
+                  "ERROR: extracted v0.19 patch is incomplete."
+              )
+
+          if "generateGenericHwpx" not in patch:
+              raise SystemExit(
+                  "ERROR: generic HWPX generator code is missing."
+              )
+
+          if "registerPdfFonts" not in patch:
+              raise SystemExit(
+                  "ERROR: PDF font registration code is missing."
+              )
+
+          Path(
+              "/tmp/patch_v019.py"
+          ).write_text(
+              patch,
+              encoding="utf-8",
+          )
+
+          print(
+              "generic base restored:",
+              len(hwpx),
+              "bytes",
+          )
+
+          print(
+              "v0.19 patch restored:",
+              len(patch),
+              "chars",
+          )
+          PY
 
           test -s /tmp/kfe-generic-base.hwpx
-          unzip -tq /tmp/kfe-generic-base.hwpx >/dev/null
+          test -s /tmp/patch_v019.py
+
+          python3 -m py_compile /tmp/patch_v019.py
 
       - name: Patch Generator v0.17 to v0.19
         shell: bash
         run: |
           set -euo pipefail
 
-          cat > /tmp/patch_v019.py <<'PY'
-          from pathlib import Path
-          import base64, re
-          
-          src_path=Path('work/index.html')
-          s=src_path.read_text(encoding='utf-8')
-          base64_hwpx=base64.b64encode(Path('/tmp/kfe-generic-base.hwpx').read_bytes()).decode('ascii')
-          
-          s=s.replace('HWPX 생성기 v0.17 · GitHub Pages','HWPX 생성기 v0.19 · GitHub Pages')
-          s=s.replace('HWPX 생성기 v0.17</h1>','HWPX 생성기 v0.19</h1>')
-          
-          old="""function docxTableRowsRobust(tbl){
-            const rows=[];
-            for(const tr of pChildEls(tbl,'tr')){
-              const cells=[];
-              for(const tc of pChildEls(tr,'tc')) cells.push(directDescendantText(tc));
-              if(cells.some(Boolean)) rows.push(cells);
-            }
-            return rows;
-          }"""
-
-          new="""function docxTableRobust(tbl){
-            const rows=[];
-            const rowWidths=[];
-
-            for(const tr of pChildEls(tbl,'tr')){
-              const cells=[],widths=[];
-
-              for(const tc of pChildEls(tr,'tc')){
-                cells.push(directDescendantText(tc));
-
-                const tcW=pDescendants(tc,'tcW')[0];
-                const w=Number(attrLocal(tcW,'w')||0);
-
-                widths.push(
-                  Number.isFinite(w)&&w>0
-                    ? w
-                    : 0
-                );
-              }
-
-              if(cells.some(Boolean)){
-                rows.push(cells);
-                rowWidths.push(widths);
-              }
-            }
-
-            let colWidths=[];
-
-            const first=rowWidths.find(
-              r=>r.some(x=>x>0)
-            );
-
-            if(first){
-              colWidths=first.slice();
-            }
-
-            if(!colWidths.length){
-              const grid=pDescendants(
-                tbl,
-                'tblGrid'
-              )[0];
-
-              if(grid){
-                colWidths=pChildEls(
-                  grid,
-                  'gridCol'
-                ).map(
-                  x=>Number(
-                    attrLocal(x,'w')||0
-                  )
-                );
-              }
-            }
-
-            return {
-              rows,
-              colWidths
-            };
-          }"""
-
-          if old not in s:
-              raise SystemExit(
-                  'old table reader not found'
-              )
-
-          s=s.replace(
-              old,
-              new
-          )
-
-          s=s.replace(
-              """        const rows=docxTableRowsRobust(ch);
-                  if(rows.length) blocks.push({type:'table',rows});""",
-              """        const t=docxTableRobust(ch);
-                  if(t.rows.length) blocks.push({type:'table',rows:t.rows,colWidths:t.colWidths});"""
-          )
-          
-          start=s.index(
-              'function genericCleanTitle('
-          )
-
-          end=s.index(
-              'function validateTargetChoice',
-              start
-          )
-
-          replacement=f'''const GENERIC_TEMPLATE_B64='{base64_hwpx}';
-          
-          function genericCleanTitle(s){{
-            return cleanTitleText(
-              String(s||'')
-                .replace(
-                  /[□■◆◇▶▷]+\\s*$/g,
-                  ''
-                )
-                .trim()
-            );
-          }}
-
-          function genericBlockText(block){{
-            if(!block){
-              return '';
-            }
-
-            if(block.text){
-              return cleanText(
-                block.text
-              );
-            }
-
-            return '';
-          }}
-
-          function genericVisualLen(text){{
-            let n=0;
-
-            for(
-              const ch of String(text||'')
-            ){{
-              n+=(
-                ch.charCodeAt(0)<128
-                  ? 0.55
-                  : 1
-              );
-            }}
-
-            return n;
-          }}
-
-          function genericSetSingleRun(
-            p,
-            text,
-            charPrId=null,
-            paraPrId=null
-          ){{
-            if(
-              paraPrId!==null&&
-              paraPrId!==undefined
-            ){{
-              p.setAttribute(
-                'paraPrIDRef',
-                String(paraPrId)
-              );
-            }}
-
-            const runs=directRuns(p);
-
-            if(runs.length){{
-              if(
-                charPrId!==null&&
-                charPrId!==undefined
-              ){{
-                runs[0].setAttribute(
-                  'charPrIDRef',
-                  String(charPrId)
-                );
-              }}
-
-              setRunText(
-                runs[0],
-                cleanText(text)
-              );
-
-              runs
-                .slice(1)
-                .forEach(
-                  r=>setRunText(
-                    r,
-                    ''
-                  )
-                );
-            }}else{{
-              setFirstText(
-                p,
-                cleanText(text)
-              );
-            }}
-
-            clearLines(p);
-
-            return p;
-          }}
-
-          function genericSetTitle(
-            titleP,
-            title
-          ){{
-            const tbl=descendants(
-              titleP,
-              'tbl'
-            )[0];
-
-            if(!tbl){{
-              setFirstText(
-                titleP,
-                title
-              );
-
-              clearLines(
-                titleP
-              );
-
-              return;
-            }}
-
-            const rows=direct(
-              tbl,
-              'tr'
-            );
-
-            const mid=
-              rows[
-                Math.floor(
-                  rows.length/2
-                )
-              ];
-
-            const tc=
-              mid&&
-              direct(
-                mid,
-                'tc'
-              )[0];
-
-            const sub=
-              tc&&
-              descendants(
-                tc,
-                'subList'
-              )[0];
-
-            const p=
-              sub&&
-              direct(
-                sub,
-                'p'
-              )[0];
-
-            if(!p){{
-              throw new Error(
-                '기본 양식 제목 셀을 찾지 못했습니다.'
-              );
-            }}
-
-            const runs=
-              directRuns(p);
-
-            if(!runs.length){{
-              throw new Error(
-                '기본 양식 제목 run을 찾지 못했습니다.'
-              );
-            }}
-
-            setRunText(
-              runs[0],
-              title
-            );
-
-            runs
-              .slice(1)
-              .forEach(
-                r=>setRunText(
-                  r,
-                  ''
-                )
-              );
-
-            clearLines(p);
-            clearLines(titleP);
-          }}
-
-          function genericMakeTablePara(
-            tableParaTpl,
-            block
-          ){{
-            const rows=
-              asArray(
-                block?.rows
-              );
-
-            const p=
-              clone(
-                tableParaTpl
-              );
-
-            const tbl=
-              descendants(
-                p,
-                'tbl'
-              )[0];
-
-            if(!tbl){{
-              throw new Error(
-                '기본 양식 표 골격을 찾지 못했습니다.'
-              );
-            }}
-
-            const originalRows=
-              direct(
-                tbl,
-                'tr'
-              );
-
-            if(
-              originalRows.length<2
-            ){{
-              throw new Error(
-                '기본 양식 표 행 골격이 부족합니다.'
-              );
-            }}
-
-            const headerTrTpl=
-              clone(
-                originalRows[0]
-              );
-
-            const bodyTrTpl=
-              clone(
-                originalRows[1]
-              );
-
-            const headerCells=
-              direct(
-                headerTrTpl,
-                'tc'
-              );
-
-            const bodyCells=
-              direct(
-                bodyTrTpl,
-                'tc'
-              );
-
-            originalRows.forEach(
-              x=>
-                x.parentNode.removeChild(x)
-            );
-
-            const colCnt=
-              Math.max(
-                1,
-                Math.min(
-                  12,
-                  Math.max(
-                    ...rows.map(
-                      r=>
-                        asArray(r).length
-                    ),
-                    1
-                  )
-                )
-              );
-
-            const tblSz=
-              descendants(
-                tbl,
-                'sz'
-              )[0];
-
-            const totalWidth=
-              Number(
-                tblSz?.getAttribute(
-                  'width'
-                )||
-                49486
-              );
-
-            let weights=
-              asArray(
-                block?.colWidths
-              )
-                .slice(
-                  0,
-                  colCnt
-                )
-                .map(
-                  x=>
-                    Number(x)||0
-                );
-
-            if(
-              weights.length<colCnt||
-              !weights.some(
-                x=>x>0
-              )
-            ){{
-              weights=
-                Array.from(
-                  {{
-                    length:colCnt
-                  }},
-                  ()=>1
-                );
-            }}
-
-            const sum=
-              weights.reduce(
-                (a,b)=>
-                  a+
-                  (
-                    b>0
-                      ? b
-                      : 1
-                  ),
-                0
-              )||
-              colCnt;
-
-            let widths=
-              weights.map(
-                x=>
-                  Math.max(
-                    1,
-                    Math.floor(
-                      totalWidth*
-                      (
-                        (
-                          x>0
-                            ? x
-                            : 1
-                        )/
-                        sum
-                      )
-                    )
-                  )
-              );
-
-            widths[
-              widths.length-1
-            ]+=
-              totalWidth-
-              widths.reduce(
-                (a,b)=>
-                  a+b,
-                0
-              );
-
-            tbl.setAttribute(
-              'rowCnt',
-              String(
-                rows.length
-              )
-            );
-
-            tbl.setAttribute(
-              'colCnt',
-              String(
-                colCnt
-              )
-            );
-
-            tbl.setAttribute(
-              'repeatHeader',
-              rows.length>1
-                ? '1'
-                : '0'
-            );
-
-            tbl.setAttribute(
-              'noAdjust',
-              '1'
-            );
-
-            function chooseHeader(c){{
-              if(c===0){{
-                return headerCells[0];
-              }}
-
-              if(
-                c===
-                colCnt-1
-              ){{
-                return headerCells[
-                  headerCells.length-1
-                ];
-              }}
-
-              return headerCells[
-                Math.min(
-                  1,
-                  headerCells.length-1
-                )
-              ];
-            }}
-
-            function chooseBody(c){{
-              if(c===0){{
-                return bodyCells[0];
-              }}
-
-              if(
-                c===
-                colCnt-1
-              ){{
-                return bodyCells[
-                  bodyCells.length-1
-                ];
-              }}
-
-              return bodyCells[
-                Math.min(
-                  2,
-                  bodyCells.length-1
-                )
-              ];
-            }}
-
-            function rowHeight(vals){{
-              let lines=1;
-
-              for(
-                let c=0;
-                c<colCnt;
-                c++
-              ){{
-                const usable=
-                  Math.max(
-                    4,
-                    Math.floor(
-                      widths[c]/1150
-                    )
-                  );
-
-                lines=
-                  Math.max(
-                    lines,
-                    Math.ceil(
-                      genericVisualLen(
-                        vals[c]??''
-                      )/
-                      usable
-                    )
-                  );
-              }}
-
-              return Math.max(
-                3815,
-                1500+
-                lines*1500
-              );
-            }}
-
-            function setCell(
-              tc,
-              r,
-              c,
-              text,
-              height,
-              isHeader
-            ){{
-              const addr=
-                descendants(
-                  tc,
-                  'cellAddr'
-                )[0];
-
-              const span=
-                descendants(
-                  tc,
-                  'cellSpan'
-                )[0];
-
-              const cs=
-                descendants(
-                  tc,
-                  'cellSz'
-                )[0];
-
-              if(addr){{
-                addr.setAttribute(
-                  'colAddr',
-                  String(c)
-                );
-
-                addr.setAttribute(
-                  'rowAddr',
-                  String(r)
-                );
-              }}
-
-              if(span){{
-                span.setAttribute(
-                  'colSpan',
-                  '1'
-                );
-
-                span.setAttribute(
-                  'rowSpan',
-                  '1'
-                );
-              }}
-
-              if(cs){{
-                cs.setAttribute(
-                  'width',
-                  String(
-                    widths[c]
-                  )
-                );
-
-                cs.setAttribute(
-                  'height',
-                  String(height)
-                );
-              }}
-
-              const sub=
-                descendants(
-                  tc,
-                  'subList'
-                )[0];
-
-              const ps=
-                sub
-                  ? direct(
-                      sub,
-                      'p'
-                    )
-                  : descendants(
-                      tc,
-                      'p'
-                    );
-
-              const p0=
-                ps[0];
-
-              if(!p0){{
-                return;
-              }}
-
-              ps
-                .slice(1)
-                .forEach(
-                  x=>
-                    x.parentNode.removeChild(x)
-                );
-
-              const runs=
-                directRuns(
-                  p0
-                );
-
-              if(runs.length){{
-                runs[0].setAttribute(
-                  'charPrIDRef',
-                  isHeader
-                    ? '31'
-                    : '32'
-                );
-
-                setRunText(
-                  runs[0],
-                  cleanText(text)
-                );
-
-                runs
-                  .slice(1)
-                  .forEach(
-                    x=>
-                      setRunText(
-                        x,
-                        ''
-                      )
-                  );
-              }}else{{
-                setFirstText(
-                  p0,
-                  cleanText(text)
-                );
-              }}
-
-              clearLines(p0);
-            }}
-
-            let totalHeight=0;
-
-            rows.forEach(
-              (row,r)=>{{
-                const vals=
-                  asArray(row);
-
-                const isHeader=
-                  rows.length>1&&
-                  r===0;
-
-                const h=
-                  rowHeight(vals);
-
-                totalHeight+=h;
-
-                const tr=
-                  clone(
-                    isHeader
-                      ? headerTrTpl
-                      : bodyTrTpl
-                  );
-
-                direct(
-                  tr,
-                  'tc'
-                ).forEach(
-                  x=>
-                    x.parentNode.removeChild(x)
-                );
-
-                for(
-                  let c=0;
-                  c<colCnt;
-                  c++
-                ){{
-                  const tc=
-                    clone(
-                      isHeader
-                        ? chooseHeader(c)
-                        : chooseBody(c)
-                    );
-
-                  setCell(
-                    tc,
-                    r,
-                    c,
-                    vals[c]??'',
-                    h,
-                    isHeader
-                  );
-
-                  tr.appendChild(
-                    tc
-                  );
-                }}
-
-                tbl.appendChild(
-                  tr
-                );
-              }}
-            );
-
-            if(tblSz){{
-              tblSz.setAttribute(
-                'height',
-                String(
-                  Math.max(
-                    totalHeight,
-                    3815
-                  )
-                )
-              );
-            }}
-
-            clearLines(p);
-
-            return p;
-          }}
-
-          function processGenericCommon(
-            xml,
-            common
-          ){{
-            const doc=
-              parseXml(xml);
-
-            const root=
-              doc.documentElement;
-
-            const ps=
-              topParagraphs(
-                root
-              );
-
-            if(
-              ps.length<21
-            ){{
-              throw new Error(
-                '한글 양식.hwpx 골격을 찾지 못했습니다.'
-              );
-            }}
-
-            const titleP=
-              ps[0];
-
-            const meta=
-              ps[1];
-
-            const blankTpl=
-              clone(
-                ps[2]
-              );
-
-            const headingTpl=
-              clone(
-                ps[3]
-              );
-
-            const bodyTpl=
-              clone(
-                ps[3]
-              );
-
-            const subHeadingTpl=
-              clone(
-                ps[3]
-              );
-
-            const tableSource=
-              ps.find(
-                p=>{{
-                  const t=
-                    descendants(
-                      p,
-                      'tbl'
-                    )[0];
-
-                  return (
-                    t&&
-                    Number(
-                      t.getAttribute(
-                        'colCnt'
-                      )||0
-                    )===
-                    4
-                  );
-                }}
-              );
-
-            if(!tableSource){{
-              throw new Error(
-                '한글 양식.hwpx 표 골격을 찾지 못했습니다.'
-              );
-            }}
-
-            const tableParaTpl=
-              clone(
-                tableSource
-              );
-
-            genericSetSingleRun(
-              bodyTpl,
-              '',
-              '22',
-              '33'
-            );
-
-            genericSetSingleRun(
-              subHeadingTpl,
-              '',
-              '21',
-              '33'
-            );
-
-            const title=
-              genericCleanTitle(
-                common?.document?.title||
-                common?.facts?.event_name||
-                '범용 검토'
-              );
-
-            genericSetTitle(
-              titleP,
-              title
-            );
-
-            const old=
-              textOf(meta);
-
-            const m=
-              old.match(
-                /\/\s*([^>]+)>/
-              );
-
-            const dept=
-              m
-                ? m[1].trim()
-                : '국제협력실';
-
-            const mr=
-              directRuns(
-                meta
-              )[0];
-
-            const metaText=
-              '< '+
-              formatFullDate(
-                todaySeoul()
-              )+
-              ' / '+
-              dept+
-              ' >';
-
-            if(mr){{
-              setRunText(
-                mr,
-                metaText
-              );
-            }}else{{
-              setFirstText(
-                meta,
-                metaText
-              );
-            }}
-
-            clearLines(meta);
-
-            topParagraphs(
-              root
-            )
-              .slice(2)
-              .forEach(
-                p=>
-                  root.removeChild(p)
-              );
-
-            const blank=
-              clone(
-                blankTpl
-              );
-
-            setFirstText(
-              blank,
-              ''
-            );
-
-            clearLines(
-              blank
-            );
-
-            root.appendChild(
-              blank
-            );
-
-            const append=(
-              tpl,
-              text,
-              charPr=null,
-              paraPr=null
-            )=>{{
-              const t=
-                cleanText(text);
-
-              if(!t){{
-                return;
-              }}
-
-              const p=
-                clone(tpl);
-
-              genericSetSingleRun(
-                p,
-                t,
-                charPr,
-                paraPr
-              );
-
-              root.appendChild(
-                p
-              );
-            }};
-
-            let emitted=0;
-
-            for(
-              const b of asArray(
-                common?.blocks
-              )
-            ){{
-              if(!b){{
-                continue;
-              }}
-
-              if(
-                b.type===
-                'heading'
-              ){{
-                const t=
-                  genericBlockText(
-                    b
-                  );
-
-                if(
-                  !t||
-                  genericCleanTitle(t)===
-                    title
-                ){{
-                  continue;
-                }}
-
-                if(
-                  Number(
-                    b.level||1
-                  )<=1
-                ){{
-                  append(
-                    headingTpl,
-                    t,
-                    '27',
-                    '33'
-                  );
-                }}else{{
-                  append(
-                    subHeadingTpl,
-                    t,
-                    '21',
-                    '33'
-                  );
-                }}
-
-                emitted++;
-
-                continue;
-              }}
-
-              if(
-                b.type===
-                'paragraph'
-              ){{
-                const t=
-                  genericBlockText(
-                    b
-                  );
-
-                if(
-                  !t||
-                  genericCleanTitle(t)===
-                    title
-                ){{
-                  continue;
-                }}
-
-                append(
-                  bodyTpl,
-                  t,
-                  '22',
-                  '33'
-                );
-
-                emitted++;
-
-                continue;
-              }}
-
-              if(
-                b.type===
-                  'table'&&
-                Array.isArray(
-                  b.rows
-                )&&
-                b.rows.length
-              ){{
-                root.appendChild(
-                  genericMakeTablePara(
-                    tableParaTpl,
-                    b
-                  )
-                );
-
-                emitted+=
-                  b.rows.length;
-
-                continue;
-              }}
-
-              if(
-                Array.isArray(
-                  b.children
-                )
-              ){{
-                for(
-                  const c of b.children
-                ){{
-                  const t=
-                    genericBlockText(
-                      c
-                    );
-
-                  if(t){{
-                    append(
-                      bodyTpl,
-                      t,
-                      '22',
-                      '33'
-                    );
-
-                    emitted++;
-                  }}
-                }}
-              }}
-            }}
-
-            if(!emitted){{
-              const f=
-                common?.facts||{{}};
-
-              const fallback=[
-                ...(
-                  f.main_content||[]
-                ),
-                ...(
-                  f.purpose||[]
-                )
-              ]
-                .map(
-                  x=>
-                    x?.text||x
-                )
-                .filter(Boolean);
-
-              fallback.forEach(
-                t=>
-                  append(
-                    bodyTpl,
-                    t,
-                    '22',
-                    '33'
-                  )
-              );
-
-              emitted=
-                fallback.length;
-            }}
-
-            if(!emitted){{
-              append(
-                bodyTpl,
-                '원문에서 표시할 본문을 추출하지 못했습니다.',
-                '22',
-                '33'
-              );
-            }}
-
-            return {{
-              xml:
-                serializeXml(
-                  doc
-                ),
-              preview:
-                makePreviewText(
-                  root
-                )
-            }};
-          }}
-
-          async function generateGenericHwpx(
-            common
-          ){{
-            const src=
-              await JSZip.loadAsync(
-                GENERIC_TEMPLATE_B64,
-                {{
-                  base64:true
-                }}
-              );
-
-            const sec=
-              src.file(
-                'Contents/section0.xml'
-              );
-
-            if(!sec){{
-              throw new Error(
-                '범용 기본 HWPX 템플릿 오류'
-              );
-            }}
-
-            const processed=
-              processGenericCommon(
-                await sec.async(
-                  'string'
-                ),
-                common
-              );
-
-            const out=
-              new JSZip();
-
-            if(
-              src.file(
-                'mimetype'
-              )
-            ){{
-              out.file(
-                'mimetype',
-                await src
-                  .file(
-                    'mimetype'
-                  )
-                  .async(
-                    'uint8array'
-                  ),
-                {{
-                  compression:
-                    'STORE'
-                }}
-              );
-            }}
-
-            for(
-              const name of Object.keys(
-                src.files
-              )
-            ){{
-              if(
-                name===
-                'mimetype'
-              ){{
-                continue;
-              }}
-
-              const e=
-                src.files[
-                  name
-                ];
-
-              if(e.dir){{
-                out.folder(
-                  name
-                );
-
-                continue;
-              }}
-
-              if(
-                name===
-                'Contents/section0.xml'
-              ){{
-                out.file(
-                  name,
-                  processed.xml,
-                  {{
-                    compression:
-                      'DEFLATE'
-                  }}
-                );
-              }}else if(
-                name===
-                'Preview/PrvText.txt'
-              ){{
-                out.file(
-                  name,
-                  processed.preview,
-                  {{
-                    compression:
-                      'DEFLATE'
-                  }}
-                );
-              }}else{{
-                out.file(
-                  name,
-                  await e.async(
-                    'uint8array'
-                  ),
-                  {{
-                    compression:
-                      'DEFLATE'
-                  }}
-                );
-              }}
-            }}
-
-            const blob=
-              await out.generateAsync(
-                {{
-                  type:
-                    'blob',
-                  mimeType:
-                    'application/haansofthwpx',
-                  compression:
-                    'DEFLATE'
-                }}
-              );
-
-            return {{
-              blob,
-              name:
-                safeName(
-                  genericCleanTitle(
-                    common?.document?.title||
-                    '범용검토'
-                  )+
-                  '_범용검토'
-                )+
-                '.hwpx',
-              tid:
-                'kfe-generic-review-v1'
-            }};
-          }}
-          '''
-
-          s=
-            s[:start]+
-            replacement+
-            s[end:]
-          
-          start=
-            s.index(
-              'async function registerPdfFonts('
-            );
-
-          end=
-            s.index(
-              'async function renderGeneratedHwpxToPdf',
-              start
-            );
-
-          fontfunc=r'''async function registerPdfFonts(fontsRequired){
-            if(
-              typeof RhwpToPdf.registerPdfFont!==
-              'function'
-            ){
-              throw new Error(
-                'PDF 폰트 등록 기능이 없는 렌더러입니다.'
-              );
-            }
-
-            RhwpToPdf.clearPdfFonts?.();
-
-            const queryFn=
-              typeof window.queryLocalFonts===
-              'function'
-                ? ()=>window.queryLocalFonts()
-                : (
-                    navigator.fonts&&
-                    typeof navigator.fonts.query===
-                      'function'
-                      ? ()=>navigator.fonts.query()
-                      : null
-                  );
-
-            if(!queryFn){
-              throw new Error(
-                '실제 한글 미리보기에는 Chrome/Edge의 로컬 글꼴 접근이 필요합니다.'
-              );
-            }
-
-            let locals;
-
-            try{
-              locals=
-                await queryFn();
-            }catch(e){
-              throw new Error(
-                '로컬 글꼴 접근이 거부되었습니다. 브라우저에서 글꼴 권한을 허용해 주세요.'
-              );
-            }
-
-            const norm=s=>
-              String(s||'')
-                .toLowerCase()
-                .replace(
-                  /[\s_\-]/g,
-                  ''
-                );
-
-            const alias=(
-              req,
-              fam
-            )=>{
-              const r=
-                norm(req);
-
-              const f=
-                norm(fam);
-
-              if(
-                !r||
-                !f
-              ){
-                return false;
-              }
-
-              if(
-                r===f||
-                f.includes(r)||
-                r.includes(f)
-              ){
-                return true;
-              }
-
-              if(
-                /hy헤드라인|hyheadline/i.test(req)
-              ){
-                return /(hy|한양).*(헤드라인|headline)/i.test(fam);
-              }
-
-              if(
-                /한양중고딕|hy.*중고딕|hanyang.*jung|hy.*gothic/i.test(req)
-              ){
-                return /(한양|hanyang|hy).*(중고딕|jung|gothic)/i.test(fam);
-              }
-
-              if(
-                /휴먼명조|human.*myeong|human.*myung/i.test(req)
-              ){
-                return /(휴먼|human).*(명조|myeong|myung)/i.test(fam);
-              }
-
-              return false;
-            };
-
-            const req=
-              Array.from(
-                fontsRequired||[]
-              )
-                .map(
-                  x=>
-                    String(x).trim()
-                )
-                .filter(Boolean);
-
-            const core=[
-              'HY헤드라인M',
-              '한양중고딕',
-              '휴먼명조'
-            ];
-
-            const picked=[];
-            const seen=
-              new Set();
-
-            const add=f=>{
-              const key=
-                (
-                  f.fullName||
-                  f.family||
-                  ''
-                )+
-                '|' +
-                (
-                  f.style||
-                  ''
-                );
-
-              if(
-                !seen.has(key)
-              ){
-                seen.add(key);
-                picked.push(f);
-              }
-            };
-
-            const findFont=name=>
-              locals.find(
-                f=>
-                  alias(
-                    name,
-                    String(
-                      f.family||
-                      f.fullName||
-                      ''
-                    )
-                  )
-              );
-
-            const missing=[];
-
-            for(
-              const name of core
-            ){
-              const f=
-                findFont(name);
-
-              if(f){
-                add(f);
-              }else{
-                missing.push(
-                  name
-                );
-              }
-            }
-
-            if(
-              missing.length
-            ){
-              throw new Error(
-                '기본 양식 글꼴을 찾지 못했습니다: '+
-                missing.join(', ')+
-                ' · 대체 글꼴로 미리보기를 만들지 않습니다.'
-              );
-            }
-
-            for(
-              const name of req
-            ){
-              const f=
-                findFont(name);
-
-              if(f){
-                add(f);
-              }
-            }
-
-            let ok=0;
-
-            for(
-              const f of picked.slice(
-                0,
-                24
-              )
-            ){
-              try{
-                const b=
-                  await f.blob();
-
-                RhwpToPdf.registerPdfFont(
-                  new Uint8Array(
-                    await b.arrayBuffer()
-                  )
-                );
-
-                ok++;
-              }catch(_e){}
-            }
-
-            if(
-              ok<
-              core.length
-            ){
-              throw new Error(
-                '기본 양식 글꼴 등록에 실패했습니다.'
-              );
-            }
-
-            return picked
-              .slice(
-                0,
-                24
-              )
-              .map(
-                f=>
-                  f.family||
-                  f.fullName
-              )
-              .filter(Boolean);
-          }
-          '''
-
-          s=
-            s[:start]+
-            fontfunc+
-            s[end:]
-          
-          src_path.write_text(
-              s,
-              encoding='utf-8'
-          )
-
-          print(
-              'patched',
-              src_path,
-              len(s)
-          )
-          PY
-
           python3 /tmp/patch_v019.py
 
           test -s work/index.html
+
           grep -q "HWPX 생성기 v0.19" work/index.html
           grep -q "GENERIC_TEMPLATE_B64" work/index.html
           grep -q "function docxTableRobust" work/index.html
@@ -1671,14 +241,55 @@ jobs:
           grep -q "async function generateGenericHwpx" work/index.html
           grep -q "기본 양식 글꼴을 찾지 못했습니다" work/index.html
 
+      - name: Verify generated JavaScript
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          html = Path(
+              "work/index.html"
+          ).read_text(
+              encoding="utf-8"
+          )
+
+          scripts = re.findall(
+              r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>",
+              html,
+              flags=re.S | re.I,
+          )
+
+          if not scripts:
+              raise SystemExit(
+                  "ERROR: inline JavaScript not found."
+              )
+
+          Path(
+              "/tmp/generated-inline.js"
+          ).write_text(
+              "\n".join(scripts),
+              encoding="utf-8",
+          )
+          PY
+
+          node --check /tmp/generated-inline.js
+
       - name: Build static site
         shell: bash
         run: |
           set -euo pipefail
 
           cp work/index.html site/index.html
-          test ! -s work/README.md || cp work/README.md site/README.md
-          test ! -s work/NOTICE.md || cp work/NOTICE.md site/NOTICE.md
+
+          test ! -s work/README.md || \
+            cp work/README.md site/README.md
+
+          test ! -s work/NOTICE.md || \
+            cp work/NOTICE.md site/NOTICE.md
+
           touch site/.nojekyll
 
       - name: Download pinned rhwptopdf renderer
@@ -1694,8 +305,11 @@ jobs:
             -o site/vendor/rhwptopdf.umd_bg.wasm \
             https://github.com/sanguneo/rhwptopdf/releases/download/v0.2.2/rhwptopdf.umd_bg.wasm
 
-          echo "7913400eae742e9f15f320fc377d5961a63216840f290a4c280fbe731ec3c0cd  site/vendor/rhwptopdf.umd.js" | sha256sum -c -
-          echo "7a3e1e3e3a8d2a5bea64feac7bd8a2b556687a70874003fcf2aa6677e92f83a7  site/vendor/rhwptopdf.umd_bg.wasm" | sha256sum -c -
+          echo "7913400eae742e9f15f320fc377d5961a63216840f290a4c280fbe731ec3c0cd  site/vendor/rhwptopdf.umd.js" \
+            | sha256sum -c -
+
+          echo "7a3e1e3e3a8d2a5bea64feac7bd8a2b556687a70874003fcf2aa6677e92f83a7  site/vendor/rhwptopdf.umd_bg.wasm" \
+            | sha256sum -c -
 
       - name: Verify site before deploy
         shell: bash
@@ -1710,7 +324,9 @@ jobs:
           grep -q "rhwptopdf.umd_bg.wasm" site/index.html
           grep -q "HWPX 생성기 v0.19" site/index.html
 
-          python3 -m http.server 8765 --bind 127.0.0.1 --directory site \
+          python3 -m http.server 8765 \
+            --bind 127.0.0.1 \
+            --directory site \
             >/tmp/hwpx-pages-http.log 2>&1 &
 
           server=$!
@@ -1725,7 +341,6 @@ jobs:
             if curl -fsS \
               -o /dev/null \
               http://127.0.0.1:8765/; then
-
               ready=1
               break
             fi
@@ -1770,7 +385,7 @@ jobs:
             echo "## Deploy HWPX Generator to Pages"
             echo
             echo "- Workflow: pages.yml"
-            echo "- Version: V10"
+            echo "- Version: V11"
             echo "- Generator: HWPX Generator v0.19"
             echo "- Generic base: 한글 양식.hwpx"
             echo "- Generic title: HY헤드라인M 19pt"
