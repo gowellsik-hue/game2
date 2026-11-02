@@ -1,8 +1,9 @@
 # FILE: .github/workflows/pages.yml
-# VERSION: V5
+# VERSION: V7
 # PURPOSE: Deploy HWPX Generator to Pages
-# SOURCE: HWPX_Generator_GitHub_v0.17.zip
+# SOURCE: HWPX_Generator_GitHub_v0.17.zip patched to Generator v0.18 inside Actions
 # PREVIEW: Generated HWPX -> rhwptopdf v0.2.2 -> PDF preview
+# DEPLOY: GitHub Pages official Actions deployment
 # TARGET: https://gowellsik-hue.github.io/game2/
 
 name: Deploy HWPX Generator to Pages
@@ -18,7 +19,9 @@ name: Deploy HWPX Generator to Pages
       - HWPX_Generator_GitHub_v0.17.zip
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
 concurrency:
   group: pages
@@ -29,11 +32,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check generator package
+      - name: Restore HWPX Generator v0.17
         shell: bash
         run: |
           set -euo pipefail
@@ -43,33 +50,1742 @@ jobs:
             exit 1
           }
 
-          echo "Generator package found."
-          ls -lh HWPX_Generator_GitHub_v0.17.zip
+          rm -rf work site
+          mkdir -p work site/vendor
 
-      - name: Extract HWPX Generator
+          unzip -q HWPX_Generator_GitHub_v0.17.zip -d work
+
+          test -s work/index.html || {
+            echo "ERROR: index.html not found in generator package."
+            exit 1
+          }
+
+      - name: Patch Generator v0.17 to v0.18
         shell: bash
         run: |
           set -euo pipefail
 
-          rm -rf site
-          mkdir -p site
+          cat > /tmp/patch_v018.py <<'PY'
+          from pathlib import Path
 
-          unzip -q HWPX_Generator_GitHub_v0.17.zip -d site
+          src = Path("work/index.html")
+          s = src.read_text(encoding="utf-8")
 
-          rm -rf site/.github
+          s = s.replace(
+              "HWPX 생성기 v0.17 · GitHub Pages",
+              "HWPX 생성기 v0.18 · GitHub Pages"
+          )
 
-          test -s site/index.html || {
-            echo "ERROR: index.html not found after extraction."
-            exit 1
+          s = s.replace(
+              "HWPX 생성기 v0.17</h1>",
+              "HWPX 생성기 v0.18</h1>"
+          )
+
+          old = """function docxTableRowsRobust(tbl){
+            const rows=[];
+            for(const tr of pChildEls(tbl,'tr')){
+              const cells=[];
+              for(const tc of pChildEls(tr,'tc')) cells.push(directDescendantText(tc));
+              if(cells.some(Boolean)) rows.push(cells);
+            }
+            return rows;
+          }"""
+
+          new = """function docxTableRobust(tbl){
+            const rows=[];
+            const rowWidths=[];
+
+            for(const tr of pChildEls(tbl,'tr')){
+              const cells=[];
+              const widths=[];
+
+              for(const tc of pChildEls(tr,'tc')){
+                cells.push(directDescendantText(tc));
+
+                const tcW=pDescendants(tc,'tcW')[0];
+                const w=Number(attrLocal(tcW,'w')||0);
+
+                widths.push(
+                  Number.isFinite(w)&&w>0 ? w : 0
+                );
+              }
+
+              if(cells.some(Boolean)){
+                rows.push(cells);
+                rowWidths.push(widths);
+              }
+            }
+
+            let colWidths=[];
+
+            if(rowWidths.length){
+              const first=rowWidths.find(
+                r=>r.some(x=>x>0)
+              );
+
+              if(first){
+                colWidths=first.slice();
+              }
+            }
+
+            if(!colWidths.length){
+              const grid=pDescendants(tbl,'tblGrid')[0];
+
+              if(grid){
+                colWidths=pChildEls(grid,'gridCol').map(
+                  x=>Number(attrLocal(x,'w')||0)
+                );
+              }
+            }
+
+            return {
+              rows,
+              colWidths
+            };
+          }"""
+
+          if old not in s:
+              raise SystemExit("docxTableRowsRobust block not found")
+
+          s = s.replace(old, new)
+
+          s = s.replace(
+              "const rows=docxTableRowsRobust(ch);\n"
+              "        if(rows.length) blocks.push({type:'table',rows});",
+              "const t=docxTableRobust(ch);\n"
+              "        if(t.rows.length) "
+              "blocks.push({type:'table',rows:t.rows,colWidths:t.colWidths});"
+          )
+
+          start = s.index("function genericMakeTablePara(")
+          end = s.index("function validateTargetChoice", start)
+
+          replacement = r'''function genericStyleHeader(xml){
+            const doc=parseXml(xml);
+            const root=doc.documentElement;
+
+            const cps=descendants(root,'charPr');
+
+            const byId=id=>cps.find(
+              x=>x.getAttribute('id')===String(id)
+            );
+
+            const holder=cps[0]?.parentNode;
+
+            if(!holder){
+              throw new Error(
+                'HWPX charProperties를 찾지 못했습니다.'
+              );
+            }
+
+            const boldSource=descendants(
+              byId('17')||byId('21'),
+              'bold'
+            )[0];
+
+            let next=Math.max(
+              ...cps
+                .map(
+                  x=>Number(
+                    x.getAttribute('id')||0
+                  )
+                )
+                .filter(Number.isFinite)
+            )+1;
+
+            function add(
+              baseId,
+              height,
+              bold,
+              color='#000000'
+            ){
+              const base=byId(baseId);
+
+              if(!base){
+                throw new Error(
+                  '기준 charPr '+baseId+' 없음'
+                );
+              }
+
+              const cp=clone(base);
+              const id=String(next++);
+
+              cp.setAttribute('id',id);
+              cp.setAttribute(
+                'height',
+                String(height)
+              );
+              cp.setAttribute(
+                'textColor',
+                color
+              );
+
+              descendants(
+                cp,
+                'bold'
+              ).forEach(
+                x=>
+                  x.parentNode&&
+                  x.parentNode.removeChild(x)
+              );
+
+              if(
+                bold&&
+                boldSource
+              ){
+                cp.appendChild(
+                  clone(boldSource)
+                );
+              }
+
+              holder.appendChild(cp);
+
+              return id;
+            }
+
+            const ids={
+              body:add(
+                '0',
+                1050,
+                false
+              ),
+              tableBody:add(
+                '0',
+                950,
+                false
+              ),
+              tableHead:add(
+                '0',
+                950,
+                true
+              ),
+              heading:add(
+                '0',
+                1300,
+                true,
+                '#20334A'
+              ),
+              title:add(
+                '0',
+                1800,
+                true,
+                '#20334A'
+              )
+            };
+
+            holder.setAttribute(
+              'itemCnt',
+              String(
+                descendants(
+                  holder,
+                  'charPr'
+                ).length
+              )
+            );
+
+            return {
+              xml:serializeXml(doc),
+              ids
+            };
           }
 
-          mkdir -p site/vendor
+          function genericVisualLen(text){
+            let n=0;
+
+            for(
+              const ch of String(text||'')
+            ){
+              n+=(
+                ch.charCodeAt(0)<128
+                  ? 0.55
+                  : 1
+              );
+            }
+
+            return n;
+          }
+
+          function genericMakeTablePara(
+            tableParaTpl,
+            block,
+            styles
+          ){
+            const rows=asArray(
+              block?.rows
+            );
+
+            const p=clone(
+              tableParaTpl
+            );
+
+            const tbl=descendants(
+              p,
+              'tbl'
+            )[0];
+
+            if(!tbl){
+              throw new Error(
+                '범용 표 템플릿을 찾지 못했습니다.'
+              );
+            }
+
+            const originalRows=direct(
+              tbl,
+              'tr'
+            );
+
+            if(
+              originalRows.length<2
+            ){
+              throw new Error(
+                '범용 표 행 템플릿이 부족합니다.'
+              );
+            }
+
+            const headerTrTpl=clone(
+              originalRows[0]
+            );
+
+            const bodyTrTpl=clone(
+              originalRows[
+                Math.min(
+                  1,
+                  originalRows.length-1
+                )
+              ]
+            );
+
+            const headerCells=direct(
+              headerTrTpl,
+              'tc'
+            );
+
+            const bodyCells=direct(
+              bodyTrTpl,
+              'tc'
+            );
+
+            originalRows.forEach(
+              x=>
+                x.parentNode.removeChild(x)
+            );
+
+            const colCnt=Math.max(
+              1,
+              Math.min(
+                12,
+                Math.max(
+                  ...rows.map(
+                    r=>asArray(r).length
+                  ),
+                  1
+                )
+              )
+            );
+
+            const tblSz=descendants(
+              tbl,
+              'sz'
+            )[0];
+
+            const totalWidth=Number(
+              tblSz?.getAttribute(
+                'width'
+              )||51024
+            );
+
+            let weights=asArray(
+              block?.colWidths
+            )
+              .slice(0,colCnt)
+              .map(
+                x=>Number(x)||0
+              );
+
+            if(
+              weights.length<colCnt||
+              !weights.some(x=>x>0)
+            ){
+              weights=Array.from(
+                {length:colCnt},
+                ()=>1
+              );
+            }
+
+            const wsum=
+              weights.reduce(
+                (a,b)=>
+                  a+(b>0?b:1),
+                0
+              )||colCnt;
+
+            let widths=weights.map(
+              x=>
+                Math.max(
+                  1,
+                  Math.floor(
+                    totalWidth*
+                    (
+                      (x>0?x:1)/
+                      wsum
+                    )
+                  )
+                )
+            );
+
+            widths[
+              widths.length-1
+            ]+=
+              totalWidth-
+              widths.reduce(
+                (a,b)=>a+b,
+                0
+              );
+
+            tbl.setAttribute(
+              'rowCnt',
+              String(rows.length)
+            );
+
+            tbl.setAttribute(
+              'colCnt',
+              String(colCnt)
+            );
+
+            tbl.setAttribute(
+              'repeatHeader',
+              rows.length>1
+                ? '1'
+                : '0'
+            );
+
+            tbl.setAttribute(
+              'noAdjust',
+              '1'
+            );
+
+            function chooseCell(
+              templates,
+              c
+            ){
+              if(
+                !templates.length
+              ){
+                throw new Error(
+                  '표 셀 템플릿 없음'
+                );
+              }
+
+              if(c===0){
+                return templates[0];
+              }
+
+              if(
+                c===colCnt-1
+              ){
+                return templates[
+                  templates.length-1
+                ];
+              }
+
+              return templates[
+                Math.min(
+                  1,
+                  templates.length-1
+                )
+              ];
+            }
+
+            function calcRowHeight(
+              vals,
+              r
+            ){
+              let maxLines=1;
+
+              for(
+                let c=0;
+                c<colCnt;
+                c++
+              ){
+                const charPerLine=
+                  Math.max(
+                    4,
+                    Math.floor(
+                      widths[c]/1050
+                    )
+                  );
+
+                const lines=
+                  Math.max(
+                    1,
+                    Math.ceil(
+                      genericVisualLen(
+                        vals[c]??''
+                      )/
+                      charPerLine
+                    )
+                  );
+
+                maxLines=Math.max(
+                  maxLines,
+                  lines
+                );
+              }
+
+              return Math.max(
+                (
+                  r===0&&
+                  rows.length>1
+                )
+                  ? 2800
+                  : 2400,
+                1200+
+                maxLines*1350
+              );
+            }
+
+            function setCell(
+              tc,
+              r,
+              c,
+              text,
+              rowHeight,
+              isHeader
+            ){
+              const addr=descendants(
+                tc,
+                'cellAddr'
+              )[0];
+
+              const span=descendants(
+                tc,
+                'cellSpan'
+              )[0];
+
+              const cs=descendants(
+                tc,
+                'cellSz'
+              )[0];
+
+              if(addr){
+                addr.setAttribute(
+                  'colAddr',
+                  String(c)
+                );
+
+                addr.setAttribute(
+                  'rowAddr',
+                  String(r)
+                );
+              }
+
+              if(span){
+                span.setAttribute(
+                  'colSpan',
+                  '1'
+                );
+
+                span.setAttribute(
+                  'rowSpan',
+                  '1'
+                );
+              }
+
+              if(cs){
+                cs.setAttribute(
+                  'width',
+                  String(widths[c])
+                );
+
+                cs.setAttribute(
+                  'height',
+                  String(rowHeight)
+                );
+              }
+
+              const sub=descendants(
+                tc,
+                'subList'
+              )[0];
+
+              const ps=
+                sub
+                  ? direct(
+                      sub,
+                      'p'
+                    )
+                  : descendants(
+                      tc,
+                      'p'
+                    );
+
+              const p0=ps[0];
+
+              if(!p0){
+                return;
+              }
+
+              ps
+                .slice(1)
+                .forEach(
+                  x=>
+                    x.parentNode.removeChild(x)
+                );
+
+              p0.setAttribute(
+                'paraPrIDRef',
+                isHeader
+                  ? '31'
+                  : (
+                      c===0&&
+                      colCnt>1
+                        ? '31'
+                        : '0'
+                    )
+              );
+
+              const runs=directRuns(
+                p0
+              );
+
+              if(
+                runs.length
+              ){
+                runs[0].setAttribute(
+                  'charPrIDRef',
+                  isHeader
+                    ? styles.tableHead
+                    : styles.tableBody
+                );
+
+                setRunText(
+                  runs[0],
+                  cleanText(text)
+                );
+
+                runs
+                  .slice(1)
+                  .forEach(
+                    x=>setRunText(
+                      x,
+                      ''
+                    )
+                  );
+              }else{
+                setFirstText(
+                  p0,
+                  cleanText(text)
+                );
+              }
+
+              clearLines(p0);
+            }
+
+            let totalHeight=0;
+
+            rows.forEach(
+              (row,r)=>{
+                const vals=asArray(
+                  row
+                );
+
+                const isHeader=
+                  rows.length>1&&
+                  r===0;
+
+                const rowHeight=
+                  calcRowHeight(
+                    vals,
+                    r
+                  );
+
+                totalHeight+=
+                  rowHeight;
+
+                const tr=clone(
+                  isHeader
+                    ? headerTrTpl
+                    : bodyTrTpl
+                );
+
+                direct(
+                  tr,
+                  'tc'
+                ).forEach(
+                  x=>
+                    x.parentNode.removeChild(x)
+                );
+
+                for(
+                  let c=0;
+                  c<colCnt;
+                  c++
+                ){
+                  const tc=clone(
+                    chooseCell(
+                      isHeader
+                        ? headerCells
+                        : bodyCells,
+                      c
+                    )
+                  );
+
+                  setCell(
+                    tc,
+                    r,
+                    c,
+                    vals[c]??'',
+                    rowHeight,
+                    isHeader
+                  );
+
+                  tr.appendChild(
+                    tc
+                  );
+                }
+
+                tbl.appendChild(
+                  tr
+                );
+              }
+            );
+
+            if(tblSz){
+              tblSz.setAttribute(
+                'height',
+                String(
+                  Math.max(
+                    totalHeight,
+                    2400
+                  )
+                )
+              );
+            }
+
+            clearLines(p);
+
+            return p;
+          }
+
+          function genericSetParagraph(
+            p,
+            text,
+            charPrId,
+            paraPrId
+          ){
+            p.setAttribute(
+              'paraPrIDRef',
+              String(paraPrId)
+            );
+
+            const runs=directRuns(
+              p
+            );
+
+            if(
+              runs.length
+            ){
+              runs[0].setAttribute(
+                'charPrIDRef',
+                String(charPrId)
+              );
+
+              setRunText(
+                runs[0],
+                cleanText(text)
+              );
+
+              runs
+                .slice(1)
+                .forEach(
+                  x=>setRunText(
+                    x,
+                    ''
+                  )
+                );
+            }else{
+              setFirstText(
+                p,
+                cleanText(text)
+              );
+            }
+
+            clearLines(p);
+          }
+
+          function genericFixTitleBand(
+            titleP,
+            styles,
+            title
+          ){
+            const tbl=descendants(
+              titleP,
+              'tbl'
+            )[0];
+
+            if(!tbl){
+              setFirstText(
+                titleP,
+                title
+              );
+              return;
+            }
+
+            const trs=direct(
+              tbl,
+              'tr'
+            );
+
+            if(
+              trs.length<3
+            ){
+              setFirstText(
+                titleP,
+                title
+              );
+              return;
+            }
+
+            let total=0;
+
+            trs.forEach(
+              (tr,i)=>{
+                const tc=direct(
+                  tr,
+                  'tc'
+                )[0];
+
+                const cs=
+                  tc&&
+                  descendants(
+                    tc,
+                    'cellSz'
+                  )[0];
+
+                if(!cs){
+                  return;
+                }
+
+                if(
+                  i===0||
+                  i===trs.length-1
+                ){
+                  cs.setAttribute(
+                    'height',
+                    '200'
+                  );
+
+                  const cm=descendants(
+                    tc,
+                    'cellMargin'
+                  )[0];
+
+                  if(cm){
+                    cm.setAttribute(
+                      'top',
+                      '0'
+                    );
+
+                    cm.setAttribute(
+                      'bottom',
+                      '0'
+                    );
+                  }
+                }else{
+                  const sub=descendants(
+                    tc,
+                    'subList'
+                  )[0];
+
+                  const p0=
+                    sub&&
+                    direct(
+                      sub,
+                      'p'
+                    )[0];
+
+                  if(p0){
+                    p0.setAttribute(
+                      'paraPrIDRef',
+                      '28'
+                    );
+
+                    const r0=
+                      directRuns(
+                        p0
+                      )[0];
+
+                    if(r0){
+                      r0.setAttribute(
+                        'charPrIDRef',
+                        styles.title
+                      );
+
+                      setRunText(
+                        r0,
+                        title
+                      );
+
+                      directRuns(
+                        p0
+                      )
+                        .slice(1)
+                        .forEach(
+                          x=>setRunText(
+                            x,
+                            ''
+                          )
+                        );
+                    }
+
+                    clearLines(
+                      p0
+                    );
+                  }
+                }
+
+                total+=Number(
+                  cs.getAttribute(
+                    'height'
+                  )||0
+                );
+              }
+            );
+
+            const sz=descendants(
+              tbl,
+              'sz'
+            )[0];
+
+            if(sz){
+              sz.setAttribute(
+                'height',
+                String(total)
+              );
+            }
+
+            clearLines(
+              titleP
+            );
+          }
+
+          function processGenericCommon(
+            xml,
+            common,
+            styles
+          ){
+            const doc=parseXml(
+              xml
+            );
+
+            const root=
+              doc.documentElement;
+
+            const ps=
+              topParagraphs(
+                root
+              );
+
+            if(
+              ps.length<17
+            ){
+              throw new Error(
+                '범용 검토용 기본 HWPX 골격을 찾지 못했습니다.'
+              );
+            }
+
+            const titleP=
+              ps[0];
+
+            const meta=
+              findTopP(
+                root,
+                '/'
+              )[1]||
+              ps[1];
+
+            const headingSrc=
+              findTopP(
+                root,
+                '□ 개요'
+              )[1]||
+              ps[3];
+
+            const normalSrc=
+              ps[8]||
+              ps[7]||
+              ps[4];
+
+            const blankSrc=
+              ps[2]||
+              normalSrc;
+
+            const tableParaSrc=
+              ps.find(
+                p=>{
+                  const t=
+                    descendants(
+                      p,
+                      'tbl'
+                    )[0];
+
+                  return (
+                    t&&
+                    Number(
+                      t.getAttribute(
+                        'colCnt'
+                      )||0
+                    )>=3
+                  );
+                }
+              );
+
+            if(
+              !tableParaSrc
+            ){
+              throw new Error(
+                '범용 표용 HWPX 골격을 찾지 못했습니다.'
+              );
+            }
+
+            const headingTpl=
+              clone(
+                headingSrc
+              );
+
+            const normalTpl=
+              clone(
+                normalSrc
+              );
+
+            const blankTpl=
+              clone(
+                blankSrc
+              );
+
+            const tableParaTpl=
+              clone(
+                tableParaSrc
+              );
+
+            const title=
+              genericCleanTitle(
+                common?.document?.title||
+                common?.facts?.event_name||
+                '범용 검토'
+              );
+
+            genericFixTitleBand(
+              titleP,
+              styles,
+              title
+            );
+
+            const old=
+              textOf(meta);
+
+            const m=
+              old.match(
+                /\/\s*([^>]+)>/
+              );
+
+            const dept=
+              m
+                ? m[1].trim()
+                : '국제협력실';
+
+            const mr=
+              directRuns(
+                meta
+              )[0];
+
+            if(mr){
+              setRunText(
+                mr,
+                `< ${formatFullDate(todaySeoul())} / ${dept} >`
+              );
+            }else{
+              setFirstText(
+                meta,
+                `< ${formatFullDate(todaySeoul())} / ${dept} >`
+              );
+            }
+
+            clearLines(meta);
+
+            topParagraphs(
+              root
+            )
+              .slice(2)
+              .forEach(
+                p=>
+                  root.removeChild(p)
+              );
+
+            const appendText=(
+              kind,
+              text
+            )=>{
+              const t=
+                cleanText(text);
+
+              if(!t){
+                return;
+              }
+
+              const p=clone(
+                kind==='heading'
+                  ? headingTpl
+                  : normalTpl
+              );
+
+              genericSetParagraph(
+                p,
+                t,
+                kind==='heading'
+                  ? styles.heading
+                  : styles.body,
+                kind==='heading'
+                  ? '35'
+                  : '0'
+              );
+
+              root.appendChild(
+                p
+              );
+            };
+
+            const blank=
+              clone(
+                blankTpl
+              );
+
+            genericSetParagraph(
+              blank,
+              '',
+              styles.body,
+              '0'
+            );
+
+            root.appendChild(
+              blank
+            );
+
+            let emitted=0;
+
+            for(
+              const b of asArray(
+                common?.blocks
+              )
+            ){
+              if(!b){
+                continue;
+              }
+
+              if(
+                b.type==='heading'
+              ){
+                const t=
+                  genericBlockText(
+                    b
+                  );
+
+                if(
+                  !t||
+                  genericCleanTitle(t)===
+                    title
+                ){
+                  continue;
+                }
+
+                appendText(
+                  'heading',
+                  t
+                );
+
+                emitted++;
+
+                continue;
+              }
+
+              if(
+                b.type==='paragraph'
+              ){
+                const t=
+                  genericBlockText(
+                    b
+                  );
+
+                if(
+                  !t||
+                  genericCleanTitle(t)===
+                    title
+                ){
+                  continue;
+                }
+
+                appendText(
+                  'body',
+                  t
+                );
+
+                emitted++;
+
+                continue;
+              }
+
+              if(
+                b.type==='table'&&
+                Array.isArray(
+                  b.rows
+                )&&
+                b.rows.length
+              ){
+                root.appendChild(
+                  genericMakeTablePara(
+                    tableParaTpl,
+                    b,
+                    styles
+                  )
+                );
+
+                emitted+=
+                  b.rows.length;
+
+                continue;
+              }
+
+              if(
+                Array.isArray(
+                  b.children
+                )
+              ){
+                for(
+                  const c of b.children
+                ){
+                  const t=
+                    genericBlockText(
+                      c
+                    );
+
+                  if(t){
+                    appendText(
+                      'body',
+                      t
+                    );
+
+                    emitted++;
+                  }
+                }
+              }
+            }
+
+            if(!emitted){
+              const f=
+                common?.facts||{};
+
+              const fallback=[
+                ...(f.main_content||[]),
+                ...(f.purpose||[])
+              ]
+                .map(
+                  x=>x?.text||x
+                )
+                .filter(Boolean);
+
+              fallback.forEach(
+                t=>
+                  appendText(
+                    'body',
+                    t
+                  )
+              );
+
+              emitted=
+                fallback.length;
+            }
+
+            if(!emitted){
+              appendText(
+                'body',
+                '원문에서 표시할 본문을 추출하지 못했습니다.'
+              );
+            }
+
+            return {
+              xml:serializeXml(doc),
+              preview:makePreviewText(root)
+            };
+          }
+
+          async function generateGenericHwpx(
+            common
+          ){
+            const src=
+              await JSZip.loadAsync(
+                TEMPLATE_B64[
+                  'kfe-visit-plan-v1'
+                ],
+                {
+                  base64:true
+                }
+              );
+
+            const sec=
+              src.file(
+                'Contents/section0.xml'
+              );
+
+            const head=
+              src.file(
+                'Contents/header.xml'
+              );
+
+            if(
+              !sec||
+              !head
+            ){
+              throw new Error(
+                '내장 HWPX 템플릿 오류'
+              );
+            }
+
+            const styled=
+              genericStyleHeader(
+                await head.async(
+                  'string'
+                )
+              );
+
+            const processed=
+              processGenericCommon(
+                await sec.async(
+                  'string'
+                ),
+                common,
+                styled.ids
+              );
+
+            const out=
+              new JSZip();
+
+            if(
+              src.file(
+                'mimetype'
+              )
+            ){
+              out.file(
+                'mimetype',
+                await src
+                  .file(
+                    'mimetype'
+                  )
+                  .async(
+                    'uint8array'
+                  ),
+                {
+                  compression:'STORE'
+                }
+              );
+            }
+
+            for(
+              const name of Object.keys(
+                src.files
+              )
+            ){
+              if(
+                name==='mimetype'
+              ){
+                continue;
+              }
+
+              const e=
+                src.files[name];
+
+              if(e.dir){
+                out.folder(
+                  name
+                );
+                continue;
+              }
+
+              if(
+                name===
+                'Contents/section0.xml'
+              ){
+                out.file(
+                  name,
+                  processed.xml,
+                  {
+                    compression:
+                      'DEFLATE'
+                  }
+                );
+              }else if(
+                name===
+                'Contents/header.xml'
+              ){
+                out.file(
+                  name,
+                  styled.xml,
+                  {
+                    compression:
+                      'DEFLATE'
+                  }
+                );
+              }else if(
+                name===
+                'Preview/PrvText.txt'
+              ){
+                out.file(
+                  name,
+                  processed.preview,
+                  {
+                    compression:
+                      'DEFLATE'
+                  }
+                );
+              }else{
+                out.file(
+                  name,
+                  await e.async(
+                    'uint8array'
+                  ),
+                  {
+                    compression:
+                      'DEFLATE'
+                  }
+                );
+              }
+            }
+
+            const blob=
+              await out.generateAsync(
+                {
+                  type:'blob',
+                  mimeType:
+                    'application/haansofthwpx',
+                  compression:
+                    'DEFLATE'
+                }
+              );
+
+            return {
+              blob,
+              name:
+                safeName(
+                  genericCleanTitle(
+                    common?.document?.title||
+                    '범용검토'
+                  )+
+                  '_범용검토'
+                )+
+                '.hwpx',
+              tid:
+                'kfe-generic-review-v1'
+            };
+          }
+          '''
+
+          s = s[:start] + replacement + s[end:]
+
+          start = s.index(
+              "async function registerPdfFonts("
+          )
+
+          end = s.index(
+              "async function renderGeneratedHwpxToPdf",
+              start
+          )
+
+          fontfunc = r'''async function registerPdfFonts(fontsRequired){
+            if(
+              typeof RhwpToPdf.registerPdfFont!==
+              'function'
+            ){
+              throw new Error(
+                'PDF 폰트 등록 기능이 없는 렌더러입니다.'
+              );
+            }
+
+            RhwpToPdf.clearPdfFonts?.();
+
+            const queryFn=
+              typeof window.queryLocalFonts===
+              'function'
+                ? ()=>window.queryLocalFonts()
+                : (
+                    navigator.fonts&&
+                    typeof navigator.fonts.query===
+                      'function'
+                      ? ()=>navigator.fonts.query()
+                      : null
+                  );
+
+            if(!queryFn){
+              throw new Error(
+                '실제 한글 미리보기에는 Chrome/Edge의 로컬 글꼴 접근이 필요합니다.'
+              );
+            }
+
+            let locals;
+
+            try{
+              locals=
+                await queryFn();
+            }catch(e){
+              throw new Error(
+                '로컬 글꼴 접근이 거부되었습니다. 브라우저에서 글꼴 권한을 허용해 주세요.'
+              );
+            }
+
+            const norm=s=>
+              String(s||'')
+                .toLowerCase()
+                .replace(
+                  /[\s_\-]/g,
+                  ''
+                );
+
+            const alias=(
+              req,
+              fam
+            )=>{
+              const r=
+                norm(req);
+
+              const f=
+                norm(fam);
+
+              if(
+                !r||
+                !f
+              ){
+                return false;
+              }
+
+              if(
+                r===f||
+                f.includes(r)||
+                r.includes(f)
+              ){
+                return true;
+              }
+
+              if(
+                /한양중고딕|hanyang.*jung|hy.*jung|hy.*gothic/i.test(req)
+              ){
+                return /(한양|hanyang|hy).*(중고딕|jung|gothic)/i.test(fam);
+              }
+
+              if(
+                /hy헤드라인|hyheadline/i.test(req)
+              ){
+                return /(hy|한양).*(헤드라인|headline)/i.test(fam);
+              }
+
+              if(
+                /휴먼명조|human.*myeong|human.*myung/i.test(req)
+              ){
+                return /(휴먼|human).*(명조|myeong|myung)/i.test(fam);
+              }
+
+              if(
+                /함초롬바탕|hcr.*batang/i.test(req)
+              ){
+                return /(함초롬바탕|hcr.*batang)/i.test(fam);
+              }
+
+              if(
+                /함초롬돋움|hcr.*dotum/i.test(req)
+              ){
+                return /(함초롬돋움|hcr.*dotum)/i.test(fam);
+              }
+
+              if(
+                /맑은고딕|malgungothic/i.test(r)
+              ){
+                return /(맑은\s*고딕|malgun\s*gothic)/i.test(fam);
+              }
+
+              return false;
+            };
+
+            const req=
+              Array.from(
+                fontsRequired||[]
+              )
+                .map(
+                  x=>
+                    String(x).trim()
+                )
+                .filter(Boolean);
+
+            const picked=[];
+            const seen=
+              new Set();
+
+            const add=f=>{
+              const key=
+                (
+                  f.fullName||
+                  f.family||
+                  ''
+                )+
+                '|' +
+                (
+                  f.style||
+                  ''
+                );
+
+              if(
+                !seen.has(key)
+              ){
+                seen.add(key);
+                picked.push(f);
+              }
+            };
+
+            for(
+              const r of req
+            ){
+              for(
+                const f of locals
+              ){
+                if(
+                  alias(
+                    r,
+                    f.family||
+                    f.fullName||
+                    ''
+                  )
+                ){
+                  add(f);
+                  break;
+                }
+              }
+            }
+
+            for(
+              const f of locals
+            ){
+              if(
+                /맑은\s*고딕|malgun\s*gothic/i.test(
+                  String(
+                    f.family||
+                    ''
+                  )
+                )
+              ){
+                add(f);
+                break;
+              }
+            }
+
+            for(
+              const f of locals
+            ){
+              if(
+                /한양|hanyang|^hy/i.test(
+                  String(
+                    f.family||
+                    ''
+                  )
+                )
+              ){
+                add(f);
+
+                if(
+                  picked.length>=18
+                ){
+                  break;
+                }
+              }
+            }
+
+            let ok=0;
+
+            for(
+              const f of picked.slice(
+                0,
+                24
+              )
+            ){
+              try{
+                const b=
+                  await f.blob();
+
+                RhwpToPdf.registerPdfFont(
+                  new Uint8Array(
+                    await b.arrayBuffer()
+                  )
+                );
+
+                ok++;
+              }catch(_e){}
+            }
+
+            if(!ok){
+              throw new Error(
+                '한글 PDF 글꼴을 등록하지 못했습니다. 로컬 글꼴 권한을 확인해 주세요.'
+              );
+            }
+
+            return picked
+              .slice(
+                0,
+                24
+              )
+              .map(
+                f=>
+                  f.family||
+                  f.fullName
+              )
+              .filter(Boolean);
+          }
+          '''
+
+          s = s[:start] + fontfunc + s[end:]
+
+          src.write_text(
+              s,
+              encoding="utf-8"
+          )
+
+          print(
+              "patched",
+              src,
+              len(s)
+          )
+          PY
+
+          python3 /tmp/patch_v018.py
+
+          echo \
+            "23c0f82488005eaa3f116f059a1de3b063c8752172e70ccc5794de02e3ec6dcb  work/index.html" \
+            | sha256sum -c -
+
+          grep -q \
+            "HWPX 생성기 v0.18" \
+            work/index.html
+
+      - name: Build static site
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cp work/index.html site/index.html
+
+          test ! -s work/README.md || \
+            cp work/README.md site/README.md
+
+          test ! -s work/NOTICE.md || \
+            cp work/NOTICE.md site/NOTICE.md
+
           touch site/.nojekyll
 
-          echo "Generator extracted."
-          ls -lh site/index.html
-
-      - name: Download rhwptopdf v0.2.2
+      - name: Download pinned rhwptopdf renderer
         shell: bash
         run: |
           set -euo pipefail
@@ -90,19 +1806,10 @@ jobs:
             -o site/vendor/rhwptopdf.umd_bg.wasm \
             https://github.com/sanguneo/rhwptopdf/releases/download/v0.2.2/rhwptopdf.umd_bg.wasm
 
-          test -s site/vendor/rhwptopdf.umd.js || {
-            echo "ERROR: rhwptopdf.umd.js download failed."
-            exit 1
-          }
+          test -s site/vendor/rhwptopdf.umd.js
+          test -s site/vendor/rhwptopdf.umd_bg.wasm
 
-          test -s site/vendor/rhwptopdf.umd_bg.wasm || {
-            echo "ERROR: rhwptopdf.umd_bg.wasm download failed."
-            exit 1
-          }
-
-          echo "rhwptopdf renderer downloaded."
-
-      - name: Verify generator files
+      - name: Verify site before deploy
         shell: bash
         run: |
           set -euo pipefail
@@ -111,48 +1818,40 @@ jobs:
           test -s site/vendor/rhwptopdf.umd.js
           test -s site/vendor/rhwptopdf.umd_bg.wasm
 
-          grep -q "./vendor/rhwptopdf.umd.js" site/index.html || {
-            echo "ERROR: index.html does not reference rhwptopdf.umd.js."
-            exit 1
-          }
+          grep -q \
+            "vendor/rhwptopdf.umd.js" \
+            site/index.html
 
-          grep -q "./vendor/rhwptopdf.umd_bg.wasm" site/index.html || {
-            echo "ERROR: index.html does not reference rhwptopdf.umd_bg.wasm."
-            exit 1
-          }
+          grep -q \
+            "rhwptopdf.umd_bg.wasm" \
+            site/index.html
 
-          grep -q "HWPX" site/index.html || {
-            echo "ERROR: HWPX Generator content not detected."
-            exit 1
-          }
+          grep -q \
+            "HWPX 생성기 v0.18" \
+            site/index.html
 
-          echo "Static file verification passed."
-
-      - name: Test site locally
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python3 -m http.server \
+          python3 \
+            -m http.server \
             8765 \
             --bind 127.0.0.1 \
             --directory site \
-            >/tmp/hwpx-pages-http.log 2>&1 &
+            >/tmp/hwpx-pages-http.log \
+            2>&1 &
 
-          server_pid=$!
+          server=$!
 
-          cleanup() {
-            kill "${server_pid}" 2>/dev/null || true
-          }
-
-          trap cleanup EXIT
+          trap \
+            'kill "$server" 2>/dev/null || true' \
+            EXIT
 
           ready=0
 
           for i in $(seq 1 30); do
-            if curl -fsS \
+            if curl \
+              -fsS \
               -o /dev/null \
               http://127.0.0.1:8765/; then
+
               ready=1
               break
             fi
@@ -160,35 +1859,37 @@ jobs:
             sleep 1
           done
 
-          if [ "${ready}" -ne 1 ]; then
-            echo "ERROR: local test server did not start."
+          if [ "$ready" -ne 1 ]; then
             cat /tmp/hwpx-pages-http.log || true
             exit 1
           fi
 
-          curl -fsS \
+          curl \
+            -fsS \
             -o /dev/null \
             http://127.0.0.1:8765/
 
-          curl -fsS \
+          curl \
+            -fsS \
             -o /dev/null \
             http://127.0.0.1:8765/vendor/rhwptopdf.umd.js
 
-          curl -fsS \
+          curl \
+            -fsS \
             -o /dev/null \
             http://127.0.0.1:8765/vendor/rhwptopdf.umd_bg.wasm
 
-          echo "Local HTTP verification passed."
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./site
 
       - name: Deploy HWPX Generator to Pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: gh-pages
-          publish_dir: ./site
-          keep_files: false
-          force_orphan: true
-          enable_jekyll: false
+        id: deployment
+        uses: actions/deploy-pages@v4
 
       - name: Report deployment
         if: always()
@@ -198,9 +1899,11 @@ jobs:
             echo "## Deploy HWPX Generator to Pages"
             echo
             echo "- Workflow: pages.yml"
-            echo "- Version: V5"
-            echo "- Generator: HWPX_Generator_GitHub_v0.17.zip"
+            echo "- Version: V7"
+            echo "- Generator: HWPX Generator v0.18"
+            echo "- Base package: HWPX_Generator_GitHub_v0.17.zip"
             echo "- Renderer: rhwptopdf v0.2.2"
-            echo "- Publish branch: gh-pages"
-            echo "- URL: https://gowellsik-hue.github.io/game2/"
+            echo "- Deployment: actions/deploy-pages@v4"
+            echo "- gh-pages branch: not used"
+            echo "- URL: ${{ steps.deployment.outputs.page_url }}"
           } >> "$GITHUB_STEP_SUMMARY"
