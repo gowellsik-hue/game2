@@ -1,26 +1,24 @@
 # FILE: .github/workflows/pages.yml
-# VERSION: V2
-# PURPOSE: Deploy HWPX Generator to GitHub Pages.
-# RENDERER: rhwptopdf v0.2.2, SHA-256 pinned.
+# VERSION: V5
+# PURPOSE: Deploy HWPX Generator to Pages
+# SOURCE: HWPX_Generator_GitHub_v0.17.zip
+# PREVIEW: Generated HWPX -> rhwptopdf v0.2.2 -> PDF preview
 # TARGET: https://gowellsik-hue.github.io/game2/
 
 name: Deploy HWPX Generator to Pages
 
 "on":
   workflow_dispatch:
+
   push:
     branches:
       - main
     paths:
       - .github/workflows/pages.yml
-      - index.html
-      - README.md
-      - NOTICE.md
+      - HWPX_Generator_GitHub_v0.17.zip
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
@@ -28,11 +26,6 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy HWPX Generator to Pages
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -40,95 +33,174 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build static site
+      - name: Check generator package
         shell: bash
         run: |
           set -euo pipefail
 
-          rm -rf _site
-          mkdir -p _site/vendor
-
-          test -s index.html || {
-            echo "ERROR: repository root index.html not found."
+          test -s HWPX_Generator_GitHub_v0.17.zip || {
+            echo "ERROR: HWPX_Generator_GitHub_v0.17.zip not found."
             exit 1
           }
 
-          cp index.html _site/index.html
+          echo "Generator package found."
+          ls -lh HWPX_Generator_GitHub_v0.17.zip
 
-          if test -s README.md; then
-            cp README.md _site/README.md
-          fi
-
-          if test -s NOTICE.md; then
-            cp NOTICE.md _site/NOTICE.md
-          fi
-
-          touch _site/.nojekyll
-
-      - name: Download pinned rhwptopdf renderer
+      - name: Extract HWPX Generator
         shell: bash
         run: |
           set -euo pipefail
 
-          curl -L --fail --retry 3 --retry-delay 2 \
-            -o _site/vendor/rhwptopdf.umd.js \
+          rm -rf site
+          mkdir -p site
+
+          unzip -q HWPX_Generator_GitHub_v0.17.zip -d site
+
+          rm -rf site/.github
+
+          test -s site/index.html || {
+            echo "ERROR: index.html not found after extraction."
+            exit 1
+          }
+
+          mkdir -p site/vendor
+          touch site/.nojekyll
+
+          echo "Generator extracted."
+          ls -lh site/index.html
+
+      - name: Download rhwptopdf v0.2.2
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl \
+            -L \
+            --fail \
+            --retry 3 \
+            --retry-delay 2 \
+            -o site/vendor/rhwptopdf.umd.js \
             https://github.com/sanguneo/rhwptopdf/releases/download/v0.2.2/rhwptopdf.umd.js
 
-          curl -L --fail --retry 3 --retry-delay 2 \
-            -o _site/vendor/rhwptopdf.umd_bg.wasm \
+          curl \
+            -L \
+            --fail \
+            --retry 3 \
+            --retry-delay 2 \
+            -o site/vendor/rhwptopdf.umd_bg.wasm \
             https://github.com/sanguneo/rhwptopdf/releases/download/v0.2.2/rhwptopdf.umd_bg.wasm
 
-      - name: Verify renderer hashes
+          test -s site/vendor/rhwptopdf.umd.js || {
+            echo "ERROR: rhwptopdf.umd.js download failed."
+            exit 1
+          }
+
+          test -s site/vendor/rhwptopdf.umd_bg.wasm || {
+            echo "ERROR: rhwptopdf.umd_bg.wasm download failed."
+            exit 1
+          }
+
+          echo "rhwptopdf renderer downloaded."
+
+      - name: Verify generator files
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "7913400eae742e9f15f320fc377d5961a63216840f290a4c280fbe731ec3c0cd  _site/vendor/rhwptopdf.umd.js" \
-            | sha256sum -c -
+          test -s site/index.html
+          test -s site/vendor/rhwptopdf.umd.js
+          test -s site/vendor/rhwptopdf.umd_bg.wasm
 
-          echo "7a3e1e3e3a8d2a5bea64feac7bd8a2b556687a70874003fcf2aa6677e92f83a7  _site/vendor/rhwptopdf.umd_bg.wasm" \
-            | sha256sum -c -
+          grep -q "./vendor/rhwptopdf.umd.js" site/index.html || {
+            echo "ERROR: index.html does not reference rhwptopdf.umd.js."
+            exit 1
+          }
 
-      - name: Verify site files
+          grep -q "./vendor/rhwptopdf.umd_bg.wasm" site/index.html || {
+            echo "ERROR: index.html does not reference rhwptopdf.umd_bg.wasm."
+            exit 1
+          }
+
+          grep -q "HWPX" site/index.html || {
+            echo "ERROR: HWPX Generator content not detected."
+            exit 1
+          }
+
+          echo "Static file verification passed."
+
+      - name: Test site locally
         shell: bash
         run: |
           set -euo pipefail
 
-          test -s _site/index.html
-          test -s _site/vendor/rhwptopdf.umd.js
-          test -s _site/vendor/rhwptopdf.umd_bg.wasm
+          python3 -m http.server \
+            8765 \
+            --bind 127.0.0.1 \
+            --directory site \
+            >/tmp/hwpx-pages-http.log 2>&1 &
 
-          grep -q "vendor/rhwptopdf.umd.js" _site/index.html || {
-            echo "ERROR: index.html does not reference vendor/rhwptopdf.umd.js"
-            exit 1
+          server_pid=$!
+
+          cleanup() {
+            kill "${server_pid}" 2>/dev/null || true
           }
 
-          grep -q "rhwptopdf.umd_bg.wasm" _site/index.html || {
-            echo "ERROR: index.html does not reference rhwptopdf.umd_bg.wasm"
+          trap cleanup EXIT
+
+          ready=0
+
+          for i in $(seq 1 30); do
+            if curl -fsS \
+              -o /dev/null \
+              http://127.0.0.1:8765/; then
+              ready=1
+              break
+            fi
+
+            sleep 1
+          done
+
+          if [ "${ready}" -ne 1 ]; then
+            echo "ERROR: local test server did not start."
+            cat /tmp/hwpx-pages-http.log || true
             exit 1
-          }
+          fi
 
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
+          curl -fsS \
+            -o /dev/null \
+            http://127.0.0.1:8765/
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+          curl -fsS \
+            -o /dev/null \
+            http://127.0.0.1:8765/vendor/rhwptopdf.umd.js
+
+          curl -fsS \
+            -o /dev/null \
+            http://127.0.0.1:8765/vendor/rhwptopdf.umd_bg.wasm
+
+          echo "Local HTTP verification passed."
+
+      - name: Deploy HWPX Generator to Pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: _site
-
-      - name: Deploy GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./site
+          keep_files: false
+          force_orphan: true
+          enable_jekyll: false
 
       - name: Report deployment
+        if: always()
         shell: bash
         run: |
           {
             echo "## Deploy HWPX Generator to Pages"
             echo
             echo "- Workflow: pages.yml"
-            echo "- Version: V2"
+            echo "- Version: V5"
+            echo "- Generator: HWPX_Generator_GitHub_v0.17.zip"
             echo "- Renderer: rhwptopdf v0.2.2"
-            echo "- Renderer SHA-256: verified"
-            echo "- URL: ${{ steps.deployment.outputs.page_url }}"
+            echo "- Publish branch: gh-pages"
+            echo "- URL: https://gowellsik-hue.github.io/game2/"
           } >> "$GITHUB_STEP_SUMMARY"
