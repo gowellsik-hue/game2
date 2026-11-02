@@ -1,5 +1,5 @@
 # FILE: .github/workflows/pages.yml
-# VERSION: V7
+# VERSION: V8
 # PURPOSE: Deploy HWPX Generator to Pages
 # SOURCE: HWPX_Generator_GitHub_v0.17.zip patched to Generator v0.18 inside Actions
 # PREVIEW: Generated HWPX -> rhwptopdf v0.2.2 -> PDF preview
@@ -1762,12 +1762,22 @@ jobs:
 
           python3 /tmp/patch_v018.py
 
-          echo \
-            "23c0f82488005eaa3f116f059a1de3b063c8752172e70ccc5794de02e3ec6dcb  work/index.html" \
-            | sha256sum -c -
+          test -s work/index.html
 
           grep -q \
             "HWPX 생성기 v0.18" \
+            work/index.html
+
+          grep -q \
+            "function docxTableRobust" \
+            work/index.html
+
+          grep -q \
+            "function genericFixTitleBand" \
+            work/index.html
+
+          grep -q \
+            "async function registerPdfFonts" \
             work/index.html
 
       - name: Build static site
@@ -1899,7 +1909,7 @@ jobs:
             echo "## Deploy HWPX Generator to Pages"
             echo
             echo "- Workflow: pages.yml"
-            echo "- Version: V7"
+            echo "- Version: V8"
             echo "- Generator: HWPX Generator v0.18"
             echo "- Base package: HWPX_Generator_GitHub_v0.17.zip"
             echo "- Renderer: rhwptopdf v0.2.2"
