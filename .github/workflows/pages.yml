@@ -1,10 +1,21 @@
+# FILE: .github/workflows/pages.yml
+# VERSION: V2
+# PURPOSE: Deploy HWPX Generator to GitHub Pages.
+# RENDERER: rhwptopdf v0.2.2, SHA-256 pinned.
+# TARGET: https://gowellsik-hue.github.io/game2/
+
 name: Deploy HWPX Generator to Pages
 
-on:
+"on":
+  workflow_dispatch:
   push:
     branches:
       - main
-  workflow_dispatch:
+    paths:
+      - .github/workflows/pages.yml
+      - index.html
+      - README.md
+      - NOTICE.md
 
 permissions:
   contents: read
@@ -17,36 +28,85 @@ concurrency:
 
 jobs:
   deploy:
+    name: Deploy HWPX Generator to Pages
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Build static site
+        shell: bash
         run: |
-          set -eux
+          set -euo pipefail
 
           rm -rf _site
           mkdir -p _site/vendor
 
+          test -s index.html || {
+            echo "ERROR: repository root index.html not found."
+            exit 1
+          }
+
           cp index.html _site/index.html
 
-          curl -L --fail --retry 3 \
+          if test -s README.md; then
+            cp README.md _site/README.md
+          fi
+
+          if test -s NOTICE.md; then
+            cp NOTICE.md _site/NOTICE.md
+          fi
+
+          touch _site/.nojekyll
+
+      - name: Download pinned rhwptopdf renderer
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl -L --fail --retry 3 --retry-delay 2 \
             -o _site/vendor/rhwptopdf.umd.js \
             https://github.com/sanguneo/rhwptopdf/releases/download/v0.2.2/rhwptopdf.umd.js
 
-          curl -L --fail --retry 3 \
+          curl -L --fail --retry 3 --retry-delay 2 \
             -o _site/vendor/rhwptopdf.umd_bg.wasm \
             https://github.com/sanguneo/rhwptopdf/releases/download/v0.2.2/rhwptopdf.umd_bg.wasm
+
+      - name: Verify renderer hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "7913400eae742e9f15f320fc377d5961a63216840f290a4c280fbe731ec3c0cd  _site/vendor/rhwptopdf.umd.js" \
+            | sha256sum -c -
+
+          echo "7a3e1e3e3a8d2a5bea64feac7bd8a2b556687a70874003fcf2aa6677e92f83a7  _site/vendor/rhwptopdf.umd_bg.wasm" \
+            | sha256sum -c -
+
+      - name: Verify site files
+        shell: bash
+        run: |
+          set -euo pipefail
 
           test -s _site/index.html
           test -s _site/vendor/rhwptopdf.umd.js
           test -s _site/vendor/rhwptopdf.umd_bg.wasm
+
+          grep -q "vendor/rhwptopdf.umd.js" _site/index.html || {
+            echo "ERROR: index.html does not reference vendor/rhwptopdf.umd.js"
+            exit 1
+          }
+
+          grep -q "rhwptopdf.umd_bg.wasm" _site/index.html || {
+            echo "ERROR: index.html does not reference rhwptopdf.umd_bg.wasm"
+            exit 1
+          }
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
@@ -59,3 +119,16 @@ jobs:
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Report deployment
+        shell: bash
+        run: |
+          {
+            echo "## Deploy HWPX Generator to Pages"
+            echo
+            echo "- Workflow: pages.yml"
+            echo "- Version: V2"
+            echo "- Renderer: rhwptopdf v0.2.2"
+            echo "- Renderer SHA-256: verified"
+            echo "- URL: ${{ steps.deployment.outputs.page_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
